@@ -36,6 +36,12 @@ const ExternalReferenceSchema = z.strictObject({
 
 export const ReferenceSchema = z.union([LedgerReferenceSchema, ExternalReferenceSchema]);
 export type Reference = z.infer<typeof ReferenceSchema>;
+export type ExternalReference = z.infer<typeof ExternalReferenceSchema>;
+
+/** Whether a reference names a source outside the ledger: a DOI, an arXiv ID, or a PubMed ID. */
+export function isExternalReference(reference: Pick<Reference, "id">): boolean {
+  return ExternalIdSchema.safeParse(reference.id).success;
+}
 
 export const ReferencesFileSchema = z
   .array(ReferenceSchema)

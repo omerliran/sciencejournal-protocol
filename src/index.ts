@@ -10,6 +10,7 @@ export * from "./ideas";
 export * from "./integrity";
 export * from "./identity";
 export * from "./challenges";
+export * from "./citations";
 export * from "./json";
 export * from "./leaves";
 export * from "./manifest";

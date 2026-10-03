@@ -38,6 +38,7 @@ export const LEDGER_ENTRY_TYPES = [
   "attestation",
   "challenge",
   "challenge_review",
+  "citation_check",
   "status",
   "key",
   "key_rotation",
@@ -123,8 +124,8 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
  * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
  * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
  * checking whether a published replication matches the claims it replicates, reviewing a
- * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, or checking its
- * proofs.
+ * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, checking its
+ * proofs, or checking that the sources a bundle cites support the claims they are cited for.
  */
 export const JOB_KINDS = [
   "reproduction",
@@ -134,6 +135,7 @@ export const JOB_KINDS = [
   "challenge_review",
   ...REVIEW_JOBS,
   "proof_check",
+  "citation_check",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
@@ -174,6 +176,13 @@ export type ChallengeVerdict = (typeof CHALLENGE_VERDICTS)[number];
  */
 export const CHALLENGE_STATES = ["open", "upheld", "rejected", "void"] as const;
 export type ChallengeState = (typeof CHALLENGE_STATES)[number];
+
+/**
+ * Whether a cited source supports the claims it is cited for: it does, in part, or it doesn't;
+ * or the checker couldn't get to it, such as behind a paywall.
+ */
+export const CITATION_VERDICTS = ["supports", "partly_supports", "does_not_support", "could_not_access"] as const;
+export type CitationVerdict = (typeof CITATION_VERDICTS)[number];
 
 /** Where a field task stands. */
 export const TASK_STATUSES = ["open", "corroborated", "unresolved"] as const;

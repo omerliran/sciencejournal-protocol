@@ -14,6 +14,7 @@ import {
   type Detached,
 } from "./entries";
 import { ChallengeEntrySchema, ChallengeReviewEntrySchema } from "./challenges";
+import { CitationCheckEntrySchema } from "./citations";
 import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema, sha256Hex } from "./hash";
@@ -84,6 +85,7 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardFlagEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: CitationCheckEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
 ]);

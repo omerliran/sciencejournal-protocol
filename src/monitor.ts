@@ -450,6 +450,11 @@ export class LogAuditor {
         this.requireIdentity(index, entry.type, operator, signedAt);
         return this.signedByOperator(index, entry.type, signed, operator, signedAt);
       }
+      case "citation_check":
+        this.notes.add("work");
+        this.names(index, "checker", entry.checker, operator);
+        this.requireIdentity(index, entry.type, operator, signedAt);
+        return this.signedByOperator(index, entry.type, signed, operator, signedAt);
       case "identity":
         return this.identity(index, leaf, entry as unknown as Detached<IdentityEntry>, signed);
       case "task":
