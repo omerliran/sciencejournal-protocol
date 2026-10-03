@@ -1,13 +1,7 @@
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { digestBundle } from "./bundle";
-import {
-  bundleSigningObject,
-  leafBytes,
-  signObject,
-  verifyObject,
-  type LogLeaf,
-  type TreeHead,
-} from "./entries";
+import { bundleSigningObject, signObject, verifyObject } from "./entries";
+import { leafBytes, type LogLeaf, type TreeHead } from "./leaves";
 import { leafHash, verifyConsistency, verifyInclusion } from "./merkle";
 
 /** Returns the bundle with its `signature` file: the operator's signature over its hash. */

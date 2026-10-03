@@ -1,7 +1,8 @@
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
 import { digestBundle } from "./bundle";
-import { bundleSigningObject, leafBytes, signObject, verifyObject, type LogLeaf } from "./entries";
+import { bundleSigningObject, signObject, verifyObject } from "./entries";
+import { leafBytes, type LogLeaf } from "./leaves";
 import { inclusionProof, leafHash, memorySource, rootHash } from "./merkle";
 import { signBundle, verifyReceipt, type Receipt } from "./receipts";
 import { generateKeyPair } from "./signing";

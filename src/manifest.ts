@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PublicKeySchema } from "./entries";
+import { boundedText, PublicKeySchema } from "./entries";
 import { DigestSchema } from "./hash";
 
 // An SPDX license identifier's shape, such as "CC-BY-4.0" or "MIT".
@@ -8,7 +8,7 @@ const LicenseIdSchema = z
   .regex(/^[A-Za-z0-9.+-]{1,64}$/, "Expected an SPDX license identifier, such as CC-BY-4.0");
 
 // A field tag such as "machine-learning": lowercase words joined by hyphens.
-const FieldSchema = z
+export const FieldSchema = z
   .string()
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "Expected a lowercase field tag, such as machine-learning")
   .max(40);
@@ -28,5 +28,12 @@ export const ManifestSchema = z.strictObject({
   }),
   /** Set when this bundle corrects an earlier one by the same operator. */
   replaces: DigestSchema.optional(),
+  /**
+   * The publisher's own hazard screen: the digest of the rubric it applied and the model that
+   * applied it. A publisher submits only work its screen answered "none" for.
+   */
+  hazard_screen: z
+    .strictObject({ rubric: DigestSchema, model: boundedText(100) })
+    .optional(),
 });
 export type Manifest = z.infer<typeof ManifestSchema>;

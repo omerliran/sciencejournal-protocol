@@ -1,9 +1,8 @@
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
-import { ClaimIdSchema } from "./claims";
 import { DigestSchema, type Digest } from "./hash";
-import { ATTESTATION_JOBS } from "./vocabulary";
+import { ATTESTATION_JOBS, HAZARD_VERDICTS } from "./vocabulary";
 import { sign, verify, type PublicKey, type Signature } from "./signing";
 
 export const PublicKeySchema = z
@@ -44,14 +43,14 @@ export function verifyObject(object: { type: string; sig: string }, publicKey: s
 
 // Signed objects are validated, never rewritten: trimming or normalizing a field would change
 // the bytes its signature covers.
-const Text = (max: number) => z.string().max(max).regex(/\S/, "Must not be blank");
+export const boundedText = (max: number) => z.string().max(max).regex(/\S/, "Must not be blank");
 
 /** An operator's request to publish: its key, name, and the model families it runs. */
 export const KeyEntrySchema = z.strictObject({
   type: z.literal("key"),
   key: PublicKeySchema,
-  name: Text(100),
-  model_families: z.array(Text(60)).min(1).max(10),
+  name: boundedText(100),
+  model_families: z.array(boundedText(60)).min(1).max(10),
   sig: SignatureSchema,
 });
 export type KeyEntry = z.infer<typeof KeyEntrySchema>;
@@ -70,7 +69,8 @@ export type BundleEntry = z.infer<typeof BundleEntrySchema>;
 
 /**
  * A verifier's signed verdicts on claims from one bundle. `evidence` is the digest of the
- * files that back the verdicts (code, outputs, a report), stored next to the log.
+ * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
+ * the verifier's hazard screen of the bundle; attestations from assigned jobs must give it.
  */
 export const AttestationEntrySchema = z.strictObject({
   type: z.literal("attestation"),
@@ -84,8 +84,9 @@ export const AttestationEntrySchema = z.strictObject({
     )
     .refine((claims) => Object.keys(claims).length > 0, "List at least one claim"),
   evidence: DigestSchema,
-  model_family: Text(60),
-  harness: Text(200),
+  model_family: boundedText(60),
+  harness: boundedText(200),
+  hazard: z.enum(HAZARD_VERDICTS).optional(),
   sig: SignatureSchema,
 });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;
@@ -113,56 +114,3 @@ export const IdentityEntrySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type IdentityEntry = z.infer<typeof IdentityEntrySchema>;
-
-// --- What the log adds ---------------------------------------------------------------
-
-/**
- * A log leaf: the signed entry, plus what the log attests about it. The timestamp settles
- * priority; for bundles, the claim IDs and fields are derived from the bundle's contents, so
- * anyone holding the bundle can check them.
- */
-export const LogLeafSchema = z.union([
-  z.strictObject({
-    timestamp: z.iso.datetime(),
-    operator: OperatorIdSchema,
-    entry: KeyEntrySchema,
-  }),
-  z.strictObject({
-    timestamp: z.iso.datetime(),
-    operator: OperatorIdSchema,
-    entry: BundleEntrySchema,
-    claims: z.array(ClaimIdSchema),
-    fields: z.array(z.string()),
-    /** The bundle this one corrects, from its manifest. */
-    replaces: DigestSchema.optional(),
-  }),
-  z.strictObject({
-    timestamp: z.iso.datetime(),
-    operator: OperatorIdSchema,
-    entry: AttestationEntrySchema,
-  }),
-  z.strictObject({
-    timestamp: z.iso.datetime(),
-    operator: OperatorIdSchema,
-    entry: IdentityEntrySchema,
-    /** The organization the identity counts as: the registrable domain, or the operator. */
-    organization: z.string(),
-  }),
-]);
-export type LogLeaf = z.infer<typeof LogLeafSchema>;
-
-/** A leaf's bytes in the Merkle tree. */
-export function leafBytes(leaf: LogLeaf): Uint8Array {
-  return utf8ToBytes(canonicalJson(leaf));
-}
-
-/** The log's signed commitment to its first `size` entries. */
-export const TreeHeadSchema = z.strictObject({
-  type: z.literal("tree_head"),
-  log: z.string(),
-  size: z.number().int().nonnegative(),
-  root: z.string().regex(/^[0-9a-f]{64}$/),
-  timestamp: z.iso.datetime(),
-  sig: SignatureSchema,
-});
-export type TreeHead = z.infer<typeof TreeHeadSchema>;
