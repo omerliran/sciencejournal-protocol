@@ -1,6 +1,7 @@
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { digestBundle } from "./bundle";
 import { bundleSigningObject, signObject, verifyObject } from "./entries";
+import type { Digest } from "./hash";
 import { leafBytes, type LogLeaf, type TreeHead } from "./leaves";
 import { leafHash, verifyConsistency, verifyInclusion } from "./merkle";
 
@@ -8,10 +9,12 @@ import { leafHash, verifyConsistency, verifyInclusion } from "./merkle";
 export function signBundle(
   files: ReadonlyMap<string, Uint8Array>,
   secretKey: Uint8Array,
+  /** Large files sent ahead of the bundle, by digest; the signature covers them too. */
+  uploaded: ReadonlyMap<string, Digest> = new Map(),
 ): Map<string, Uint8Array> {
   const unsigned = new Map(files);
   unsigned.delete("signature");
-  const { sig } = signObject(bundleSigningObject(digestBundle(unsigned).bundle), secretKey);
+  const { sig } = signObject(bundleSigningObject(digestBundle(unsigned, uploaded).bundle), secretKey);
   return new Map([...unsigned, ["signature", utf8ToBytes(sig)]]);
 }
 

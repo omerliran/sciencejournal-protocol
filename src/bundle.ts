@@ -38,11 +38,21 @@ export interface BundleDigests {
 /**
  * Hashes a bundle given as bundle path -> file bytes. Paths are POSIX, relative to the
  * bundle root, and must fit the submission layout; anything else throws BundleLayoutError.
+ * Large files sent ahead of the bundle come in `uploaded`, by digest, and are hashed the same
+ * way: a bundle's hash depends only on its files' digests.
  */
-export function digestBundle(files: ReadonlyMap<string, Uint8Array>): BundleDigests {
-  checkPaths([...files.keys()], true);
+export function digestBundle(
+  files: ReadonlyMap<string, Uint8Array>,
+  uploaded: ReadonlyMap<string, Digest> = new Map(),
+): BundleDigests {
+  const twice = [...uploaded.keys()].find((path) => files.has(path));
+  if (twice) throw new BundleLayoutError(`"${twice}" is both sent and uploaded`);
+  checkPaths([...files.keys(), ...uploaded.keys()], true);
 
-  const digests = new Map([...files].map(([path, bytes]) => [path, sha256Digest(bytes)]));
+  const digests = new Map<string, Digest>([
+    ...[...files].map(([path, bytes]): [string, Digest] => [path, sha256Digest(bytes)]),
+    ...uploaded,
+  ]);
   const select = (keep: (path: string) => boolean) =>
     Object.fromEntries([...digests].filter(([path]) => keep(path)));
 
