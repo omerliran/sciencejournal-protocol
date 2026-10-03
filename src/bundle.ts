@@ -13,9 +13,14 @@ const BUNDLE_FILES = new Set([
   "provenance.json",
   SIGNATURE_FILE,
 ]);
-/** Everything under these directories is a verification input. */
 export const BUNDLE_DIRECTORIES = ["code", "env", "data", "results", "proofs"] as const;
 const DIRECTORIES = new Set<string>(BUNDLE_DIRECTORIES);
+/**
+ * Everything under these directories is a verification input. Declared results are not:
+ * each claim binds only the result values its evidence names.
+ */
+export const VERIFICATION_INPUT_DIRECTORIES = ["code", "env", "data", "proofs"] as const;
+const INPUT_DIRECTORIES = new Set<string>(VERIFICATION_INPUT_DIRECTORIES);
 
 export class BundleLayoutError extends Error {
   override name = "BundleLayoutError";
@@ -26,7 +31,7 @@ export interface BundleDigests {
   files: Record<string, Digest>;
   /** The bundle hash the operator signs: every file except the signature itself. */
   bundle: Digest;
-  /** Everything under the bundle's directories. Claims with evidence bind to this. */
+  /** Everything under code/, env/, data/, and proofs/. Claims with evidence bind to this. */
   verificationInputs: Digest;
 }
 
@@ -44,8 +49,7 @@ export function digestBundle(files: ReadonlyMap<string, Uint8Array>): BundleDige
   return {
     files: select(() => true),
     bundle: canonicalDigest(select((path) => path !== SIGNATURE_FILE)),
-    // checkPaths has confirmed every nested path sits under one of BUNDLE_DIRECTORIES.
-    verificationInputs: canonicalDigest(select((path) => path.includes("/"))),
+    verificationInputs: canonicalDigest(select((path) => INPUT_DIRECTORIES.has(path.split("/")[0]))),
   };
 }
 

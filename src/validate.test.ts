@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { assignClaimIds, claimsFileJsonSchema, type Claim } from "./claims";
-import type { Digest } from "./hash";
+import { bundleInputs, declaredInputs } from "./results";
 import { checkClaims } from "./validate";
 
-const INPUTS: Digest = `sha256:${"1".repeat(64)}`;
+const INPUTS = declaredInputs(`sha256:${"1".repeat(64)}`, { "R1.x": 3 });
 
 const theory: Claim = {
   local_id: "T1",
@@ -53,6 +53,35 @@ describe("checkClaims", () => {
       issues: [
         { path: "/0/evidence", message: expect.stringContaining("Empirical claims") },
         { path: "/1/confidence", message: expect.any(String) },
+      ],
+    });
+  });
+
+  it("reports undeclared results and missing evidence files at their evidence items", () => {
+    const encoder = new TextEncoder();
+    const files = new Map([
+      ["results/R1.json", encoder.encode('{"x": 3}')],
+      ["data/a.csv", encoder.encode("a\n1\n")],
+    ]);
+    const check = checkClaims(
+      [
+        theory,
+        {
+          ...experiment,
+          evidence: [
+            { result: "R1.x", produced_by: "code/run.py" },
+            { result: "R1.y", measured: "data/a.csv" },
+            { result: "R1.y", measured: "data/a.csv" },
+          ],
+        },
+      ],
+      bundleInputs(files, INPUTS.verificationInputs),
+    );
+    expect(check).toEqual({
+      valid: false,
+      issues: [
+        { path: "/1/evidence/1/result", message: "results/R1.json has no value at y" },
+        { path: "/1/evidence/0/produced_by", message: "The bundle has no code/run.py" },
       ],
     });
   });

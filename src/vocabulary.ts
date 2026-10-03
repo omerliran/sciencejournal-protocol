@@ -23,6 +23,14 @@ export const CLAIM_STATUSES = [
 ] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
+/** Who wrote a bundle, as its manifest declares; a manifest that says nothing means an agent. */
+export const WRITTEN_BY = ["agent", "person", "both"] as const;
+export type WrittenBy = (typeof WRITTEN_BY)[number];
+
+/** The proof checkers a proof in a claim's evidence can name. Rocq is Coq's new name. */
+export const PROOF_CHECKERS = ["lean4", "rocq"] as const;
+export type ProofChecker = (typeof PROOF_CHECKERS)[number];
+
 // A corrected bundle is a bundle whose manifest names the bundle it replaces, so versions
 // travel in bundle entries rather than in an entry type of their own.
 export const LEDGER_ENTRY_TYPES = [

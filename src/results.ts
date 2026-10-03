@@ -1,0 +1,100 @@
+import type { Digest } from "./hash";
+import { parseJson } from "./json";
+
+/**
+ * Where a declared result lives: `R3.loss_delta` is the value at `loss_delta` in
+ * `results/R3.json`, further dots go deeper, and a decimal key picks an array element.
+ * Null for references of any other shape.
+ */
+export function resultLocation(reference: string): { path: string; keys: string[] } | null {
+  const [name, ...keys] = reference.split(".");
+  if (!name || name.includes("/") || keys.length === 0 || keys.some((key) => key === "")) return null;
+  return { path: `results/${name}.json`, keys };
+}
+
+/** A result an evidence item names that the bundle doesn't declare. */
+export class ResultError extends Error {
+  override name = "ResultError";
+}
+
+/**
+ * What a claim with evidence binds besides its own fields: the bundle's verification inputs
+ * and the declared value of each result its evidence names.
+ */
+export interface BundleInputs {
+  /** The digest of every file under code/, env/, data/, and proofs/, from digestBundle. */
+  verificationInputs: Digest;
+  /** The declared value of a result such as `R3.loss_delta`. Throws ResultError if there is none. */
+  result(reference: string): unknown;
+  /** Whether the bundle has a file at this path. Omitted when only the inputs are known. */
+  has?(path: string): boolean;
+}
+
+/** The inputs claims bind to, read from a bundle's files. */
+export function bundleInputs(
+  files: ReadonlyMap<string, Uint8Array>,
+  verificationInputs: Digest,
+): BundleInputs {
+  const parsed = new Map<string, unknown>();
+  const read = (path: string): unknown => {
+    if (!parsed.has(path)) {
+      const bytes = files.get(path);
+      if (!bytes) throw new ResultError(`There is no ${path}`);
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        throw new ResultError(`${path} is not UTF-8`);
+      }
+      try {
+        parsed.set(path, parseJson(text));
+      } catch (error) {
+        throw new ResultError(`${path} is not valid JSON: ${(error as Error).message}`);
+      }
+    }
+    return parsed.get(path);
+  };
+
+  return {
+    verificationInputs,
+    result(reference) {
+      const location = resultLocation(reference);
+      if (!location) {
+        throw new ResultError(`"${reference}" is not a result name such as R3.loss_delta`);
+      }
+      const value = valueAt(read(location.path), location.keys);
+      if (value === undefined) {
+        throw new ResultError(`${location.path} has no value at ${location.keys.join(".")}`);
+      }
+      return value;
+    },
+    has: (path) => files.has(path),
+  };
+}
+
+/** Inputs given directly: the verification inputs digest and each result's declared value. */
+export function declaredInputs(verificationInputs: Digest, results: Readonly<Record<string, unknown>>): BundleInputs {
+  return {
+    verificationInputs,
+    result(reference) {
+      if (!Object.hasOwn(results, reference)) throw new ResultError(`results has no "${reference}"`);
+      return results[reference];
+    },
+  };
+}
+
+function valueAt(value: unknown, keys: readonly string[]): unknown {
+  let current = value;
+  for (const key of keys) {
+    if (Array.isArray(current)) {
+      if (!/^(0|[1-9][0-9]*)$/.test(key)) return undefined;
+      current = current[Number(key)];
+    } else if (typeof current === "object" && current !== null) {
+      if (!Object.hasOwn(current, key)) return undefined;
+      current = (current as Record<string, unknown>)[key];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}

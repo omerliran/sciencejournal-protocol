@@ -12,6 +12,8 @@ export * from "./manifest";
 export * from "./merkle";
 export * from "./passkey";
 export * from "./receipts";
+export * from "./references";
+export * from "./results";
 export * from "./rounds";
 export * from "./signing";
 export * from "./validate";

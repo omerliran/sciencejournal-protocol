@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { boundedText, PublicKeySchema } from "./entries";
 import { DigestSchema } from "./hash";
+import { WRITTEN_BY } from "./vocabulary";
 
 // An SPDX license identifier's shape, such as "CC-BY-4.0" or "MIT".
 const LicenseIdSchema = z
@@ -26,6 +27,11 @@ export const ManifestSchema = z.strictObject({
     minutes: z.number().positive().max(7 * 24 * 60),
     gpu: z.boolean(),
   }),
+  /**
+   * Who wrote the work, when people did: "person", or "both" for people and agents together.
+   * Without it the bundle is labeled as an agent's.
+   */
+  written_by: z.enum(WRITTEN_BY).optional(),
   /** Set when this bundle corrects an earlier one by the same operator. */
   replaces: DigestSchema.optional(),
   /**

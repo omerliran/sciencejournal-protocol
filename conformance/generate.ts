@@ -20,6 +20,7 @@ import {
   canonicalJson,
   ClaimsFileSchema,
   consistencyProof,
+  declaredInputs,
   digestBundle,
   EMPTY_ROOT,
   inclusionProof,
@@ -28,6 +29,7 @@ import {
   leafHash,
   memorySource,
   parseJson,
+  ResultError,
   rootHash,
   sign,
   signingPayload,
@@ -52,7 +54,7 @@ function mustReject(name: string, check: () => boolean) {
   try {
     accepted = check();
   } catch (error) {
-    if (error instanceof JsonError || error instanceof BundleLayoutError) return;
+    if (error instanceof JsonError || error instanceof BundleLayoutError || error instanceof ResultError) return;
     throw error;
   }
   if (accepted) throw new Error(`The reference implementation accepts the invalid case "${name}"`);
@@ -86,11 +88,19 @@ const claim = (overrides: Partial<Claim> & Pick<Claim, "local_id">): Claim => ({
   ...overrides,
 });
 
-const claimCases: { name: string; claims: Claim[] | string; verification_inputs: Digest }[] = [
+// Each case gives the declared value of every result its claims name, as results/*.json
+// would hold them; a claim with evidence binds the values it names.
+const claimCases: {
+  name: string;
+  claims: Claim[] | string;
+  verification_inputs: Digest;
+  results: Record<string, unknown>;
+}[] = [
   {
     name: "one theoretical claim, no evidence, so the verification inputs don't matter",
     claims: [claim({ local_id: "T1", statement: "Every finite group of prime order is cyclic." })],
     verification_inputs: INPUTS_A,
+    results: {},
   },
   {
     name: "an empirical claim binds the verification inputs",
@@ -105,6 +115,7 @@ const claimCases: { name: string; claims: Claim[] | string; verification_inputs:
       }),
     ],
     verification_inputs: INPUTS_A,
+    results: { "R1.loss_delta": -0.031 },
   },
   {
     name: "the same empirical claim with different verification inputs gets a different ID",
@@ -119,6 +130,22 @@ const claimCases: { name: string; claims: Claim[] | string; verification_inputs:
       }),
     ],
     verification_inputs: INPUTS_B,
+    results: { "R1.loss_delta": -0.031 },
+  },
+  {
+    name: "the same empirical claim with a corrected result gets a different ID",
+    claims: [
+      claim({
+        local_id: "E1",
+        type: "empirical",
+        statement: "Method X lowers validation loss vs. baseline Y on dataset Z across 5 seeds.",
+        evidence: [{ result: "R1.loss_delta", produced_by: "code/eval.py", tolerance: 0.002 }],
+        falsified_if: "A re-run with 5 fresh seeds yields no significant improvement.",
+        confidence: 0.8,
+      }),
+    ],
+    verification_inputs: INPUTS_A,
+    results: { "R1.loss_delta": -0.029 },
   },
   {
     name: "local dependencies declared out of order, repeated, and mixed with a ledger ID",
@@ -128,6 +155,7 @@ const claimCases: { name: string; claims: Claim[] | string; verification_inputs:
       claim({ local_id: "C2", depends_on: ["C1"] }),
     ],
     verification_inputs: INPUTS_A,
+    results: {},
   },
   {
     name: "a claim without evidence inherits the inputs through an empirical dependency",
@@ -140,6 +168,7 @@ const claimCases: { name: string; claims: Claim[] | string; verification_inputs:
       claim({ local_id: "T1", depends_on: ["E1"] }),
     ],
     verification_inputs: INPUTS_B,
+    results: { "R2.accuracy": 0.9137 },
   },
   {
     name: "non-ASCII text, quotes, and a control character in strings",
@@ -152,6 +181,68 @@ const claimCases: { name: string; claims: Claim[] | string; verification_inputs:
       }),
     ],
     verification_inputs: INPUTS_A,
+    results: {},
+  },
+  {
+    name: "two claims reading different results: correcting one result changes only its reader (first)",
+    claims: [
+      claim({ local_id: "A1", type: "empirical", evidence: [{ result: "R6.speedup", produced_by: "code/bench.py", tolerance: 0.05 }] }),
+      claim({ local_id: "A2", type: "empirical", evidence: [{ result: "R6.memory_mb", produced_by: "code/bench.py", tolerance: 1 }] }),
+    ],
+    verification_inputs: INPUTS_A,
+    results: { "R6.speedup": 1.84, "R6.memory_mb": 512 },
+  },
+  {
+    name: "two claims reading different results: correcting one result changes only its reader (second)",
+    claims: [
+      claim({ local_id: "A1", type: "empirical", evidence: [{ result: "R6.speedup", produced_by: "code/bench.py", tolerance: 0.05 }] }),
+      claim({ local_id: "A2", type: "empirical", evidence: [{ result: "R6.memory_mb", produced_by: "code/bench.py", tolerance: 1 }] }),
+    ],
+    verification_inputs: INPUTS_A,
+    results: { "R6.speedup": 1.79, "R6.memory_mb": 512 },
+  },
+  {
+    name: "a measurement binds the value read from its raw record",
+    claims: [
+      claim({
+        local_id: "M1",
+        type: "empirical",
+        statement: "Compound K melts at 151.8 °C at atmospheric pressure.",
+        evidence: [{ result: "R7.melting_point_c", measured: "data/dsc/run1.csv", tolerance: 0.5 }],
+      }),
+    ],
+    verification_inputs: INPUTS_A,
+    results: { "R7.melting_point_c": 151.8 },
+  },
+  {
+    name: "a proof binds the verification inputs and no results",
+    claims: [
+      claim({
+        local_id: "P1",
+        statement: "Every finite group of prime order is cyclic.",
+        evidence: [{ proof: "proofs/PrimeOrder.lean", theorem: "PrimeOrder.cyclic_of_prime_card", checker: "lean4" }],
+      }),
+    ],
+    verification_inputs: INPUTS_B,
+    results: {},
+  },
+  {
+    name: "results that aren't numbers, and one result named twice, which binds once",
+    claims: [
+      claim({
+        local_id: "V1",
+        type: "empirical",
+        evidence: [
+          { result: "R8.series.2", produced_by: "code/run.py" },
+          { result: "R8.meta", produced_by: "code/run.py" },
+          { result: "R8.label", measured: "data/notes.txt" },
+          { result: "R8.none", produced_by: "code/run.py" },
+          { result: "R8.series.2", produced_by: "code/other.py" },
+        ],
+      }),
+    ],
+    verification_inputs: INPUTS_A,
+    results: { "R8.series.2": 0.25, "R8.meta": { runs: [1, 2.5], ok: true }, "R8.label": "Ångström", "R8.none": null },
   },
 ];
 
@@ -166,6 +257,7 @@ claimCases.push(
       `"N1", "type": "negative_result", "statement": "Treatment T has no effect on outcome O.", "evidence": [{"result": "R3.effect", "produced_by": "code/run.py", "tolerance": 0.0}], "confidence": 1.0`,
     ),
     verification_inputs: INPUTS_A,
+    results: { "R3.effect": 1 },
   },
   {
     name: "very small numbers, as Python writes them",
@@ -173,6 +265,7 @@ claimCases.push(
       `"N2", "type": "empirical", "statement": "Estimator E converges at the predicted rate.", "evidence": [{"result": "R4.a", "produced_by": "code/run.py", "tolerance": 1e-07}, {"result": "R4.b", "produced_by": "code/run.py", "tolerance": 1e-05}, {"result": "R4.c", "produced_by": "code/run.py", "tolerance": 1.5e-10}, {"result": "R4.d", "produced_by": "code/run.py", "tolerance": 5e-324}], "confidence": 0.0001`,
     ),
     verification_inputs: INPUTS_A,
+    results: { "R4.a": 1e-7, "R4.b": 0.00001, "R4.c": 1.5e-10, "R4.d": 5e-324 },
   },
   {
     name: "very large numbers and binary-fraction artifacts, as Python writes them",
@@ -180,6 +273,7 @@ claimCases.push(
       `"N3", "type": "empirical", "statement": "Simulation S conserves energy to the stated tolerance.", "evidence": [{"result": "R5.a", "produced_by": "code/run.py", "tolerance": 1e+16}, {"result": "R5.b", "produced_by": "code/run.py", "tolerance": 1e+21}, {"result": "R5.c", "produced_by": "code/run.py", "tolerance": 123456789.125}], "confidence": 0.30000000000000004`,
     ),
     verification_inputs: INPUTS_A,
+    results: { "R5.a": 1e16, "R5.b": 1e21, "R5.c": 0.30000000000000004 },
   },
 );
 
@@ -220,6 +314,26 @@ const invalidClaims = [
   },
   { name: "a local ID ending in a newline", claims_json: valid({ local_id: "C1\n" }) },
   {
+    name: "an evidence item that is two kinds at once",
+    claims_json: valid({ type: "empirical", evidence: [{ result: "R1.x", produced_by: "code/run.py", measured: "data/x.csv" }] }),
+  },
+  {
+    name: "a computation outside code/",
+    claims_json: valid({ type: "empirical", evidence: [{ result: "R1.x", produced_by: "run.py" }] }),
+  },
+  {
+    name: "a measurement outside data/",
+    claims_json: valid({ type: "empirical", evidence: [{ result: "R1.x", measured: "results/R1.json" }] }),
+  },
+  {
+    name: "a proof with a checker the protocol doesn't name",
+    claims_json: valid({ evidence: [{ proof: "proofs/A.thy", theorem: "A.t", checker: "isabelle" }] }),
+  },
+  {
+    name: "a result name with no key",
+    claims_json: valid({ type: "empirical", evidence: [{ result: "R1", produced_by: "code/run.py" }] }),
+  },
+  {
     name: "an integer outside binary64",
     claims_json: valid({
       type: "empirical",
@@ -231,18 +345,36 @@ for (const { name, claims_json } of invalidClaims) {
   mustReject(name, () => ClaimsFileSchema.safeParse(parseJson(claims_json)).success);
 }
 
+// Valid claims whose bundle doesn't declare a result they name: no ID can be computed.
+const unresolved = [
+  {
+    name: "a result the bundle doesn't declare",
+    claims_json: valid({ type: "empirical", evidence: [{ result: "R1.x", produced_by: "code/run.py" }] }),
+    verification_inputs: INPUTS_A,
+    results: { "R1.y": 1 },
+  },
+];
+for (const { name, claims_json, verification_inputs, results } of unresolved) {
+  mustReject(name, () => {
+    assignClaimIds(ClaimsFileSchema.parse(parseJson(claims_json)), declaredInputs(verification_inputs, results));
+    return true;
+  });
+}
+
 write("claim-id-vectors.json", {
   description:
-    "For each case, the exact text of a claims.json file, the bundle's verification inputs, and the claim ID of every claim in it. Every file under invalid must be rejected.",
+    "For each case, the exact text of a claims.json file, the bundle's verification inputs, the declared value of each result its claims name, and the claim ID of every claim in it. A claim with evidence binds the verification inputs and, when its evidence names results, a results object mapping each name to its value. Every file under invalid must be rejected, and every case under unresolved must fail because a named result isn't declared.",
   invalid: invalidClaims,
-  cases: claimCases.map(({ name, claims, verification_inputs }) => {
+  unresolved,
+  cases: claimCases.map(({ name, claims, verification_inputs, results }) => {
     const claimsJson = typeof claims === "string" ? claims : JSON.stringify(claims);
     const parsed = ClaimsFileSchema.parse(JSON.parse(claimsJson));
-    const ids = assignClaimIds(parsed, verification_inputs);
+    const ids = assignClaimIds(parsed, declaredInputs(verification_inputs, results));
     return {
       name,
       claims_json: claimsJson,
       verification_inputs,
+      results,
       expected: Object.fromEntries(parsed.map((c) => [c.local_id, ids.get(c.local_id)])),
     };
   }),
@@ -309,7 +441,7 @@ for (const { name, paths } of invalidPaths) {
 
 write("bundle-vectors.json", {
   description:
-    "For each case, the files (base64) and their digests: per file, the bundle hash (every file but signature), and the verification inputs (every file under code/, env/, data/, results/, proofs/). Every path set under invalid must be rejected.",
+    "For each case, the files (base64) and their digests: per file, the bundle hash (every file but signature), and the verification inputs (every file under code/, env/, data/, proofs/; declared results under results/ are bound claim by claim instead). Every path set under invalid must be rejected.",
   invalid: invalidPaths,
   cases: bundleCases.map(({ name, files }) => {
     const digests = digestBundle(files);

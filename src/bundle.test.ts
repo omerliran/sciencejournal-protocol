@@ -38,7 +38,7 @@ describe("digestBundle", () => {
     expect(resigned.files.signature).not.toBe(signed.files.signature);
   });
 
-  it.each(["code/eval.py", "env/lock.txt", "data/rows.csv", "results/R3.json", "proofs/t.lean"])(
+  it.each(["code/eval.py", "env/lock.txt", "data/rows.csv", "proofs/t.lean"])(
     "changes the verification inputs when %s changes",
     (path) => {
       const before = digestBundle(bundle(base));
@@ -48,9 +48,10 @@ describe("digestBundle", () => {
     },
   );
 
-  it("keeps the verification inputs when only prose or metadata changes", () => {
+  it.each(["paper.md", "results/R3.json"])("keeps the verification inputs when %s changes", (path) => {
+    // Prose binds nothing; each claim binds the declared results it names itself.
     const before = digestBundle(bundle(base));
-    const after = digestBundle(bundle({ ...base, "paper.md": "# Summary, revised" }));
+    const after = digestBundle(bundle({ ...base, [path]: "changed" }));
     expect(after.verificationInputs).toBe(before.verificationInputs);
     expect(after.bundle).not.toBe(before.bundle);
   });
