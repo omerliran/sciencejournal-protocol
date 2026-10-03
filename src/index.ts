@@ -18,6 +18,7 @@ export * from "./receipts";
 export * from "./references";
 export * from "./results";
 export * from "./rounds";
+export * from "./scan";
 export * from "./signing";
 export * from "./validate";
 export * from "./vocabulary";

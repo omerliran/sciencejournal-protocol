@@ -1,3 +1,4 @@
+import { canonicalJson } from "./canonical";
 import type { Digest } from "./hash";
 import { parseJson } from "./json";
 
@@ -92,6 +93,35 @@ export function declaredInputs(verificationInputs: Digest, results: Readonly<Rec
       return results[reference];
     },
   };
+}
+
+/**
+ * Whether a result agrees with the value declared for it: a number within `tolerance` of the
+ * declared number (equal to it when there is no tolerance), and any other value exactly equal,
+ * as canonical JSON. Numbers are compared as the decimals canonical JSON writes them, the
+ * shortest that read back as the same binary64 value, in exact arithmetic, so every
+ * implementation agrees at the edge: 1.1 is within 0.1 of 1, though in binary64 the
+ * difference is slightly more than 0.1.
+ */
+export function resultAgrees(produced: unknown, declared: unknown, tolerance?: number): boolean {
+  if (produced === undefined || declared === undefined) return false;
+  if (typeof produced !== "number" || typeof declared !== "number") {
+    return canonicalJson(produced) === canonicalJson(declared);
+  }
+  const [p, d, t] = [produced, declared, tolerance ?? 0].map(decimal);
+  const exponent = Math.min(p.exponent, d.exponent, t.exponent);
+  const scaled = ({ units, exponent: e }: Decimal) => units * BigInt(10) ** BigInt(e - exponent);
+  const difference = scaled(p) - scaled(d);
+  return (difference < BigInt(0) ? -difference : difference) <= scaled(t);
+}
+
+type Decimal = { units: bigint; exponent: number };
+
+/** A number as RFC 8785 writes it (ECMAScript's shortest round trip), as units times 10^exponent. */
+function decimal(value: number): Decimal {
+  const [mantissa, exponent = "0"] = String(value).split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  return { units: BigInt(whole + fraction), exponent: Number(exponent) - fraction.length };
 }
 
 function valueAt(value: unknown, keys: readonly string[]): unknown {

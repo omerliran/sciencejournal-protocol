@@ -1,0 +1,259 @@
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { digestEvidence } from "../bundle";
+import { HIDDEN_KINDS, revealHidden } from "../scan";
+import { code, plural, seconds, shown, size } from "./format";
+import { listOutputs, readOutput, removeTree, sha256Output, under, writeJsonFile, writeUnder, type LogTail } from "./files";
+import type { ScanRecord } from "./job";
+import { describePlan, type CommandPlan, type ImageInfo, type Limits, type RunResult } from "./sandbox";
+import type { MatchedResult, ReproducedResult, VerdictsRecord } from "./verdicts";
+
+/**
+ * What the harness puts in the evidence, which the reference node takes up to 10 MB of. The
+ * rest of that is room for whatever the verifier adds.
+ */
+export const EVIDENCE_BUDGET = 8 * 1024 * 1024;
+/** The most result files the evidence carries; the node takes 1,000 files in all. */
+const RESULT_FILES = 900;
+export const RUN_LOG = { head: 512 * 1024, tail: 512 * 1024 };
+export const BUILD_LOG = { head: 128 * 1024, tail: 128 * 1024 };
+
+/** run.json, and the evidence's environment.json: how the run went. */
+export interface RunRecord {
+  harness: string;
+  subject: { kind: string; job?: string; bundle: string; verification_inputs: string; declared_minutes: number };
+  host: { platform: string; arch: string; node: string };
+  engine?: { name: string; version: string };
+  image?: ImageInfo;
+  command?: CommandPlan;
+  limits?: Limits;
+  result?: RunResult;
+  /** Why the run didn't happen or didn't finish. */
+  failure?: string;
+  /** Set by compare: when the comparison was made again, and whether the results changed after the run. */
+  compared_again?: { at: string; changed_after_run: boolean };
+}
+
+/**
+ * Copies what the run wrote under results/ into evidence/results/: first the files the claims
+ * name, then the smallest, while they fit the budget and the evidence path rules. The rest are
+ * listed with their digests, so they can still be checked. Only regular files are copied.
+ */
+export async function copyResults(
+  outDir: string,
+  named: ReadonlySet<string>,
+  budget: number,
+): Promise<NonNullable<VerdictsRecord["results_files"]>> {
+  const workspace = join(outDir, "workspace");
+  await removeTree(join(outDir, "evidence", "results"));
+  const listed = await listOutputs(join(workspace, "results"));
+  const files = await Promise.all(
+    listed.files.map(async (path) => ({ path: `results/${path}`, bytes: (await stat(under(workspace, `results/${path}`))).size })),
+  );
+  files.sort((a, b) => Number(named.has(b.path)) - Number(named.has(a.path)) || a.bytes - b.bytes || (a.path < b.path ? -1 : 1));
+  const copied: string[] = [];
+  const omitted: { path: string; bytes?: number; digest?: string; reason: string }[] = listed.others.map((path) => ({
+    path: `results/${path}`,
+    reason: "not a regular file, so the harness didn't open it",
+  }));
+  const accepted = new Map<string, Uint8Array>();
+  let used = 0;
+  for (const file of files) {
+    const leaveOut = async (reason: string) =>
+      omitted.push({ path: file.path, bytes: file.bytes, digest: `sha256:${await sha256Output(workspace, file.path)}`, reason });
+    if (used + file.bytes > budget || copied.length >= RESULT_FILES) {
+      await leaveOut("to stay under the evidence limit");
+      continue;
+    }
+    try {
+      digestEvidence(new Map([...accepted, [file.path, new Uint8Array()]]));
+    } catch (error) {
+      await leaveOut(`because its name breaks the evidence path rules (${(error as Error).message})`);
+      continue;
+    }
+    await writeUnder(join(outDir, "evidence"), file.path, await readOutput(workspace, file.path, budget));
+    accepted.set(file.path, new Uint8Array());
+    used += file.bytes;
+    copied.push(file.path);
+  }
+  return { copied, omitted };
+}
+
+/** Writes the run's logs into the evidence. */
+export async function writeLogs(outDir: string, logs: { run?: LogTail; build?: LogTail }): Promise<void> {
+  const evidence = join(outDir, "evidence");
+  await mkdir(evidence, { recursive: true });
+  for (const [name, log] of Object.entries(logs)) {
+    if (log && log.total > 0) await writeFile(join(evidence, `${name}.log`), log.bytes());
+  }
+}
+
+/** What the logs and other harness files take, so the results get the rest of the budget. */
+export async function logBytes(outDir: string): Promise<number> {
+  let total = 64 * 1024; // room for report.md and environment.json
+  for (const name of ["run.log", "build.log"]) total += (await stat(join(outDir, "evidence", name)).catch(() => null))?.size ?? 0;
+  return total;
+}
+
+/** Writes evidence/report.md and evidence/environment.json. */
+export async function writeReport(outDir: string, run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): Promise<void> {
+  const evidence = join(outDir, "evidence");
+  await mkdir(evidence, { recursive: true });
+  if (run) {
+    const environment: Partial<RunRecord> = { ...run };
+    delete environment.subject;
+    await writeJsonFile(join(evidence, "environment.json"), environment);
+  }
+  await writeFile(join(evidence, "report.md"), renderReport(run, verdicts, scan));
+}
+
+export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): string {
+  const title = { reproduction: "Reproduction report", self_check: "Self-check report", replication_match: "Replication match report" }[verdicts.kind];
+  const lines = [
+    `# ${title}`,
+    "",
+    `Made by ${verdicts.harness}${verdicts.job ? ` for job ${verdicts.job}` : ""}, on bundle \`${verdicts.bundle}\`${run ? `, whose verification inputs are \`${run.subject.verification_inputs}\`` : ""}.`,
+  ];
+  if (run) lines.push("", "## How it ran", "", ...howItRan(run));
+
+  lines.push("", "## Verdicts", "", "| Claim | Verdict | Chosen by | Why |", "| --- | --- | --- | --- |");
+  for (const claim of verdicts.claims) {
+    lines.push(`| ${code(claim.local_id)} | ${claim.verdict} | ${claim.by === "harness" ? "the harness" : "the verifier"} | ${cell(claim.reason)} |`);
+  }
+  lines.push("", `Claim IDs: ${verdicts.claims.map((claim) => `${claim.local_id} is \`${claim.claim_id}\``).join("; ")}.`);
+  if (verdicts.over_budget) lines.push("", "Reported over budget: the work took more than the minutes its bundle declares.");
+
+  if (verdicts.kind === "replication_match") {
+    lines.push(
+      "",
+      "## Results",
+      "",
+      "| Claim | Result | Original claim | Its result | Replication | Original | Tolerance | Agrees |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    );
+    for (const claim of verdicts.claims) {
+      for (const result of claim.results as MatchedResult[]) {
+        lines.push(
+          `| ${code(claim.local_id)} | ${code(result.result)} | \`${result.original}\` | ${code(result.original_result)} | ${value(result.replication)} | ${value(result.original_value)} | ${result.tolerance ?? "exact"} | ${agrees(result)} |`,
+        );
+      }
+    }
+  } else {
+    lines.push(
+      "",
+      "## Results",
+      "",
+      "| Claim | Result | Produced by | Declared | Produced | Tolerance | Agrees |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+    );
+    for (const claim of verdicts.claims) {
+      for (const result of claim.results as ReproducedResult[]) {
+        lines.push(
+          `| ${code(claim.local_id)} | ${code(result.result)} | ${code(result.produced_by)} | ${value(result.declared)} | ${value(result.produced)} | ${result.tolerance ?? "exact"} | ${agrees(result)} |`,
+        );
+      }
+    }
+    lines.push(
+      "",
+      "A number agrees when it lands within its tolerance of the declared value, compared as the decimals canonical JSON writes; anything else must be equal.",
+    );
+  }
+
+  if (scan) lines.push("", "## Hidden content", "", ...hiddenContent(scan));
+  lines.push("", "## Files", "", ...files(run, verdicts));
+  return `${lines.join("\n")}\n`;
+}
+
+function howItRan(run: RunRecord): string[] {
+  const lines: string[] = [];
+  if (run.engine) lines.push(`- **Engine:** ${run.engine.name} ${run.engine.version}, on ${run.host.platform} ${run.host.arch} with Node ${run.host.node}.`);
+  if (run.image) {
+    const digests = run.image.digests.length > 0 ? ` Registry digest: ${run.image.digests.map((d) => `\`${d}\``).join(", ")}.` : "";
+    lines.push(
+      `- **Image:** \`${run.image.ref}\`, ${describePlan(run.image.plan)}${run.image.reused ? " (built or pulled before, and used again)" : ""}. Image ID \`${run.image.id}\`.${digests}`,
+    );
+  }
+  if (run.command) {
+    const from = { given: "given by the verifier", "code/run": "the bundle's code/run", produced_by: "the files the computations name" }[run.command.from];
+    lines.push(`- **Command:** ${code(run.command.command)}, from ${from}, run from the bundle's root.`);
+  }
+  if (run.limits) {
+    const declared = run.subject.declared_minutes;
+    const time = run.limits.minutes === declared * 1.5 ? `${minutes(run.limits.minutes)} (1.5 times the ${minutes(declared)} the bundle declares)` : `${minutes(run.limits.minutes)} (the bundle declares ${minutes(declared)})`;
+    lines.push(
+      `- **Limits:** no network, every capability dropped, no new privileges, at most ${run.limits.pids} processes, ${run.limits.memory} of memory, ${plural(run.limits.cpus, "CPU")}, and ${time}.`,
+    );
+  }
+  if (run.result) {
+    const r = run.result;
+    const outcome = r.timedOut
+      ? `stopped at the time limit, after ${seconds(r.seconds)}`
+      : r.outOfMemory
+        ? `ran out of memory and was stopped (exit code ${r.exitCode}) after ${seconds(r.seconds)}`
+        : `exit code ${r.exitCode} after ${seconds(r.seconds)}`;
+    lines.push(`- **Outcome:** ${outcome}. Started ${r.startedAt}, finished ${r.finishedAt}.`);
+  }
+  if (run.failure) lines.push(`- **Didn't run to the end:** ${run.failure}`);
+  if (run.compared_again) {
+    lines.push(
+      `- **Compared again** at ${run.compared_again.at}.${run.compared_again.changed_after_run ? " The results changed after the harness's run finished, so at least some of them come from work done outside it." : ""}`,
+    );
+  }
+  return lines;
+}
+
+function hiddenContent(scan: ScanRecord): string[] {
+  if (scan.findings.length === 0) {
+    return [`Before any model read the bundle, the harness's scan found nothing hidden in its ${plural(scan.scanned.length, "text file")}.`];
+  }
+  return [
+    `Before any model read the bundle, the harness's scan found ${plural(scan.findings.length, "thing")} hidden from a rendered view (each is in scan.json, with hidden characters made visible):`,
+    "",
+    ...scan.findings.slice(0, 50).map(
+      (finding) =>
+        `- ${code(finding.path)}, line ${finding.line}, column ${finding.column}: ${HIDDEN_KINDS[finding.kind].split(",")[0]}${finding.code_points ? ` (${finding.count}: ${finding.code_points.join(", ")})` : ""}: ${code(finding.excerpt)}`,
+    ),
+  ];
+}
+
+function files(run: RunRecord | null, verdicts: VerdictsRecord): string[] {
+  const lines: string[] = [];
+  if (run?.result) lines.push("- `run.log`: everything the run printed, or its start and end when it was long.");
+  if (run?.image && !run.image.reused && run.image.plan.from !== "given") lines.push("- `build.log`: building the image.");
+  if (run) lines.push("- `environment.json`: the machine, engine, image, command, limits, and outcome.");
+  for (const original of verdicts.originals ?? []) {
+    const fetched = Object.entries(original.files).map(([path, digest]) => `${code(path)} (\`${digest}\`)`);
+    lines.push(
+      `- \`${original.folder}/\`: the declared results of \`${original.claim}\`, from bundle \`${original.bundle}\`, as the node served them: ${fetched.join(", ") || "none"}.`,
+    );
+  }
+  const results = verdicts.results_files;
+  if (results) {
+    lines.push(
+      results.copied.length > 0
+        ? `- \`results/\`: the ${plural(results.copied.length, "file")} the run wrote under results/.`
+        : "- The run wrote nothing under results/.",
+    );
+    for (const file of results.omitted) {
+      const what = file.digest ? ` (${size(file.bytes ?? 0)}, \`${file.digest}\`)` : "";
+      lines.push(`- Left out ${file.reason}: ${code(file.path)}${what}.`);
+    }
+  }
+  return lines;
+}
+
+function agrees(result: { agrees: boolean | null; problem?: string }): string {
+  return result.agrees === null ? cell(`no: ${result.problem}`) : result.agrees ? "yes" : "**no**";
+}
+
+function value(v: unknown): string {
+  return v === undefined ? "none" : code(shown(v));
+}
+
+function cell(text: string): string {
+  return revealHidden(text).replaceAll("|", "\\|");
+}
+
+function minutes(value: number): string {
+  return plural(Math.round(value * 100) / 100, "minute");
+}

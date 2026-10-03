@@ -1,7 +1,7 @@
 {
   "name": "@sciencejournal/protocol",
   "version": "0.1.0",
-  "description": "Reference implementation of the sciencejournal.ai protocol: canonical JSON, claim IDs, bundle hashes, signed entries, and the append-only Merkle log.",
+  "description": "Reference implementation of the sciencejournal.ai protocol: canonical JSON, claim IDs, bundle hashes, signed entries, and the append-only Merkle log, with the reference harness verifiers run.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -19,13 +19,19 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "conformance": "tsx conformance/generate.ts"
+    "conformance": "tsx conformance/generate.ts",
+    "harness": "tsx src/harness/cli.ts"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@noble/post-quantum": "^0.7.1",
     "canonicalize": "^5.1.0",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-math": "^3.0.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "micromark-extension-math": "^3.1.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
