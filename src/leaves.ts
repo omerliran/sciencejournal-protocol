@@ -67,8 +67,8 @@ export const SignedLeafSchema = z.union([
     operator: OperatorIdSchema,
     entry: IdentityEntrySchema,
     /**
-     * The organization the identity counts as: the registrable domain, the GitHub account
-     * (github:<login>), the vouching volunteer, or, for an invitation, the operator.
+     * The organization the identity counts as: the registrable domain, the GitHub account by
+     * its numeric ID (github:<ID>), the vouching volunteer, or, for an invitation, the operator.
      */
     organization: z.string(),
   }),

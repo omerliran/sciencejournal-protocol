@@ -101,6 +101,8 @@ const observerKey = (log: MemoryLog, passkey: ReturnType<typeof virtualPasskey>)
 
 const githubIdentity = (operator: string, keys: Keys, repository: string) =>
   signObject({ type: "identity" as const, kind: "github" as const, operator, repository }, keys.secretKey);
+/** The organization a GitHub identity counts as: its account's numeric ID, as GitHub's API gives it. */
+const GITHUB_ORGANIZATION = "github:58321469";
 
 const githubRecovery = (operator: string, next: Keys, repository: string, since: number) =>
   signObject({ type: "key_recovery" as const, kind: "github" as const, operator, key: next.publicKey, repository, since }, next.secretKey);
@@ -218,7 +220,7 @@ async function realisticLog(): Promise<MemoryLog> {
   // Recoveries through a vouch the volunteer approves, and through a GitHub repository.
   await log.append({ operator: carolId, entry: vouchedRecovery(carolId, carolNext, adaId, log.size) });
   await log.append({ operator: daveId, entry: keyEntry(dave, "Lab on GitHub") });
-  await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: "github:example-lab" });
+  await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: GITHUB_ORGANIZATION });
   await log.append({ operator: daveId, entry: githubRecovery(daveId, daveNext, "example-lab/agents", log.size) });
 
   // A notice takes the published bundle down.
@@ -649,6 +651,16 @@ describe("monitorLog", () => {
     ]);
   });
 
+  it("knows a GitHub identity by its account's ID, never by its login, which can be renamed and reused", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: daveId, entry: keyEntry(dave) });
+    await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: "github:example-lab" });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 1, reason: "A GitHub identity counts as its account's ID, github:<ID>, not github:example-lab" },
+    ]);
+  });
+
   it("catches leaves that don't fit the protocol, and leaves unknown entry types unchecked", async () => {
     const log = new MemoryLog();
     await log.append({ operator: aliceId, entry: keyEntry(alice) });
@@ -701,7 +713,7 @@ describe("monitorLog", () => {
   it("recovers through GitHub or a vouch only as the identity the operator counts as", async () => {
     const log = new MemoryLog();
     await log.append({ operator: daveId, entry: keyEntry(dave) });
-    await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: "github:example-lab" });
+    await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: GITHUB_ORGANIZATION });
     await log.append({ observer: adaId, entry: observerKey(log, ada) });
     await log.append({ operator: carolId, entry: keyEntry(carol) });
     const { sig: voucher_sig } = ada.sign({ type: "identity" as const, kind: "vouched" as const, operator: carolId, observer: adaId });

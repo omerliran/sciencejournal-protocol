@@ -673,6 +673,11 @@ export class LogAuditor {
     switch (entry.kind) {
       case "domain":
       case "github":
+        // Which account a repository belongs to is GitHub's to say, but the organization's form
+        // is the log's: the account's numeric ID, which a renamed login keeps.
+        if (entry.kind === "github" && !/^github:[1-9][0-9]*$/.test(leaf.organization ?? "")) {
+          this.problem(index, "identity", `A GitHub identity counts as its account's ID, github:<ID>, not ${leaf.organization}`);
+        }
         this.notes.add("identity");
         return this.signedByOperator(index, entry.type, signed, operator, index);
       case "vouched": {
