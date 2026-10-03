@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
 import {
   detachSignatures,
-  KeyRecoveryEntrySchema,
   KeyRotationEntrySchema,
   keyRotationPayload,
   matchesLeafEntry,
@@ -12,6 +11,7 @@ import {
   verifyKeyRotation,
 } from "./entries";
 import { canonicalDigest } from "./hash";
+import { KeyRecoveryEntrySchema } from "./identity";
 import { LogLeafSchema } from "./leaves";
 import { generateKeyPair, verify } from "./signing";
 

@@ -6,7 +6,6 @@ import {
   AttestationEntrySchema,
   BundleEntrySchema,
   KeyEntrySchema,
-  KeyRecoveryEntrySchema,
   KeyRotationEntrySchema,
   OperatorIdSchema,
   detachSignatures,
@@ -14,7 +13,7 @@ import {
   SignatureSchema,
   type Detached,
 } from "./entries";
-import { IdentityEntrySchema } from "./identity";
+import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema } from "./hash";
 import { IdeaEntrySchema } from "./ideas";

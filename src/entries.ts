@@ -199,30 +199,3 @@ export function signKeyRotation(operator: string, newSecret: SigningKey, current
 export function verifyKeyRotation(entry: KeyRotationEntry, currentKey: string): boolean {
   return verify(entry.key_sig, keyRotationPayload(entry), entry.key) && verifyObject(entry, currentKey);
 }
-
-/**
- * An operator taking its ID back with a new key after losing the old one, proven by whatever
- * gave it its identity: its domain, whose record now names the new key, which signs the entry;
- * or the log, for an invited operator. Nothing the old key signed from log index `since` on
- * counts.
- */
-export const KeyRecoveryEntrySchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    type: z.literal("key_recovery"),
-    kind: z.literal("domain"),
-    operator: OperatorIdSchema,
-    key: PublicKeySchema,
-    domain: DomainSchema,
-    since: z.number().int().nonnegative(),
-    sig: SignatureSchema,
-  }),
-  z.strictObject({
-    type: z.literal("key_recovery"),
-    kind: z.literal("invited"),
-    operator: OperatorIdSchema,
-    key: PublicKeySchema,
-    since: z.number().int().nonnegative(),
-    sig: SignatureSchema,
-  }),
-]);
-export type KeyRecoveryEntry = z.infer<typeof KeyRecoveryEntrySchema>;
