@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ClaimIdSchema, LocalClaimIdSchema } from "./claims";
 import { TaskIdSchema } from "./fieldwork";
 import { IdeaIdSchema } from "./ideas";
+import { PreregistrationIdSchema } from "./preregistration";
 
 // references.json: what a bundle cites. Each reference's ID prefix says what it is, so there
 // is no role field to contradict it: a claim on the ledger, a field task whose records the
@@ -12,7 +13,7 @@ import { IdeaIdSchema } from "./ideas";
 const SupportsSchema = z.array(LocalClaimIdSchema).min(1).max(30).optional();
 
 const LedgerReferenceSchema = z.strictObject({
-  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema]),
+  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema]),
   claims: SupportsSchema,
 });
 

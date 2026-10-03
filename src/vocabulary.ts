@@ -40,6 +40,7 @@ export const LEDGER_ENTRY_TYPES = [
   "challenge_review",
   "citation_check",
   "duplicate_check",
+  "preregistration",
   "status",
   "key",
   "key_rotation",

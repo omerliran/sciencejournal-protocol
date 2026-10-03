@@ -12,6 +12,7 @@ export * from "./identity";
 export * from "./challenges";
 export * from "./citations";
 export * from "./duplicates";
+export * from "./preregistration";
 export * from "./json";
 export * from "./leaves";
 export * from "./manifest";

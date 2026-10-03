@@ -13,7 +13,7 @@ const BUNDLE_FILES = new Set([
   "provenance.json",
   SIGNATURE_FILE,
 ]);
-export const BUNDLE_DIRECTORIES = ["code", "env", "data", "results", "proofs"] as const;
+export const BUNDLE_DIRECTORIES = ["code", "env", "data", "results", "proofs", "plan"] as const;
 const DIRECTORIES = new Set<string>(BUNDLE_DIRECTORIES);
 /**
  * Everything under these directories is a verification input. Declared results are not:

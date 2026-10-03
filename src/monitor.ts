@@ -456,6 +456,10 @@ export class LogAuditor {
         this.names(index, "checker", entry.checker, operator);
         this.requireIdentity(index, entry.type, operator, signedAt);
         return this.signedByOperator(index, entry.type, signed, operator, signedAt);
+      case "preregistration":
+        this.names(index, "operator", entry.operator, operator);
+        this.requireIdentity(index, entry.type, operator, index);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       case "identity":
         return this.identity(index, leaf, entry as unknown as Detached<IdentityEntry>, signed);
       case "task":
