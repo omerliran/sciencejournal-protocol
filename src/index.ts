@@ -8,6 +8,7 @@ export * from "./fieldwork";
 export * from "./hash";
 export * from "./ideas";
 export * from "./identity";
+export * from "./challenges";
 export * from "./json";
 export * from "./leaves";
 export * from "./manifest";

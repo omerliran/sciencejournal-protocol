@@ -37,6 +37,7 @@ export const LEDGER_ENTRY_TYPES = [
   "bundle",
   "attestation",
   "challenge",
+  "challenge_review",
   "status",
   "key",
   "key_rotation",
@@ -54,11 +55,13 @@ export const LEDGER_ENTRY_TYPES = [
 ] as const;
 
 /**
- * How an operator's identity was established: a domain it proved control of over DNS, or an
- * invitation from the node. Statuses count independent verifiers by identity, not by key.
+ * How an operator's identity was established: a domain it proved over DNS, a GitHub account
+ * it proved through a repository, a volunteer's vouch it countersigned, or an invitation from
+ * the node. Statuses count independent verifiers by identity, not by key.
  */
 export const IDENTITY_KINDS = ["domain", "github", "vouched", "invited"] as const;
 export type IdentityKind = (typeof IDENTITY_KINDS)[number];
+export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number];
 
 /**
  * The algorithm every operator key and every signature uses: a hybrid of Ed25519 and
@@ -78,7 +81,6 @@ export const DOMAIN_RECORD_PREFIX = "sciencejournal-operator=";
  * of a public repository it owns, holding a line made the same way as the DNS record.
  */
 export const GITHUB_PROOF_FILE = ".sciencejournal";
-export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number];
 
 /** Verification jobs, and the verdict a verifier may give each claim in one. */
 export const ATTESTATION_JOBS = {
@@ -99,10 +101,11 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 
 /**
  * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
- * (when its computations can't be re-run while it is sealed), reviewing a hazard concern, or
- * checking whether a published replication matches the claims it replicates.
+ * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
+ * checking whether a published replication matches the claims it replicates, or reviewing a
+ * challenge to a claim.
  */
-export const JOB_KINDS = ["reproduction", "screen", "hazard_review", "replication_match"] as const;
+export const JOB_KINDS = ["reproduction", "screen", "hazard_review", "replication_match", "challenge_review"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -123,6 +126,25 @@ export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 
 /** The withdrawals a person at the node makes on a notice, rather than a panel or a recovery. */
 export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data"] as const satisfies readonly WithdrawalReason[];
+
+/**
+ * Why a claim is challenged: re-running the work doesn't give the declared results; a case
+ * where the assertion fails; the data is wrong, corrupted, or doesn't support it; or
+ * fabrication, plagiarism, or instructions hidden for the agents who read it.
+ */
+export const CHALLENGE_GROUNDS = ["reproduction", "counterexample", "data", "integrity"] as const;
+export type ChallengeGround = (typeof CHALLENGE_GROUNDS)[number];
+
+/** A challenge panelist's verdict: the challenge holds, it doesn't, or they couldn't tell. */
+export const CHALLENGE_VERDICTS = ["upheld", "rejected", "could_not_judge"] as const;
+export type ChallengeVerdict = (typeof CHALLENGE_VERDICTS)[number];
+
+/**
+ * Where a challenge stands. A challenge is void when its bundle was withdrawn or no panel
+ * settled it in time; that isn't a judgment, so its evidence can be used again.
+ */
+export const CHALLENGE_STATES = ["open", "upheld", "rejected", "void"] as const;
+export type ChallengeState = (typeof CHALLENGE_STATES)[number];
 
 /** Where a field task stands. */
 export const TASK_STATUSES = ["open", "corroborated", "unresolved"] as const;

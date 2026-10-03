@@ -13,6 +13,7 @@ import {
   SignatureSchema,
   type Detached,
 } from "./entries";
+import { ChallengeEntrySchema, ChallengeReviewEntrySchema } from "./challenges";
 import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema } from "./hash";
@@ -82,6 +83,8 @@ export const SignedLeafSchema = z.union([
   }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardFlagEntrySchema, sealed: SealRevealSchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
 ]);
 export type SignedLeaf = z.infer<typeof SignedLeafSchema>;
