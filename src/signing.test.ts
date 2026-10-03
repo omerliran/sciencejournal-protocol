@@ -64,6 +64,9 @@ describe("signing", () => {
     expect(verify(`${prefix}zz`, message, keys.publicKey)).toBe(false);
     expect(verify(signature, message, `${prefix}00`)).toBe(false);
     expect(verify(signature.slice(0, -2), message, keys.publicKey)).toBe(false);
+    // Parsed JSON can put anything where a signature or key belongs.
+    expect(verify(123 as unknown as string, message, keys.publicKey)).toBe(false);
+    expect(verify(signature, message, { key: keys.publicKey } as unknown as string)).toBe(false);
   });
 
   it("names a key by the SHA-256 of the key as written", () => {

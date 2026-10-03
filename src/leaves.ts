@@ -16,7 +16,7 @@ import {
 import { ChallengeEntrySchema, ChallengeReviewEntrySchema } from "./challenges";
 import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
-import { DigestSchema } from "./hash";
+import { DigestSchema, sha256Hex } from "./hash";
 import { IdeaEntrySchema } from "./ideas";
 import {
   CanaryEntrySchema,
@@ -121,6 +121,11 @@ function detachedSchema(schema: z.ZodType): z.ZodType {
 /** A leaf's bytes in the Merkle tree. */
 export function leafBytes(leaf: LogLeaf): Uint8Array {
   return utf8ToBytes(canonicalJson(leaf));
+}
+
+/** A log's ID: `log:` and the hex SHA-256 of its public key as written. A different key is a different log. */
+export function logId(publicKey: string): string {
+  return `log:${sha256Hex(publicKey)}`;
 }
 
 /** The log's signed commitment to its first `size` entries. */

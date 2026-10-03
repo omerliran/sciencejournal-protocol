@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { BundleLayoutError, digestBundle } from "../bundle";
 import { ClaimsFileSchema, isComputation, type Claim, type Computation } from "../claims";
 import { sha256Digest, type Digest } from "../hash";
+import type { IntegrityFlags } from "../integrity";
 import { parseJson } from "../json";
 import type { Manifest } from "../manifest";
 import { bundleInputs, type BundleInputs } from "../results";
@@ -29,6 +30,8 @@ export interface JobView {
   replicates?: { claim_id: string; original: string; original_bundle: string }[];
   credits: number;
   files: Record<string, string>;
+  /** What the node's deterministic checks flag; absent from nodes that don't run them. */
+  integrity?: IntegrityFlags;
   downloads?: Record<
     string,
     { url: string; method: string; headers: Record<string, string>; expires_at: string; digest: string; bytes: number }
@@ -134,6 +137,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     compute: view.compute,
     claims: view.claims,
     ...(view.replicates && { replicates: view.replicates }),
+    ...(view.integrity && { integrity: view.integrity }),
     credits: view.credits,
     files,
     node: client.base,

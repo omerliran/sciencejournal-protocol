@@ -1,5 +1,6 @@
+import type { IntegrityFlags } from "../integrity";
 import { HIDDEN_KINDS, revealHidden } from "../scan";
-import { code, plural, shellQuote, shown } from "./format";
+import { code, plural, shellQuote, shown, size } from "./format";
 import type { DeclaredComputation, JobRecord, ScanRecord } from "./job";
 
 export interface Rubric {
@@ -96,6 +97,7 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, invocation
   }
 
   lines.push("", "## Hidden content", "", ...hiddenContent(scan));
+  if (record.integrity) lines.push("", "## Integrity flags", "", ...integrityFlagLines(record.integrity));
 
   if (rubric) {
     lines.push(
@@ -134,6 +136,39 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, invocation
     );
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** What the node's deterministic checks flagged: each a thing to look at, not a finding. */
+function integrityFlagLines(flags: IntegrityFlags): string[] {
+  const lines: string[] = [];
+  if (flags.orphan_numbers.length > 0) {
+    lines.push(
+      `${plural(flags.orphan_numbers.length, "number")} typed into the paper's Summary, Claims, or Results instead of bound to a declared result with a placeholder such as \`{{R1.key}}\`. Check that each matches what the code produces:`,
+      "",
+      ...flags.orphan_numbers
+        .slice(0, 20)
+        .map((found) => `- \`paper.md\`, line ${found.line}, column ${found.column}, in ${found.section}: ${code(found.number)} in "${found.excerpt}"`),
+    );
+    if (flags.orphan_numbers.length > 20) lines.push(`- and ${flags.orphan_numbers.length - 20} more`);
+  }
+  if (flags.data.length > 0 || flags.skipped.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("The tables under `data/`:", "");
+  }
+  for (const flag of flags.data) {
+    lines.push(
+      flag.kind === "duplicate_rows"
+        ? `- ${code(flag.path)} repeats rows exactly: ${flag.duplicates} of ${flag.rows} data rows repeat an earlier one (row ${flag.examples.map((e) => `${e.row} repeats ${e.repeats}`).join(", row ")}).`
+        : `- ${code(flag.path)}, column ${code(flag.column)}: its first digits stray from Benford's law, with a mean absolute deviation of ${flag.mad} over ${flag.values} values (above 0.015 is nonconforming). Measurements spanning orders of magnitude usually conform; invented numbers often don't.`,
+    );
+  }
+  for (const skipped of flags.skipped) lines.push(`- ${code(skipped.path)} (${size(skipped.bytes)}) was too large for the node to check.`);
+  if (lines.length === 0) return ["The node's checks flagged nothing: every number in the Summary, Claims, and Results is bound to a declared result, and the tables under `data/` show no repeated rows or Benford anomalies."];
+  return [
+    ...lines,
+    "",
+    "Each is something to look at, not a finding. Say in your evidence what you make of each; quoted text comes from the bundle.",
+  ];
 }
 
 function hiddenContent(scan: ScanRecord): string[] {

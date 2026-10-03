@@ -1,0 +1,874 @@
+import { bytesToHex, randomBytes } from "@noble/hashes/utils.js";
+import { describe, expect, it } from "vitest";
+import { detachSignatures, signKeyRotation, signObject } from "./entries";
+import { taskId, type TaskEntry } from "./fieldwork";
+import { sha256Digest } from "./hash";
+import { ideaTextDigest } from "./ideas";
+import { unsignedRecovery } from "./identity";
+import type { SignedLeaf, TreeHead } from "./leaves";
+import {
+  checkpointOf,
+  compareCheckpoints,
+  exitStatus,
+  monitorLog,
+  MonitorStateSchema,
+  NOT_CHECKED,
+  type LogSource,
+  type MonitorState,
+} from "./monitor";
+import { MemoryLog } from "./monitor/memory-log";
+import { sealCommitment } from "./rounds";
+import { generateKeyPair, keyDigest } from "./signing";
+import { virtualPasskey } from "./virtual-passkey";
+
+// Operators and a volunteer, made once: keys take a while to generate.
+const alice = generateKeyPair(); // op:1, a publisher
+const aliceNext = generateKeyPair(); // op:1's key after its recovery
+const bob = generateKeyPair(); // op:2, a verifier
+const bobNext = generateKeyPair(); // op:2's key after it rotates
+const carol = generateKeyPair(); // op:3, vouched for by a volunteer
+const carolNext = generateKeyPair(); // op:3's key after the volunteer approves its recovery
+const dave = generateKeyPair(); // op:4, proven through a GitHub repository
+const daveNext = generateKeyPair(); // op:4's key after it recovers through the repository
+const ada = virtualPasskey(); // obs:1
+const adaNext = virtualPasskey(); // obs:1's passkey after she lost the first
+
+type Keys = ReturnType<typeof generateKeyPair>;
+type Unstamped = SignedLeaf extends infer L ? (L extends unknown ? Omit<L, "timestamp"> : never) : never;
+
+const CLAIM = `claim:${"c".repeat(64)}` as const;
+
+const keyEntry = (keys: Keys, name = "Agent") =>
+  signObject({ type: "key" as const, key: keys.publicKey, name, model_families: ["family-a"] }, keys.secretKey);
+
+const bundleEntry = (keys: Keys, name: string) =>
+  signObject({ type: "bundle" as const, bundle: sha256Digest(name) }, keys.secretKey);
+
+const bundleLeaf = (operator: string, entry: ReturnType<typeof bundleEntry>, sealed?: { index: number; salt: string }) => ({
+  operator,
+  entry,
+  claims: [CLAIM],
+  fields: ["machine-learning"],
+  ...(sealed && { sealed }),
+});
+
+const attestation = (keys: Keys, verifier: string, bundle: `sha256:${string}`) =>
+  signObject(
+    {
+      type: "attestation" as const,
+      job: "reproduction" as const,
+      verifier,
+      bundle,
+      claims: { [CLAIM]: "reproduced" },
+      evidence: sha256Digest("evidence"),
+      model_family: "family-b",
+      harness: "test harness",
+      hazard: "none" as const,
+    },
+    keys.secretKey,
+  );
+
+const task = (keys: Keys) =>
+  signObject(
+    {
+      type: "task" as const,
+      operator_key_digest: keyDigest(keys.publicKey),
+      title: "Water temperature at the pier",
+      instructions: "Lower the thermometer 10 cm below the surface and wait a minute.",
+      fields: ["ecology"],
+      opens_at: "2026-10-03T00:00:00Z",
+      closes_at: "2026-10-10T00:00:00Z",
+      measurements: [
+        { key: "temp_c", label: "Water temperature", kind: "number" as const, unit: "°C", decimals: 1, tolerance: 0.5, min: -5, max: 45 },
+      ],
+      replicas: 2,
+      max_observations: 5,
+    },
+    keys.secretKey,
+  ) as TaskEntry;
+
+const invitation = (log: MemoryLog, operator: string) =>
+  signObject({ type: "identity" as const, kind: "invited" as const, operator }, log.secretKey);
+
+/** The leaf for an invitation: an identity the log signs, which work and flags need. */
+const invited = (log: MemoryLog, operator: string) => ({ operator, entry: invitation(log, operator), organization: operator });
+
+const observerKey = (log: MemoryLog, passkey: ReturnType<typeof virtualPasskey>) =>
+  signObject({ type: "observer_key" as const, observer: "obs:1", key: passkey.publicKey, name: "Ada" }, log.secretKey);
+
+const githubIdentity = (operator: string, keys: Keys, repository: string) =>
+  signObject({ type: "identity" as const, kind: "github" as const, operator, repository }, keys.secretKey);
+
+const githubRecovery = (operator: string, next: Keys, repository: string, since: number) =>
+  signObject({ type: "key_recovery" as const, kind: "github" as const, operator, key: next.publicKey, repository, since }, next.secretKey);
+
+/** A vouched recovery: the volunteer's passkey approves it, then the new key signs everything but `sig`. */
+function vouchedRecovery(operator: string, next: Keys, observer: string, since: number, voucher = ada) {
+  const unsigned = unsignedRecovery({ operator, key: next.publicKey, observer, since });
+  return signObject({ ...unsigned, voucher_sig: voucher.sign(unsigned).sig }, next.secretKey);
+}
+
+const challengeEntry = (challenger: string, keys: Keys, evidence = "challenge evidence") =>
+  signObject(
+    { type: "challenge" as const, challenger, claim: CLAIM, ground: "reproduction" as const, evidence: sha256Digest(evidence) },
+    keys.secretKey,
+  );
+
+const challengeReview = (reviewer: string, keys: Keys, challenge: number) =>
+  signObject(
+    {
+      type: "challenge_review" as const,
+      reviewer,
+      challenge,
+      bundle: sha256Digest("bundle 1"),
+      verdict: "rejected" as const,
+      evidence: sha256Digest(`review of ${challenge}`),
+      model_family: "family-b",
+    },
+    keys.secretKey,
+  );
+
+/** Logs the log's commitment to `entry` and returns what opens it. */
+async function seal(log: MemoryLog, entry: { type: string }) {
+  const salt = bytesToHex(randomBytes(32));
+  const commitment = sealCommitment(detachSignatures(entry), salt);
+  const index = await log.append({ entry: signObject({ type: "sealed" as const, commitment }, log.secretKey) });
+  return { index, salt };
+}
+
+/** A log with every kind of entry the protocol defines, as a node writes them. */
+async function realisticLog(): Promise<MemoryLog> {
+  const log = new MemoryLog();
+  await log.append({ operator: "op:1", entry: keyEntry(alice, "Publisher") });
+  await log.append({
+    operator: "op:1",
+    entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: "op:1" }, log.secretKey),
+    organization: "op:1",
+  });
+  await log.append({ operator: "op:2", entry: keyEntry(bob, "Verifier") });
+  await log.append({
+    operator: "op:2",
+    entry: signObject({ type: "identity" as const, kind: "domain" as const, operator: "op:2", domain: "lab.example.org" }, bob.secretKey),
+    organization: "example.org",
+  });
+
+  // A sealed round: the bundle and a verdict on it are committed, and op:2 rotates its key
+  // before the round opens, so its verdict was signed with the key it rotated away from.
+  const bundle = bundleEntry(alice, "bundle 1");
+  const bundleSeal = await seal(log, bundle);
+  const verdict = attestation(bob, "op:2", bundle.bundle);
+  const verdictSeal = await seal(log, verdict);
+  await log.append({ operator: "op:2", entry: signKeyRotation("op:2", bobNext.secretKey, bob.secretKey, bobNext.publicKey) });
+  const review = signObject({ type: "hazard_review" as const, reviewer: "op:2", bundle: bundle.bundle, verdict: "none" as const }, bobNext.secretKey);
+  const reviewSeal = await seal(log, review);
+  await log.append(bundleLeaf("op:1", bundle, bundleSeal));
+  await log.append({ operator: "op:2", entry: verdict, sealed: verdictSeal });
+  await log.append({ operator: "op:2", entry: review, sealed: reviewSeal });
+
+  // Fieldwork and ideas, signed with a volunteer's passkey.
+  await log.append({ observer: "obs:1", entry: observerKey(log, ada) });
+  const posted = task(alice);
+  await log.append({ operator: "op:1", entry: posted });
+  await log.append({ observer: "obs:1", entry: ada.sign({ type: "observation" as const, task: taskId(posted), record: sha256Digest("record") }) });
+  await log.append({ observer: "obs:1", entry: ada.sign({ type: "idea" as const, text: ideaTextDigest({ title: "Why do bees dance?" }) }) });
+
+  // An agent a volunteer vouches for, and its hazard flag.
+  await log.append({ operator: "op:3", entry: keyEntry(carol, "Lent agent") });
+  const { sig: voucher_sig } = ada.sign({ type: "identity" as const, kind: "vouched" as const, operator: "op:3", observer: "obs:1" });
+  await log.append({
+    operator: "op:3",
+    entry: signObject({ type: "identity" as const, kind: "vouched" as const, operator: "op:3", observer: "obs:1", voucher_sig }, carol.secretKey),
+    organization: "obs:1",
+  });
+  const flag = signObject({ type: "hazard_flag" as const, operator: "op:3", bundle: bundle.bundle, concern: "cyber" as const }, carol.secretKey);
+  const flagSeal = await seal(log, flag);
+  await log.append({ operator: "op:3", entry: flag, sealed: flagSeal });
+
+  // What the log signs itself: a revealed canary, a withdrawal that closes a commitment, and an invited operator's recovery.
+  const canary = signObject(
+    {
+      type: "canary" as const,
+      bundle: sha256Digest("canary"),
+      source: bundle.bundle,
+      mutation: { path: "results/R1.json", pointer: "/loss_delta", from: -0.031, to: -0.5 },
+    },
+    log.secretKey,
+  );
+  const canarySeal = await seal(log, canary);
+  const withdrawn = await seal(log, bundleEntry(alice, "bundle 2"));
+  await log.append({ entry: canary, claims: [CLAIM], sealed: canarySeal });
+  await log.append({
+    entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest("bundle 2"), reason: "hazard" as const, sealed: withdrawn.index }, log.secretKey),
+  });
+  await log.append({
+    operator: "op:1",
+    entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: "op:1", key: aliceNext.publicKey, since: log.size }, log.secretKey),
+  });
+  await log.append(bundleLeaf("op:1", bundleEntry(aliceNext, "bundle 3")));
+
+  // The vouched agent challenges the published claim, and a panelist's review is sealed until the panel agrees.
+  const challenge = await log.append({ operator: "op:3", entry: challengeEntry("op:3", carol) });
+  const panelReview = challengeReview("op:2", bobNext, challenge);
+  const panelSeal = await seal(log, panelReview);
+  await log.append({ operator: "op:2", entry: panelReview, sealed: panelSeal });
+
+  // Recoveries through a vouch the volunteer approves, and through a GitHub repository.
+  await log.append({ operator: "op:3", entry: vouchedRecovery("op:3", carolNext, "obs:1", log.size) });
+  await log.append({ operator: "op:4", entry: keyEntry(dave, "Lab on GitHub") });
+  await log.append({ operator: "op:4", entry: githubIdentity("op:4", dave, "example-lab/agents"), organization: "github:example-lab" });
+  await log.append({ operator: "op:4", entry: githubRecovery("op:4", daveNext, "example-lab/agents", log.size) });
+
+  // A notice takes the published bundle down.
+  await log.append({ entry: signObject({ type: "withdrawal" as const, bundle: bundle.bundle, reason: "copyright" as const }, log.secretKey) });
+  return log;
+}
+
+/** A log of `entries`, each appended in order. */
+async function logOf(entries: Unstamped[], log = new MemoryLog()): Promise<MemoryLog> {
+  for (const entry of entries) await log.append(entry);
+  return log;
+}
+
+async function pinned(log: MemoryLog): Promise<MonitorState> {
+  const { report, state } = await monitorLog(log.source(), null);
+  expect(report.problems).toEqual([]);
+  return state!;
+}
+
+describe("monitorLog", () => {
+  it("pins a log on first sight and audits every kind of entry", async () => {
+    const log = await realisticLog();
+    const { report, state } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([]);
+    expect(report.error).toBeNull();
+    expect(exitStatus(report)).toBe(0);
+    expect(report).toMatchObject({ log: log.id, pinned: true, previous: null, head: log.head(), audited: log.size, waiting: 0 });
+    expect(report.audit).toEqual({
+      from: 0,
+      to: log.size,
+      types: {
+        key: 4,
+        identity: 4,
+        sealed: 7,
+        key_rotation: 1,
+        bundle: 2,
+        attestation: 1,
+        hazard_review: 1,
+        observer_key: 1,
+        task: 1,
+        observation: 1,
+        idea: 1,
+        hazard_flag: 1,
+        canary: 1,
+        withdrawal: 2,
+        key_recovery: 3,
+        challenge: 1,
+        challenge_review: 1,
+      },
+    });
+    expect(report.unchecked.sort()).toEqual(
+      [NOT_CHECKED.bundle, NOT_CHECKED.identity, NOT_CHECKED.canary, NOT_CHECKED.withdrawal, NOT_CHECKED.recovery, NOT_CHECKED.work].sort(),
+    );
+
+    expect(state).toMatchObject({ log: log.id, public_key: log.publicKey, head: log.head(), audit: { size: log.size, commitments: {} } });
+    expect(state!.audit.operators["op:2"]).toEqual([
+      { index: 2, key: bob.publicKey },
+      { index: 6, key: bobNext.publicKey },
+    ]);
+    // The state survives a round trip through a file.
+    expect(MonitorStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
+  });
+
+  it("checks each new head against the last verified one and audits only what is new", async () => {
+    const log = await realisticLog();
+    const first = await monitorLog(log.source(), null);
+    const size = log.size;
+    const pending = await seal(log, bundleEntry(bobNext, "bundle 4"));
+    await log.append(bundleLeaf("op:2", bundleEntry(bobNext, "bundle 5")));
+
+    const second = await monitorLog(log.source(), first.state);
+    expect(second.report.problems).toEqual([]);
+    expect(second.report).toMatchObject({
+      pinned: false,
+      previous: first.report.head,
+      head: log.head(),
+      audit: { from: size, to: size + 2, types: { sealed: 1, bundle: 1 } },
+      audited: size + 2,
+      waiting: 1,
+    });
+    expect(second.state!.audit.commitments).toEqual({ [pending.index]: expect.stringMatching(/^sha256:/) });
+
+    const unchanged = await monitorLog(log.source(), second.state);
+    expect(unchanged.report).toMatchObject({ problems: [], audit: { from: size + 2, to: size + 2 } });
+    expect(unchanged.state).toEqual(second.state);
+  });
+
+  it("pins an empty log, then checks its first head", async () => {
+    const log = new MemoryLog();
+    const empty = await monitorLog(log.source(), null);
+    expect(empty.report).toMatchObject({ problems: [], pinned: true, head: null });
+    expect(empty.state).toMatchObject({ log: log.id, head: null });
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    const first = await monitorLog(log.source(), empty.state);
+    expect(first.report).toMatchObject({ problems: [], pinned: false, audited: 1 });
+  });
+
+  it("refuses a log whose key changed until told to pin again", async () => {
+    const before = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const after = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const state = await pinned(before);
+
+    const changed = await monitorLog(after.source(), state);
+    expect(exitStatus(changed.report)).toBe(1);
+    expect(changed.state).toBeNull();
+    expect(changed.report.problems).toEqual([
+      expect.objectContaining({ check: "log_changed", reason: expect.stringContaining(`now serves ${after.id}`) }),
+    ]);
+
+    const repinned = await monitorLog(after.source(), state, { pin: true });
+    expect(repinned.report).toMatchObject({ problems: [], pinned: true, previous: null, log: after.id });
+    expect(repinned.state).toMatchObject({ log: after.id, public_key: after.publicKey });
+  });
+
+  it("refuses a node whose log ID isn't its key's", async () => {
+    const log = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const source = log.source({
+      log: async () => ({ log: `log:${"0".repeat(64)}`, public_key: log.publicKey, tree_head: log.head() }),
+    });
+    const { report } = await monitorLog(source, null);
+    expect(report.problems).toEqual([expect.objectContaining({ check: "log_id" })]);
+  });
+
+  it("catches a tree head the log's key didn't sign", async () => {
+    const log = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const state = await pinned(log);
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    const forged = { ...log.head()!, size: 3 };
+    const { report, state: next } = await monitorLog(
+      log.source({ log: async () => ({ log: log.id, public_key: log.publicKey, tree_head: forged }) }),
+      state,
+    );
+    expect(next).toBeNull();
+    expect(report.problems).toEqual([
+      expect.objectContaining({ check: "head", reason: "The tree head for 3 entries isn't signed by the log's key" }),
+    ]);
+  });
+
+  it("catches a fork: two trees of one size with different roots", async () => {
+    const honest = await logOf([{ operator: "op:1", entry: keyEntry(alice) }, { operator: "op:2", entry: keyEntry(bob) }]);
+    const forked = await logOf(
+      [{ operator: "op:1", entry: keyEntry(alice) }, { operator: "op:2", entry: keyEntry(carol) }],
+      new MemoryLog(honest.secretKey),
+    );
+    const { report, state } = await monitorLog(forked.source(), await pinned(honest));
+    expect(exitStatus(report)).toBe(1);
+    expect(state).toBeNull();
+    expect(report.problems).toEqual([
+      expect.objectContaining({
+        check: "fork",
+        reason: `The log signed two trees of 2 entries with different roots, ${honest.head()!.root} and ${forked.head()!.root}`,
+        evidence: { first: honest.head(), second: forked.head() },
+      }),
+    ]);
+  });
+
+  it("catches a history rewritten under a larger tree", async () => {
+    const honest = await logOf([{ operator: "op:1", entry: keyEntry(alice) }, { operator: "op:2", entry: keyEntry(bob) }]);
+    const rewritten = await logOf(
+      [
+        { operator: "op:1", entry: keyEntry(alice) },
+        { operator: "op:2", entry: keyEntry(carol) },
+        { operator: "op:3", entry: keyEntry(bob) },
+      ],
+      new MemoryLog(honest.secretKey),
+    );
+    const { report } = await monitorLog(rewritten.source(), await pinned(honest));
+    expect(report.problems).toEqual([
+      expect.objectContaining({ check: "consistency", reason: expect.stringContaining("the tree of 3 doesn't extend the tree of 2") }),
+    ]);
+  });
+
+  it("catches a tree that shrank, or a log that says it is empty", async () => {
+    const entries: Unstamped[] = [
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:3", entry: keyEntry(carol) },
+    ];
+    const full = await logOf(entries);
+    const state = await pinned(full);
+    const shorter = await logOf(entries.slice(0, 2), new MemoryLog(full.secretKey));
+    const shrank = await monitorLog(shorter.source(), state);
+    expect(shrank.report.problems).toEqual([
+      expect.objectContaining({ check: "shrank", reason: "The log signed a tree of 3 entries, and now one of 2" }),
+    ]);
+    const emptied = await monitorLog(
+      full.source({ log: async () => ({ log: full.id, public_key: full.publicKey, tree_head: null }) }),
+      state,
+    );
+    expect(emptied.report.problems).toEqual([expect.objectContaining({ check: "shrank" })]);
+  });
+
+  it("catches a head or a leaf stamped earlier than the one before it", async () => {
+    const log = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const state = await pinned(log);
+    log.clock = new Date("2026-10-01T00:00:00.000Z");
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+
+    const growth = await monitorLog(log.source(), state);
+    expect(growth.report.problems).toEqual([
+      expect.objectContaining({ check: "timestamp", reason: expect.stringContaining("The head for 2 entries is stamped 2026-10-01") }),
+    ]);
+    const audit = await monitorLog(log.source(), null);
+    expect(audit.report.problems).toEqual([
+      { check: "timestamp", index: 1, reason: "The leaf is stamped 2026-10-01T00:00:00.000Z, before entry 0, stamped 2026-10-03T12:00:00.000Z" },
+    ]);
+  });
+
+  it("catches leaves that don't hash to the signed root, whole or in part", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:3", entry: keyEntry(carol) },
+    ]);
+    const honest = log.source();
+    // Leaf 0 back-dated, served with the hash of what is served, so only the root shows it.
+    const backdated: LogSource["entries"] = async (start, end) => {
+      const page = (await honest.entries(start, end)) as { entries: { leaf: { timestamp: string } }[] };
+      page.entries[0].leaf.timestamp = "2026-01-01T00:00:00.000Z";
+      return page;
+    };
+    const whole = await monitorLog(log.source({ entries: backdated }), null);
+    expect(whole.report.problems).toEqual([
+      expect.objectContaining({ check: "leaf", index: 0, reason: expect.stringMatching(/^The node serves leaf hash [0-9a-f]{64}, but the leaf hashes to/) }),
+      expect.objectContaining({ check: "root", reason: expect.stringContaining("The 3 leaves the node serves hash to") }),
+    ]);
+    const part = await monitorLog(log.source({ entries: backdated }), null, { maxEntries: 2 });
+    expect(part.report.problems.map((p) => p.check)).toEqual(["leaf", "root"]);
+    expect(part.report.problems[1].reason).toContain("The first 2 leaves the node serves");
+  });
+
+  it("audits at most maxEntries a run, proving the audited leaves are in the signed tree", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:3", entry: keyEntry(carol) },
+    ]);
+    const first = await monitorLog(log.source(), null, { maxEntries: 2 });
+    expect(first.report).toMatchObject({ problems: [], audit: { from: 0, to: 2 }, audited: 2, head: { size: 3 } });
+    const skipped = await monitorLog(log.source(), first.state, { maxEntries: 0 });
+    expect(skipped.report).toMatchObject({ problems: [], audit: { from: 2, to: 2 }, audited: 2 });
+    const rest = await monitorLog(log.source(), skipped.state);
+    expect(rest.report).toMatchObject({ problems: [], audit: { from: 2, to: 3 }, audited: 3 });
+  });
+
+  it("catches an entry served as signed that isn't the one its leaf holds", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: keyEntry(alice, "Publisher") },
+      { operator: "op:2", entry: keyEntry(bob, "Verifier") },
+    ]);
+    await log.append(invited(log, "op:1"));
+    await log.append(bundleLeaf("op:1", bundleEntry(alice, "bundle")));
+    const honest = log.source();
+    const swapped: LogSource["signedEntry"] = async (index) =>
+      index === 0
+        ? { index, entry: { ...log.signed[0], name: "Someone else" } }
+        : index === 1
+          ? { index, entry: keyEntry(bob, "Verifier") } // signed again, which gives a different signature
+          : honest.signedEntry(index);
+    const { report } = await monitorLog(log.source({ signedEntry: swapped }), null);
+    // The key in the leaf still counts, so op:1's bundle verifies against it.
+    expect(report.problems).toEqual([
+      { check: "signed_entry", index: 0, reason: "The entry served as signed isn't the one the leaf holds: its name differs" },
+      { check: "signed_entry", index: 1, reason: "The entry served as signed isn't the one the leaf holds: its sig doesn't match the digest in the leaf" },
+    ]);
+  });
+
+  it("catches signatures made with any key but the signer's", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      {
+        operator: "op:2",
+        entry: signObject({ type: "identity" as const, kind: "domain" as const, operator: "op:2", domain: "example.org" }, alice.secretKey),
+        organization: "example.org",
+      },
+      { operator: "op:1", entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: "op:1" }, alice.secretKey), organization: "op:1" },
+      bundleLeaf("op:1", bundleEntry(bob, "bundle")),
+    ]);
+    const { report, state } = await monitorLog(log.source(), null);
+    expect(exitStatus(report)).toBe(1);
+    expect(state).toBeNull();
+    expect(report.problems).toEqual([
+      { check: "signature", index: 2, reason: "The identity entry's sig doesn't verify against op:2's key from entry 1" },
+      { check: "signature", index: 3, reason: "The identity entry's sig doesn't verify against the log's key" },
+      { check: "signature", index: 4, reason: "The bundle entry's sig doesn't verify against op:1's key from entry 0" },
+    ]);
+  });
+
+  it("follows rotations: a key rotated away from signs nothing after the rotation", async () => {
+    const log = await logOf([{ operator: "op:2", entry: keyEntry(bob) }]);
+    await log.append(invited(log, "op:2"));
+    await log.append({ operator: "op:2", entry: signKeyRotation("op:2", bobNext.secretKey, bob.secretKey, bobNext.publicKey) });
+    await log.append(bundleLeaf("op:2", bundleEntry(bobNext, "after")));
+    await log.append(bundleLeaf("op:2", bundleEntry(bob, "too late")));
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signature", index: 4, reason: "The bundle entry's sig doesn't verify against op:2's key from entry 2" },
+    ]);
+  });
+
+  it("checks a revealed entry against the key its signer held when the commitment was logged", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    await log.append(invited(log, "op:2"));
+    const early = bundleEntry(bob, "early");
+    const earlySeal = await seal(log, early);
+    const wrong = bundleEntry(bobNext, "signed with the next key too soon");
+    const wrongSeal = await seal(log, wrong);
+    await log.append({ operator: "op:2", entry: signKeyRotation("op:2", bobNext.secretKey, bob.secretKey, bobNext.publicKey) });
+    await log.append(bundleLeaf("op:2", early, earlySeal));
+    await log.append(bundleLeaf("op:2", wrong, wrongSeal));
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      {
+        check: "signature",
+        index: 6,
+        reason: "The bundle entry's sig doesn't verify against op:2's key from entry 0, which it held when the commitment at entry 3 was logged",
+      },
+    ]);
+  });
+
+  it("catches a key rotation either key didn't sign, or one to a key already used", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:2", entry: signKeyRotation("op:2", bobNext.secretKey, carol.secretKey, bobNext.publicKey) },
+      { operator: "op:2", entry: { ...signKeyRotation("op:2", carol.secretKey, bobNext.secretKey, carol.publicKey), key: alice.publicKey } },
+      { operator: "op:3", entry: keyEntry(bob) },
+    ]);
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signature", index: 2, reason: "The rotation's sig doesn't verify against op:2's key from entry 1" },
+      { check: "signature", index: 3, reason: "The rotation's sig doesn't verify against op:2's key from entry 2" },
+      { check: "signature", index: 3, reason: "The rotation's key_sig isn't the new key's signature over the entry without sig and key_sig" },
+      { check: "key", index: 3, reason: "op:2 takes a key that op:1 already held; a key serves one operator, once" },
+      { check: "key", index: 4, reason: "op:3 takes a key that op:2 already held; a key serves one operator, once" },
+    ]);
+  });
+
+  it("catches an entry that doesn't open its commitment, and a commitment opened or closed twice", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append(invited(log, "op:1"));
+    const first = bundleEntry(alice, "first");
+    const second = bundleEntry(alice, "second");
+    const firstSeal = await seal(log, first);
+    const secondSeal = await seal(log, second);
+    await log.append(bundleLeaf("op:1", first, { index: firstSeal.index, salt: secondSeal.salt }));
+    await log.append(bundleLeaf("op:1", second, secondSeal));
+    await log.append(bundleLeaf("op:1", second, secondSeal));
+    await log.append({
+      entry: signObject({ type: "withdrawal" as const, bundle: second.bundle, reason: "hazard" as const, sealed: secondSeal.index }, log.secretKey),
+    });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "seal", index: 4, reason: "The entry and its salt don't open the commitment at entry 2" },
+      {
+        check: "seal",
+        index: 6,
+        reason: "Entry 3 holds no commitment waiting to be opened: it isn't a sealed entry, or an earlier entry opened or closed it",
+      },
+      { check: "seal", index: 7, reason: "The withdrawal closes the commitment at entry 3, but no commitment waits there" },
+    ]);
+  });
+
+  it("accepts a task or an idea signed with a key its signer held before a person approved it", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append({ operator: "op:1", entry: invitation(log, "op:1"), organization: "op:1" });
+    await log.append({ observer: "obs:1", entry: observerKey(log, ada) });
+    const waiting = task(alice);
+    const idea = ada.sign({ type: "idea" as const, text: ideaTextDigest({ title: "Why do bees dance?" }) });
+    await log.append({
+      operator: "op:1",
+      entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: "op:1", key: aliceNext.publicKey, since: log.size }, log.secretKey),
+    });
+    await log.append({ observer: "obs:1", entry: observerKey(log, adaNext) });
+    await log.append({ operator: "op:1", entry: waiting });
+    await log.append({ observer: "obs:1", entry: idea });
+    // An observation is logged as it is made, so it must carry the passkey held then.
+    await log.append({ observer: "obs:1", entry: ada.sign({ type: "observation" as const, task: taskId(waiting), record: sha256Digest("record") }) });
+    await log.append({ operator: "op:1", entry: task(carol) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signature", index: 7, reason: "The observation's passkey signature doesn't verify against obs:1's passkey from entry 4" },
+      { check: "signer", index: 8, reason: `The task names key ${keyDigest(carol.publicKey)}, which op:1 didn't hold on the log before it` },
+    ]);
+  });
+
+  it("catches leaves that name someone other than the signer, or count as the wrong organization", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    await log.append({ operator: "op:1", entry: attestation(bob, "op:2", sha256Digest("bundle")) });
+    await log.append({
+      operator: "op:2",
+      entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: "op:2" }, log.secretKey),
+      organization: "example.org",
+    });
+    await log.append(bundleLeaf("op:3", bundleEntry(carol, "unregistered")));
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signer", index: 2, reason: "The entry's verifier is op:2, but the leaf attributes it to op:1" },
+      { check: "identity", index: 2, reason: "op:1 has no identity on the log before entry 2, and attestation entries need one" },
+      { check: "signature", index: 2, reason: "The attestation entry's sig doesn't verify against op:1's key from entry 0" },
+      { check: "identity", index: 3, reason: "An invited operator counts as itself, op:2, not example.org" },
+      { check: "identity", index: 4, reason: "op:3 has no identity on the log before entry 4, and bundle entries need one" },
+      { check: "signer", index: 4, reason: "op:3 has no key on the log before entry 4" },
+    ]);
+  });
+
+  it("catches leaves that don't fit the protocol, and leaves unknown entry types unchecked", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append({ entry: keyEntry(bob) } as unknown as Unstamped);
+    await log.append({ entry: { type: "status", claims: { [CLAIM]: "reproduced" } } } as unknown as Unstamped);
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "leaf", index: 1, reason: expect.stringMatching(/^The key leaf doesn't fit the protocol \(\/operator: /) },
+    ]);
+    expect(report.unchecked).toEqual([
+      "This monitor doesn't know how to check status entries, so it checked only where they sit in the tree: 2.",
+    ]);
+  });
+
+  it("ties each key recovery to an identity its operator holds", async () => {
+    const log = new MemoryLog();
+    const domainRecovery = (operator: string, keys: Keys, domain: string, since: number) =>
+      signObject({ type: "key_recovery" as const, kind: "domain" as const, operator, key: keys.publicKey, domain, since }, keys.secretKey);
+    const invitedRecovery = (operator: string, keys: Keys) =>
+      signObject({ type: "key_recovery" as const, kind: "invited" as const, operator, key: keys.publicKey, since: log.size }, log.secretKey);
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append({
+      operator: "op:1",
+      entry: signObject({ type: "identity" as const, kind: "domain" as const, operator: "op:1", domain: "lab.example.org" }, alice.secretKey),
+      organization: "example.org",
+    });
+    await log.append({ operator: "op:1", entry: invitation(log, "op:1"), organization: "op:1" });
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    // The log can't take over an operator that counts as its domain, or one it never invited.
+    await log.append({ operator: "op:1", entry: invitedRecovery("op:1", aliceNext) });
+    await log.append({ operator: "op:2", entry: invitedRecovery("op:2", bobNext) });
+    // A domain recovery rests on the operator's own domain identity.
+    await log.append({ operator: "op:2", entry: domainRecovery("op:2", generateKeyPair(), "lab.example.org", log.size) });
+    await log.append({ operator: "op:1", entry: domainRecovery("op:1", generateKeyPair(), "other.example.org", log.size) });
+    await log.append({ operator: "op:1", entry: domainRecovery("op:1", generateKeyPair(), "lab.example.org", 2) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      {
+        check: "key",
+        index: 4,
+        reason: "The recovery goes through op:1's invited identity, but op:1 counts as its domain identity, from entry 1, and recovers through that",
+      },
+      { check: "key", index: 5, reason: "The recovery goes through op:2's invited identity, but op:2 has none on the log" },
+      { check: "key", index: 6, reason: "The recovery goes through op:2's domain identity, but op:2 has none on the log" },
+      { check: "key", index: 7, reason: "The recovery goes through other.example.org, but op:1's domain identity, from entry 1, is lab.example.org" },
+    ]);
+    expect(report.unchecked).toEqual(expect.arrayContaining([NOT_CHECKED.recovery, NOT_CHECKED.disowned]));
+  });
+
+  it("recovers through GitHub or a vouch only as the identity the operator counts as", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:4", entry: keyEntry(dave) });
+    await log.append({ operator: "op:4", entry: githubIdentity("op:4", dave, "example-lab/agents"), organization: "github:example-lab" });
+    await log.append({ observer: "obs:1", entry: observerKey(log, ada) });
+    await log.append({ operator: "op:3", entry: keyEntry(carol) });
+    const { sig: voucher_sig } = ada.sign({ type: "identity" as const, kind: "vouched" as const, operator: "op:3", observer: "obs:1" });
+    await log.append({
+      operator: "op:3",
+      entry: signObject({ type: "identity" as const, kind: "vouched" as const, operator: "op:3", observer: "obs:1", voucher_sig }, carol.secretKey),
+      organization: "obs:1",
+    });
+    await log.append(invited(log, "op:3"));
+    // A GitHub recovery names the repository the identity proved.
+    await log.append({ operator: "op:4", entry: githubRecovery("op:4", generateKeyPair(), "example-lab/other", log.size) });
+    // A vouched recovery is approved by the volunteer who vouched, over exactly what the new key signs.
+    await log.append({ operator: "op:3", entry: vouchedRecovery("op:3", generateKeyPair(), "obs:1", log.size, adaNext) });
+    const forged = vouchedRecovery("op:3", generateKeyPair(), "obs:1", log.size);
+    await log.append({ operator: "op:3", entry: signObject({ ...forged, since: log.size - 1 }, generateKeyPair().secretKey) });
+    // An operator whose vouch may have lapsed may recover on its invitation; the monitor says it can't tell.
+    await log.append({
+      operator: "op:3",
+      entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: "op:3", key: carolNext.publicKey, since: log.size }, log.secretKey),
+    });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "key", index: 6, reason: "The recovery goes through example-lab/other, but op:4's github identity, from entry 1, is example-lab/agents" },
+      { check: "signature", index: 7, reason: "The recovery's voucher_sig doesn't verify against obs:1's passkey from entry 2" },
+      { check: "signature", index: 8, reason: "The recovery's voucher_sig doesn't verify against obs:1's passkey from entry 2" },
+      { check: "signature", index: 8, reason: "The key_recovery entry's sig doesn't verify against the new key it names" },
+    ]);
+    expect(report.unchecked).toEqual(expect.arrayContaining([NOT_CHECKED.recovery, NOT_CHECKED.vouch]));
+  });
+
+  it("holds each challenge to its challenger's identity and each review to an earlier challenge", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: "op:1", entry: keyEntry(alice) });
+    await log.append(invited(log, "op:1"));
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    await log.append(invited(log, "op:2"));
+    const challenge = await log.append({ operator: "op:1", entry: challengeEntry("op:1", alice) });
+    const fair = challengeReview("op:2", bob, challenge);
+    await log.append({ operator: "op:2", entry: fair, sealed: await seal(log, fair) });
+    // A review of an entry that isn't a challenge.
+    const stray = challengeReview("op:2", bob, 2);
+    await log.append({ operator: "op:2", entry: stray, sealed: await seal(log, stray) });
+    // A review committed before the challenge it names.
+    const early = challengeReview("op:2", bob, log.size + 1);
+    const earlySeal = await seal(log, early);
+    await log.append({ operator: "op:1", entry: challengeEntry("op:1", alice, "more evidence") });
+    await log.append({ operator: "op:2", entry: early, sealed: earlySeal });
+    // A challenger with no identity.
+    await log.append({ operator: "op:3", entry: keyEntry(carol) });
+    await log.append({ operator: "op:3", entry: challengeEntry("op:3", carol) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "challenge", index: 8, reason: "The review names entry 2, which isn't a challenge logged before the review was committed at entry 7" },
+      { check: "challenge", index: 11, reason: "The review names entry 10, which isn't a challenge logged before the review was committed at entry 9" },
+      { check: "identity", index: 13, reason: "op:3 has no identity on the log before entry 13, and challenge entries need one" },
+    ]);
+  });
+
+  it("withdraws a bundle once, for any reason", async () => {
+    const log = new MemoryLog();
+    const withdrawal = (reason: "copyright" | "personal_data") =>
+      signObject({ type: "withdrawal" as const, bundle: sha256Digest("bundle"), reason }, log.secretKey);
+    await log.append({ entry: withdrawal("copyright") });
+    await log.append({ entry: withdrawal("personal_data") });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "withdrawal", index: 1, reason: `${sha256Digest("bundle")} was withdrawn before; a bundle is withdrawn once` },
+    ]);
+  });
+
+  it("allows an operator one identity of each kind", async () => {
+    const log = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    await log.append({ operator: "op:1", entry: invitation(log, "op:1"), organization: "op:1" });
+    await log.append({ operator: "op:1", entry: invitation(log, "op:1"), organization: "op:1" });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 2, reason: "This is op:1's second invited identity, after entry 1; an operator holds at most one of each kind" },
+    ]);
+  });
+
+  it("counts a malformed signature as a bad one, and keeps what it found when a later request fails", async () => {
+    const log = await logOf([
+      { operator: "op:1", entry: { ...keyEntry(alice), sig: 123 } } as unknown as Unstamped,
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:3", entry: keyEntry(carol) },
+    ]);
+    const failing = log.source({ consistencyProof: async () => Promise.reject(new Error("fetch failed")) });
+    const { report, state } = await monitorLog(failing, null, { maxEntries: 2 });
+    expect(report.problems).toEqual([{ check: "signature", index: 0, reason: "The key entry isn't signed by the key it registers" }]);
+    expect(report.error).toBe("fetch failed");
+    expect(exitStatus(report)).toBe(1);
+    expect(state).toBeNull();
+  });
+
+  it("isn't tripped by entry types named like an object's own properties", async () => {
+    const log = await logOf([
+      { entry: { type: "constructor" } } as unknown as Unstamped,
+      { entry: { type: "toString" } } as unknown as Unstamped,
+      { entry: { type: "constructor" } } as unknown as Unstamped,
+    ]);
+    const { report } = await monitorLog(log.source(), null);
+    expect(report).toMatchObject({ problems: [], error: null, audit: { types: { constructor: 2, toString: 1 } } });
+    expect(report.unchecked).toEqual([
+      "This monitor doesn't know how to check constructor entries, so it checked only where they sit in the tree: 0, 2.",
+      "This monitor doesn't know how to check toString entries, so it checked only where they sit in the tree: 1.",
+    ]);
+  });
+
+  it("lets a node lag behind the head verified before, proven by a node ahead of it, but never shrink", async () => {
+    const entries: Unstamped[] = [
+      { operator: "op:1", entry: keyEntry(alice) },
+      { operator: "op:2", entry: keyEntry(bob) },
+      { operator: "op:3", entry: keyEntry(carol) },
+    ];
+    const ahead = await logOf(entries);
+    const lagging = await logOf(entries.slice(0, 2), new MemoryLog(ahead.secretKey));
+    const forked = await logOf([entries[0], entries[2]], new MemoryLog(ahead.secretKey));
+    const state = await pinned(ahead);
+
+    const behind = await monitorLog(lagging.source(), state, { servedBefore: 0, ahead: ahead.source() });
+    expect(behind.report).toMatchObject({ problems: [], behind: true, head: lagging.head(), previous: ahead.head(), audit: null });
+    expect(behind.state).toEqual(state);
+    // A node can't prove anything about a tree it doesn't have.
+    expect((await monitorLog(lagging.source(), state, { servedBefore: 0 })).report.error).toBe("No proof from 2 to 3");
+    const split = await monitorLog(forked.source(), state, { servedBefore: 0, ahead: ahead.source() });
+    expect(split.report.problems).toEqual([expect.objectContaining({ check: "consistency" })]);
+    // A node that served three entries before has dropped one.
+    const dropped = await monitorLog(lagging.source(), state, { servedBefore: 3, ahead: ahead.source() });
+    expect(dropped.report.problems).toEqual([expect.objectContaining({ check: "shrank", reason: "The log signed a tree of 3 entries, and now one of 2" })]);
+  });
+
+  it("reports what it couldn't read as a failure to finish, not as misbehavior", async () => {
+    const log = await logOf([{ operator: "op:1", entry: keyEntry(alice) }]);
+    const state = await pinned(log);
+    const cases: Partial<LogSource>[] = [
+      { log: async () => Promise.reject(new Error("fetch failed")) },
+      { log: async () => ({ log: log.id }) },
+      { entries: async () => ({ entries: [] }) },
+      { signedEntry: async () => ({ index: 7, entry: {} }) },
+    ];
+    for (const overrides of cases) {
+      const { report, state: next } = await monitorLog(log.source(overrides), null);
+      expect(report.problems).toEqual([]);
+      expect(report.error).toEqual(expect.any(String));
+      expect(exitStatus(report)).toBe(2);
+      expect(next).toBeNull();
+    }
+    await log.append({ operator: "op:2", entry: keyEntry(bob) });
+    const noProof = await monitorLog(log.source({ consistencyProof: async () => ({ proof: "none" }) }), state);
+    expect(noProof.report.error).toMatch(/^The node's answer to GET \/api\/v1\/log\/proofs\/consistency\?first=1&second=2 isn't what the API returns/);
+  });
+});
+
+describe("compareCheckpoints", () => {
+  const entries: Unstamped[] = [
+    { operator: "op:1", entry: keyEntry(alice) },
+    { operator: "op:2", entry: keyEntry(bob) },
+    { operator: "op:3", entry: keyEntry(carol) },
+  ];
+  const checkpoint = (log: MemoryLog, head: TreeHead) => ({ log: log.id, public_key: log.publicKey, tree_head: head });
+
+  it("finds two heads of one log consistent, with a proof when their sizes differ", async () => {
+    const log = await logOf(entries);
+    const [, second, third] = log.heads;
+    const comparison = await compareCheckpoints(checkpoint(log, third), checkpoint(log, second), log.source());
+    expect(comparison).toEqual({ log: log.id, heads: [second, third], problems: [], error: null });
+    const same = await compareCheckpoints(checkpoint(log, third), checkpoint(log, third), null);
+    expect(same.problems).toEqual([]);
+    expect(checkpointOf(await pinned(log), "https://node.example")).toEqual({ ...checkpoint(log, third), node: "https://node.example" });
+  });
+
+  it("catches two monitors shown different histories", async () => {
+    const honest = await logOf(entries);
+    const forked = await logOf([entries[0], entries[2], entries[1]], new MemoryLog(honest.secretKey));
+    const sameSize = await compareCheckpoints(checkpoint(honest, honest.heads[2]), checkpoint(forked, forked.heads[2]), null);
+    expect(sameSize.problems).toEqual([expect.objectContaining({ check: "fork" })]);
+    const grown = await compareCheckpoints(checkpoint(honest, honest.heads[1]), checkpoint(forked, forked.heads[2]), forked.source());
+    expect(grown.problems).toEqual([expect.objectContaining({ check: "consistency" })]);
+  });
+
+  it("refuses checkpoints of different logs, and heads their log didn't sign", async () => {
+    const one = await logOf(entries.slice(0, 1));
+    const other = await logOf(entries.slice(0, 1));
+    const different = await compareCheckpoints(checkpoint(one, one.heads[0]), checkpoint(other, other.heads[0]), null);
+    expect(different.error).toBe(`The checkpoints are of different logs, ${one.id} and ${other.id}`);
+    const forged = { ...checkpoint(one, other.heads[0]), tree_head: { ...other.heads[0], log: one.id } };
+    const unsigned = await compareCheckpoints(checkpoint(one, one.heads[0]), forged, null);
+    expect(unsigned.error).toBe(`The second checkpoint's tree head isn't signed by ${one.id}`);
+    expect(exitStatus(unsigned)).toBe(2);
+  });
+});

@@ -20,7 +20,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "conformance": "tsx conformance/generate.ts",
-    "harness": "tsx src/harness/cli.ts"
+    "harness": "tsx src/harness/cli.ts",
+    "monitor": "tsx src/monitor/cli.ts"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",

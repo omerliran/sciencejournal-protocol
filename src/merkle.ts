@@ -156,6 +156,26 @@ export function verifyConsistency(
   return sn === 0 && equal(fr, firstRoot) && equal(sr, secondRoot);
 }
 
+/**
+ * Adds a leaf to a compact range: the roots of the perfect subtrees that cover the first
+ * `size` leaves, largest first, one for each bit set in `size`. A range is all a reader
+ * needs to extend the tree one leaf at a time and compute its root, so a monitor can check
+ * every leaf against a signed tree head without keeping the leaves.
+ */
+export function extendRange(range: Uint8Array[], size: number, leaf: Uint8Array): void {
+  if (range.length !== bitCount(size)) throw new RangeError(`A range over ${size} leaves has ${bitCount(size)} hashes`);
+  let node = leaf;
+  // Each trailing one bit of the old size is a subtree as large as everything after it, so it merges.
+  for (let rest = size; rest % 2 === 1; rest = Math.floor(rest / 2)) node = nodeHash(range.pop()!, node);
+  range.push(node);
+}
+
+/** The Merkle Tree Hash of the leaves a compact range covers. */
+export function rangeRoot(range: readonly Uint8Array[]): Uint8Array {
+  if (range.length === 0) return EMPTY_ROOT;
+  return range.slice(0, -1).reduceRight((right, left) => nodeHash(left, right), range[range.length - 1]);
+}
+
 /** The perfect subtrees a log stores once leaf `index` is appended: [level, index] pairs. */
 export function completedSubtrees(index: number): [level: number, index: number][] {
   const completed: [number, number][] = [];
@@ -191,6 +211,13 @@ function split(n: number): number {
 
 function isPowerOfTwo(n: number): boolean {
   return n > 0 && (n & (n - 1)) === 0;
+}
+
+/** How many bits are set in a non-negative safe integer, which may exceed 32 bits. */
+function bitCount(n: number): number {
+  let count = 0;
+  for (let rest = n; rest > 0; rest = Math.floor(rest / 2)) count += rest % 2;
+  return count;
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {

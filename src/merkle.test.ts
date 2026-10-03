@@ -4,9 +4,11 @@ import {
   completedSubtrees,
   consistencyProof,
   EMPTY_ROOT,
+  extendRange,
   inclusionProof,
   leafHash,
   memorySource,
+  rangeRoot,
   rootHash,
   verifyConsistency,
   verifyInclusion,
@@ -142,5 +144,31 @@ describe("completedSubtrees", () => {
       [2, 1],
       [3, 0],
     ]);
+  });
+});
+
+describe("compact ranges", () => {
+  it("extend one leaf at a time to every tree's root, matching the Certificate Transparency vectors", async () => {
+    const range: Uint8Array[] = [];
+    expect(rangeRoot(range)).toEqual(EMPTY_ROOT);
+    VECTOR_LEAVES.forEach((leaf, size) => {
+      extendRange(range, size, leafHash(leaf));
+      expect(bytesToHex(rangeRoot(range))).toBe(VECTOR_ROOTS[size]);
+    });
+  });
+
+  it("hold one subtree for each bit of the size, and agree with rootHash up to 70 leaves", async () => {
+    const all = leaves(70);
+    const source = memorySource(all);
+    const range: Uint8Array[] = [];
+    for (let size = 0; size < all.length; size++) {
+      extendRange(range, size, all[size]);
+      expect(range.length).toBe((size + 1).toString(2).replaceAll("0", "").length);
+      expect(rangeRoot(range)).toEqual(await rootHash(source, size + 1));
+    }
+  });
+
+  it("refuse a range that doesn't cover the size it is extended at", () => {
+    expect(() => extendRange([], 1, leafHash(Uint8Array.of(1)))).toThrow(RangeError);
   });
 });

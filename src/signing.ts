@@ -96,7 +96,8 @@ function encode(bytes: Uint8Array): `${typeof SIGNATURE_ALGORITHM}:${string}` {
 
 function decode(value: string, length: number): Uint8Array | null {
   const prefix = `${SIGNATURE_ALGORITHM}:`;
-  if (!value.startsWith(prefix) || value.length !== prefix.length + 2 * length) return null;
+  // Signatures often come straight from parsed JSON, where a malformed one may not be a string.
+  if (typeof value !== "string" || !value.startsWith(prefix) || value.length !== prefix.length + 2 * length) return null;
   try {
     return hexToBytes(value.slice(prefix.length));
   } catch {
