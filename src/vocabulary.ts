@@ -39,6 +39,8 @@ export const LEDGER_ENTRY_TYPES = [
   "challenge",
   "status",
   "key",
+  "key_rotation",
+  "key_recovery",
   "identity",
   "task",
   "observer_key",
@@ -89,8 +91,11 @@ export const JOB_KINDS = ["reproduction", "screen", "hazard_review"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
-/** Why content was withdrawn. Its hash stays in the log as a tombstone. */
-export const WITHDRAWAL_REASONS = ["hazard"] as const;
+/**
+ * Why content was withdrawn: a hazard a panel upheld, or work its operator disowned after
+ * losing its key. Its hash stays in the log as a tombstone.
+ */
+export const WITHDRAWAL_REASONS = ["hazard", "disowned"] as const;
 
 /** Where a field task stands. */
 export const TASK_STATUSES = ["open", "corroborated", "unresolved"] as const;

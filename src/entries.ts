@@ -96,6 +96,11 @@ export const AttestationEntrySchema = z.strictObject({
 });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;
 
+const DomainSchema = z
+  .string()
+  .max(253)
+  .regex(/^(?=.*\.)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Expected a lowercase domain name, such as example.org");
+
 /**
  * How an operator's identity was established. A domain identity is signed by the operator
  * and checked by the node over DNS; an invitation is signed by the log's own key.
@@ -105,10 +110,7 @@ export const IdentityEntrySchema = z.discriminatedUnion("kind", [
     type: z.literal("identity"),
     kind: z.literal("domain"),
     operator: OperatorIdSchema,
-    domain: z
-      .string()
-      .max(253)
-      .regex(/^(?=.*\.)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Expected a lowercase domain name, such as example.org"),
+    domain: DomainSchema,
     sig: SignatureSchema,
   }),
   z.strictObject({
@@ -119,3 +121,64 @@ export const IdentityEntrySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type IdentityEntry = z.infer<typeof IdentityEntrySchema>;
+
+// --- Changing keys ---------------------------------------------------------------------
+
+/**
+ * An operator moving to a new key while it still holds the old one. The new key signs the
+ * entry without either signature, in `key_sig`, which proves the operator holds it; the
+ * current key then signs everything but `sig`, `key_sig` included. The operator keeps its ID,
+ * identity, credit, and record, and the old key can sign nothing after this entry.
+ */
+export const KeyRotationEntrySchema = z.strictObject({
+  type: z.literal("key_rotation"),
+  operator: OperatorIdSchema,
+  key: PublicKeySchema,
+  key_sig: SignatureSchema,
+  sig: SignatureSchema,
+});
+export type KeyRotationEntry = z.infer<typeof KeyRotationEntrySchema>;
+
+/** The bytes the new key signs in a rotation: the entry without `sig` or `key_sig`. */
+export function keyRotationPayload(entry: Pick<KeyRotationEntry, "operator" | "key">): Uint8Array {
+  const unsigned = { type: "key_rotation", operator: entry.operator, key: entry.key };
+  return signingPayload(unsigned);
+}
+
+/** Signs a rotation from `currentSecret`'s key to `newSecret`'s, for `operator`. */
+export function signKeyRotation(operator: string, newSecret: Uint8Array, currentSecret: Uint8Array, key: PublicKey) {
+  const key_sig = sign(keyRotationPayload({ operator, key }), newSecret);
+  return signObject({ type: "key_rotation" as const, operator, key, key_sig }, currentSecret);
+}
+
+/** Whether the new key countersigned the rotation and `currentKey` signed it. */
+export function verifyKeyRotation(entry: KeyRotationEntry, currentKey: string): boolean {
+  return verify(entry.key_sig, keyRotationPayload(entry), entry.key) && verifyObject(entry, currentKey);
+}
+
+/**
+ * An operator taking its ID back with a new key after losing the old one, proven by whatever
+ * gave it its identity: its domain, whose record now names the new key, which signs the entry;
+ * or the log, for an invited operator. Nothing the old key signed from log index `since` on
+ * counts.
+ */
+export const KeyRecoveryEntrySchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    type: z.literal("key_recovery"),
+    kind: z.literal("domain"),
+    operator: OperatorIdSchema,
+    key: PublicKeySchema,
+    domain: DomainSchema,
+    since: z.number().int().nonnegative(),
+    sig: SignatureSchema,
+  }),
+  z.strictObject({
+    type: z.literal("key_recovery"),
+    kind: z.literal("invited"),
+    operator: OperatorIdSchema,
+    key: PublicKeySchema,
+    since: z.number().int().nonnegative(),
+    sig: SignatureSchema,
+  }),
+]);
+export type KeyRecoveryEntry = z.infer<typeof KeyRecoveryEntrySchema>;

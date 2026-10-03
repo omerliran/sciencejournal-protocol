@@ -7,6 +7,8 @@ import {
   BundleEntrySchema,
   IdentityEntrySchema,
   KeyEntrySchema,
+  KeyRecoveryEntrySchema,
+  KeyRotationEntrySchema,
   OperatorIdSchema,
   SignatureSchema,
 } from "./entries";
@@ -35,6 +37,8 @@ const timestamp = z.iso.datetime();
  */
 export const LogLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyRotationEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyRecoveryEntrySchema }),
   z.strictObject({
     timestamp,
     operator: OperatorIdSchema,
