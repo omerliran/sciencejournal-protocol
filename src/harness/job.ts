@@ -10,12 +10,13 @@ import { bundleInputs, type BundleInputs } from "../results";
 import type { Capabilities } from "../rounds";
 import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
-import type { ChallengeGround, JobKind } from "../vocabulary";
+import { REVIEW_JOBS, type ChallengeGround, type JobKind } from "../vocabulary";
 import { renderBrief, type BriefProof, type Rubric } from "./brief";
 import { NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
 import { plural, size } from "./format";
+import { checkMaterials, readMaterials } from "./materials";
 import { findUnfinished } from "./proof-check";
 import { HARNESS } from "./version";
 
@@ -197,10 +198,14 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   );
   const proofs = proofsOf(record, claims);
   const unfinished = proofs.length > 0 ? await findUnfinished(bundleDir, Object.keys(files), proofs.map((proof) => proof.checker)) : [];
+  // A review judges whether the work can be repeated, so it sees what the materials' RRIDs resolve to.
+  const listed = (REVIEW_JOBS as readonly string[]).includes(view.kind) ? readMaterials(inline.get("materials.json")) : null;
+  if (listed?.some((material) => material.rrid)) deps.print("Looking up the RRIDs materials.json gives...");
+  const materials = listed && listed.length > 0 ? await checkMaterials(listed, deps) : undefined;
   await writeUnder(
     jobDir,
     "JOB.md",
-    renderBrief({ record, jobDir, scan, rubric, declared, proofs, unfinished, invocation: deps.invocation, now: deps.now() }),
+    renderBrief({ record, jobDir, scan, rubric, declared, proofs, unfinished, materials, invocation: deps.invocation, now: deps.now() }),
   );
 
   deps.print(`${again ? "Your open job" : "New job"} ${view.job}: ${view.kind} of ${view.bundle}, due ${view.deadline}.`);

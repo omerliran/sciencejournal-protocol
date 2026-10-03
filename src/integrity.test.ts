@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BENFORD, integrityFlags, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
+import { BENFORD, integrityFlags, missingSections, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
 
 const numbers = (markdown: string) => orphanNumbers(markdown).map((found) => found.number);
 
@@ -61,10 +61,27 @@ describe("no orphan numbers", () => {
     expect(numbers("No headings at all: 5.")).toEqual([]);
   });
 
+  it("reads the sections below a title, whatever depth the paper starts at", () => {
+    const titled = "# Method X lowers loss\n\nBy 3 points.\n\n## Summary\n\nIt rose 4 points.\n\n## Methods\n\nBatch 64.\n\n## Results\n\nUp 5.";
+    expect(numbers(titled)).toEqual(["4", "5"]);
+    // A heading shallower than the sections ends the one before it.
+    expect(numbers("## Results\n\nUp 5.\n\n# Appendix\n\nTable 6.")).toEqual(["5"]);
+  });
+
   it("counts positions in code points, and shows hidden characters in excerpts", () => {
     const [found] = orphanNumbers("# Results\n\n🐝 rose by 3​ points.");
     expect(found).toMatchObject({ line: 3, column: 11, number: "3" });
     expect(found.excerpt).toContain("<U+200B>");
+  });
+});
+
+describe("the paper's sections", () => {
+  it("lists the fixed sections a paper lacks, in order, at the depth its sections are", () => {
+    const all = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"];
+    expect(missingSections(all.map((name) => `## ${name}\n\nText.`).join("\n\n"))).toEqual([]);
+    expect(missingSections(`# Title\n\n${all.map((name) => `## ${name.toUpperCase()}\n`).join("\n")}`)).toEqual([]);
+    expect(missingSections("# Summary\n\n## Methods\n\n# Results")).toEqual(["Claims", "Methods", "Limitations", "Provenance"]);
+    expect(missingSections("Just prose.")).toEqual(all);
   });
 });
 
@@ -136,6 +153,32 @@ describe("a bundle's integrity flags", () => {
     expect(flags.orphan_numbers.map((found) => found.number)).toEqual(["0.03"]);
     expect(flags.data).toEqual([expect.objectContaining({ kind: "duplicate_rows", path: "data/a.csv" })]);
     expect(flags.skipped).toEqual([]);
+  });
+
+  it("flag the files the claims call for that the bundle lacks", () => {
+    const measurement = { result: "R1.mp", measured: "data/dsc.csv" };
+    const claim = (type: string, evidence: unknown[], dependsOn: string[] = []) => ({
+      local_id: "C1",
+      type,
+      core: true,
+      statement: "A statement.",
+      evidence,
+      depends_on: dependsOn,
+      confidence: 0.5,
+    });
+    const flagged = (claims: unknown[], others: [string, string][] = [], paths?: string[]) =>
+      integrityFlags([["claims.json", encode(JSON.stringify(claims))], ...others.map(([path, text]) => [path, encode(text)] as const)], paths)
+        .missing_files;
+
+    expect(flagged([claim("empirical", [measurement])])).toEqual(["materials.json"]);
+    expect(flagged([claim("empirical", [measurement])], [], ["claims.json", "materials.json"])).toEqual([]);
+    expect(flagged([claim("empirical", [{ result: "R1.x", produced_by: "code/a.py" }])])).toEqual([]);
+    const original = `claim:${"a".repeat(64)}`;
+    expect(flagged([claim("replication", [measurement], [original])], [], ["claims.json", "materials.json"])).toEqual(["deviations.json"]);
+    const prereg = `prereg:${"b".repeat(64)}`;
+    expect(flagged([claim("theoretical", [])], [["references.json", JSON.stringify([{ id: prereg }])]])).toEqual(["deviations.json"]);
+    // A claims file that doesn't parse is the bundle check's to reject, not a flag's.
+    expect(integrityFlags([["claims.json", encode("[{")]]).missing_files).toEqual([]);
   });
 
   it("skip tables too large to check, and say so", () => {

@@ -9,6 +9,8 @@ const BUNDLE_FILES = new Set([
   "paper.md",
   "claims.json",
   "references.json",
+  "materials.json",
+  "deviations.json",
   "embeddings.json",
   "provenance.json",
   SIGNATURE_FILE,

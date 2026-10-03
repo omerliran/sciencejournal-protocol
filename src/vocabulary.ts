@@ -31,6 +31,32 @@ export type WrittenBy = (typeof WRITTEN_BY)[number];
 export const PROOF_CHECKERS = ["lean4", "rocq"] as const;
 export type ProofChecker = (typeof PROOF_CHECKERS)[number];
 
+/**
+ * What each entry in a bundle's materials.json is: the rows of a lab's key resources table,
+ * in words any field can use. A sample is a specimen of anything, living or not.
+ */
+export const MATERIAL_KINDS = [
+  "antibody",
+  "cell_line",
+  "organism",
+  "sample",
+  "chemical",
+  "kit",
+  "oligonucleotide",
+  "plasmid",
+  "instrument",
+  "software",
+  "other",
+] as const;
+export type MaterialKind = (typeof MATERIAL_KINDS)[number];
+
+/**
+ * How work departed from what it follows, in a bundle's deviations.json: it did something
+ * other than what was stated, or did something that was never stated.
+ */
+export const DEVIATION_KINDS = ["changed", "unstated"] as const;
+export type DeviationKind = (typeof DEVIATION_KINDS)[number];
+
 // A corrected bundle is a bundle whose manifest names the bundle it replaces, so versions
 // travel in bundle entries rather than in an entry type of their own.
 export const LEDGER_ENTRY_TYPES = [
@@ -226,6 +252,8 @@ export type MeasurementKind = (typeof MEASUREMENT_KINDS)[number];
 
 export const LIMITS = {
   maxClaimsPerBundle: 30,
+  maxMaterials: 500,
+  maxDeviations: 200,
   minReplicas: 2,
   maxReplicas: 10,
   maxObservationsPerTask: 30,

@@ -15,9 +15,10 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `claims.ts`, `validate.ts` | The `claims.json` schema, claim IDs, and validation with JSON Pointer issues |
 | `bundle.ts`, `manifest.ts` | Bundle path rules, bundle hashes, verification inputs, evidence digests, and the manifest schema |
 | `results.ts` | Declared results: where each lives, reading them, and whether a result agrees with its declared value |
+| `materials.ts`, `deviations.ts` | What someone needs to repeat the work: the `materials.json` schema (a key resources table, with RRIDs), and the `deviations.json` schema for how a replication or pre-registered work departed from what it follows |
 | `scan.ts` | Content a model reads but a reader of the rendered page doesn't see: hidden characters by Unicode property, and Markdown that doesn't render |
 | `proofs.ts` | Where Lean 4 and Rocq proofs use their unfinished-proof keywords, read by each language's own lexical rules |
-| `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
+| `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, the paper's fixed sections it lacks, the files its claims call for that it lacks, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
 | `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
 | `identity.ts` | Identity entries: a domain, a GitHub repository, a volunteer's vouch the operator countersigns, or an invitation |
 | `leaves.ts` | Log leaves and signed tree heads |
@@ -64,7 +65,7 @@ console.log(assignClaimIds(claims, bundleInputs(files, verificationInputs)));
 
 ## The reference harness
 
-`src/harness/` is the reference harness, `sj-harness`: a command-line program that does the mechanical parts of a verification job and leaves the judgment to the verifier. It takes a job from a node, checks its files against their digests, and scans them for hidden content before any model reads them. For a reproduction it re-runs the computations in a container with no network and bounded resources, compares the results with the declared ones, and proposes a verdict for each claim. For a proof check it runs each proof's checker, Lean 4 or Rocq, in the same sandbox, asks it what each named theorem rests on, and proposes passed or failed. For a review, a challenge review, or a citation check it scans the work and the challenger's evidence and sends the verdicts with the reviewer's own report. It signs and sends each answer with its evidence. Publishers run the same checks on their own bundles before submitting. It needs Node 20 or later, and Docker or Podman to run anything.
+`src/harness/` is the reference harness, `sj-harness`: a command-line program that does the mechanical parts of a verification job and leaves the judgment to the verifier. It takes a job from a node, checks its files against their digests, and scans them for hidden content before any model reads them. For a reproduction it re-runs the computations in a container with no network and bounded resources, compares the results with the declared ones, and proposes a verdict for each claim. For a proof check it runs each proof's checker, Lean 4 or Rocq, in the same sandbox, asks it what each named theorem rests on, and proposes passed or failed. For a review, a challenge review, or a citation check it scans the work and the challenger's evidence and sends the verdicts with the reviewer's own report; for a review it also resolves each RRID the work's `materials.json` gives and shows what the record names and any problem it holds, such as a misidentified cell line. It signs and sends each answer with its evidence. Publishers run the same checks on their own bundles before submitting, RRID lookups included. It needs Node 20 or later, and Docker or Podman to run anything.
 
 ```sh
 npm ci

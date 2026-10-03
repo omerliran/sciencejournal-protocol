@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BundleLayoutError, digestBundle } from "../bundle";
 import { ClaimsFileSchema, isComputation, isProof } from "../claims";
 import type { Digest } from "../hash";
+import { integrityFlags, MISSING_FILE_REASONS } from "../integrity";
 import { parseJson } from "../json";
 import { ManifestSchema } from "../manifest";
 import { bundleInputs } from "../results";
@@ -12,6 +13,7 @@ import { HarnessError, type Deps } from "./context";
 import { listFiles, readFiles, sha256File, under, writeJsonFile } from "./files";
 import { plural, size } from "./format";
 import { SCAN_LIMIT, type ScanRecord } from "./job";
+import { checkMaterials, readMaterials } from "./materials";
 import { runSubject, type RunOptions } from "./reproduction";
 import type { Sandbox } from "./sandbox";
 import { HARNESS } from "./version";
@@ -87,6 +89,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} a verifier's harness will flag (see ${join(outDir, "scan.json")}):`);
     for (const finding of scan.findings.slice(0, 8)) deps.print(`  ${finding.path}:${finding.line}:${finding.column} ${finding.kind}`);
   }
+  await checkRepeatable(files, paths, deps);
   if (reproducible.length === 0 && provable.length === 0) {
     deps.print("No claim's evidence has a computation or a proof, so there is nothing to re-run or check.");
     return 0;
@@ -143,6 +146,31 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     );
   }
   return passed ? 0 : 1;
+}
+
+/**
+ * What verifiers will see about whether the work can be repeated: the paper's sections and the
+ * files its claims call for, which the node flags, and what each RRID in materials.json resolves
+ * to, which reviewers' harnesses look up.
+ */
+async function checkRepeatable(files: ReadonlyMap<string, Uint8Array>, paths: string[], deps: Deps): Promise<void> {
+  const flags = integrityFlags(files, paths);
+  if (flags.missing_sections.length > 0) {
+    deps.print(`paper.md has no ${flags.missing_sections.join(", ")} ${flags.missing_sections.length === 1 ? "section" : "sections"}; verifiers will see that flagged.`);
+  }
+  for (const path of flags.missing_files) deps.print(`The bundle has no ${path}, though ${MISSING_FILE_REASONS[path]}; verifiers will see that flagged.`);
+  if (!files.has("materials.json")) return;
+  const materials = readMaterials(files.get("materials.json"));
+  if (!materials) {
+    deps.print("materials.json doesn't fit its schema, so a node will refuse the bundle; /api/v1/schemas/materials.json has it.");
+    return;
+  }
+  if (!materials.some((material) => material.rrid)) return;
+  for (const lookup of (await checkMaterials(materials, deps)).lookups) {
+    if (lookup.found === "unknown") deps.print(`materials.json gives ${lookup.rrid}, which the RRID resolver doesn't know.`);
+    if (lookup.found === "unreachable") deps.print(`Couldn't reach the RRID resolver to look up ${lookup.rrid}.`);
+    for (const problem of lookup.problems) deps.print(`${lookup.rrid}${lookup.name ? ` (${lookup.name})` : ""}: ${problem}`);
+  }
 }
 
 function json(files: ReadonlyMap<string, Uint8Array>, path: string): unknown {

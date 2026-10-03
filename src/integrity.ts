@@ -3,6 +3,10 @@ import { gfmFromMarkdown } from "mdast-util-gfm";
 import { mathFromMarkdown } from "mdast-util-math";
 import { gfm } from "micromark-extension-gfm";
 import { math } from "micromark-extension-math";
+import { ClaimsFileSchema, needsReplication } from "./claims";
+import { followed } from "./deviations";
+import { parseJson } from "./json";
+import { ReferencesFileSchema } from "./references";
 import { RESULT_PLACEHOLDER } from "./results";
 import { revealHidden } from "./scan";
 
@@ -15,12 +19,28 @@ import { revealHidden } from "./scan";
 // and the other sections are where parameters live, such as a learning rate or a sample size,
 // so their numbers aren't.
 //
+// What someone needs to repeat the work: paper.md's fixed sections, Methods among them, and the
+// files its claims call for: materials.json when a claim rests on a measurement, which only
+// measuring again with the same materials can check, and deviations.json when the work follows
+// a claim it replicates or a pre-registered plan. A bundle may say there is nothing to list
+// with an empty list; saying nothing is what's flagged.
+//
 // Data forensics: in a table under data/, exact duplicate rows, and numeric columns whose
 // first digits stray from Benford's law, which naturally occurring numbers spanning several
 // orders of magnitude follow and invented ones often don't.
 
+/** The sections paper.md has, by their fixed names, in order. */
+export const PAPER_SECTIONS = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"] as const;
+
 /** The sections of paper.md that state results, by their fixed names. */
 export const CLAIM_BEARING_SECTIONS = ["Summary", "Claims", "Results"] as const;
+
+/** The files a bundle's claims call for, and why each is flagged when the bundle lacks it. */
+export const MISSING_FILE_REASONS = {
+  "materials.json": "a claim rests on a measurement, and repeating it takes the same materials",
+  "deviations.json": "the work follows a claim it replicates or a plan it pre-registered, and doesn't say how it departed from it",
+} as const;
+export type CalledForFile = keyof typeof MISSING_FILE_REASONS;
 
 export interface OrphanNumber {
   /** The section it's in, as the paper names it. */
@@ -66,6 +86,10 @@ export type DataFlag =
 
 export interface IntegrityFlags {
   orphan_numbers: OrphanNumber[];
+  /** paper.md's fixed sections that it doesn't have, in order. */
+  missing_sections: string[];
+  /** Files the bundle's claims call for that it doesn't have. */
+  missing_files: CalledForFile[];
   data: DataFlag[];
   /** Files too large to check, which a verifier checks itself if it matters. */
   skipped: { path: string; bytes: number }[];
@@ -89,19 +113,33 @@ export const INTEGRITY_LIMITS = {
 /** The share of numbers Benford's law expects to start with each digit, 1 to 9. */
 export const BENFORD = Array.from({ length: 9 }, (_, i) => Math.log10(1 + 1 / (i + 1)));
 
-/** Whether the checks read a file: paper.md, and the tables under data/. Others needn't be loaded. */
+/** The files the checks read besides the tables: the paper, and what says which files the claims call for. */
+const READ_WHOLE = new Set(["paper.md", "claims.json", "references.json"]);
+
+/** Whether the checks read a file: paper.md, claims.json, references.json, and the tables under data/. Others needn't be loaded. */
 export function readByIntegrityChecks(path: string): boolean {
-  return path === "paper.md" || tableDelimiter(path) !== null;
+  return READ_WHOLE.has(path) || isCheckedTable(path);
 }
 
-/** Runs every check over a bundle's files: paper.md for orphan numbers, tables under data/ for forensics. */
-export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>): IntegrityFlags {
-  const flags: IntegrityFlags = { orphan_numbers: [], data: [], skipped: [] };
+/** Whether the checks read a file as a table, which they skip once it's larger than maxTableBytes. */
+export function isCheckedTable(path: string): boolean {
+  return tableDelimiter(path) !== null;
+}
+
+/**
+ * Runs every check over a bundle's files: paper.md for orphan numbers and missing sections,
+ * claims.json and references.json for the files they call for, and the tables under data/ for
+ * forensics. `paths` names every file the bundle has, read or not; without it, the files given
+ * are all it has.
+ */
+export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, paths?: Iterable<string>): IntegrityFlags {
+  const read = [...files];
+  const flags: IntegrityFlags = { orphan_numbers: [], missing_sections: [], missing_files: [], data: [], skipped: [] };
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  for (const [path, bytes] of files) {
-    const delimiter = tableDelimiter(path);
-    if (path !== "paper.md" && delimiter === null) continue;
-    if (delimiter !== null && bytes.length > INTEGRITY_LIMITS.maxTableBytes) {
+  const texts = new Map<string, string>();
+  for (const [path, bytes] of read) {
+    if (!readByIntegrityChecks(path)) continue;
+    if (isCheckedTable(path) && bytes.length > INTEGRITY_LIMITS.maxTableBytes) {
       flags.skipped.push({ path, bytes: bytes.length });
       continue;
     }
@@ -111,10 +149,42 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>): 
     } catch {
       continue;
     }
-    if (path === "paper.md") flags.orphan_numbers.push(...orphanNumbers(text).slice(0, INTEGRITY_LIMITS.orphanNumbersShown));
-    else flags.data.push(...tableFlags(path, parseDelimited(text, delimiter!)));
+    if (READ_WHOLE.has(path)) texts.set(path, text);
+    else flags.data.push(...tableFlags(path, parseDelimited(text, tableDelimiter(path)!)));
   }
+  const paper = texts.get("paper.md");
+  if (paper !== undefined) {
+    const tree = parseMarkdown(paper);
+    flags.orphan_numbers.push(...orphanNumbersIn(paper, tree).slice(0, INTEGRITY_LIMITS.orphanNumbersShown));
+    flags.missing_sections.push(...missingSectionsIn(tree));
+  }
+  flags.missing_files.push(
+    ...missingFiles(texts.get("claims.json"), texts.get("references.json"), new Set(paths ?? read.map(([path]) => path))),
+  );
   return flags;
+}
+
+/**
+ * The files a bundle's claims call for that it doesn't have. A claims file or references file
+ * that doesn't parse calls for nothing here: the bundle check rejects it before anything is
+ * flagged.
+ */
+function missingFiles(claimsText: string | undefined, referencesText: string | undefined, paths: ReadonlySet<string>): CalledForFile[] {
+  const claims = claimsText === undefined ? null : ClaimsFileSchema.safeParse(parsed(claimsText));
+  if (!claims?.success) return [];
+  const references = referencesText === undefined ? null : ReferencesFileSchema.safeParse(parsed(referencesText));
+  const calledFor: CalledForFile[] = [];
+  if (claims.data.some(needsReplication)) calledFor.push("materials.json");
+  if (followed(claims.data, references?.success ? references.data : []).size > 0) calledFor.push("deviations.json");
+  return calledFor.filter((path) => !paths.has(path));
+}
+
+function parsed(text: string): unknown {
+  try {
+    return parseJson(text);
+  } catch {
+    return undefined;
+  }
 }
 
 // --- No orphan numbers -------------------------------------------------------------------
@@ -147,13 +217,46 @@ const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
  * than measure them.
  */
 export function orphanNumbers(markdown: string): OrphanNumber[] {
-  const tree = fromMarkdown(markdown, {
+  return orphanNumbersIn(markdown, parseMarkdown(markdown));
+}
+
+/** paper.md's fixed sections that it doesn't have, in order. */
+export function missingSections(markdown: string): string[] {
+  return missingSectionsIn(parseMarkdown(markdown));
+}
+
+function parseMarkdown(markdown: string): MarkdownNode {
+  return fromMarkdown(markdown, {
     extensions: [gfm(), math()],
     mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
   }) as MarkdownNode;
-  const headings = (tree.children ?? []).filter((node) => node.type === "heading");
-  // Sections are the paper's top level of headings, whatever depth it starts at.
-  const depth = Math.min(...headings.map((node) => node.depth ?? 1));
+}
+
+/**
+ * The heading depth the paper's sections are at: the shallowest that names one of the fixed
+ * sections, so a title above them is fine, whatever depth the paper starts at. Null when no
+ * heading names one.
+ */
+function sectionDepth(tree: MarkdownNode): number | null {
+  const fixed = new Set(PAPER_SECTIONS.map((name) => name.toLowerCase()));
+  const depths = (tree.children ?? [])
+    .filter((node) => node.type === "heading" && fixed.has(plainText(node).trim().toLowerCase()))
+    .map((node) => node.depth ?? 1);
+  return depths.length === 0 ? null : Math.min(...depths);
+}
+
+function missingSectionsIn(tree: MarkdownNode): string[] {
+  const depth = sectionDepth(tree);
+  const present = new Set(
+    (tree.children ?? [])
+      .filter((node) => node.type === "heading" && node.depth === depth)
+      .map((node) => plainText(node).trim().toLowerCase()),
+  );
+  return PAPER_SECTIONS.filter((name) => !present.has(name.toLowerCase()));
+}
+
+function orphanNumbersIn(markdown: string, tree: MarkdownNode): OrphanNumber[] {
+  const depth = sectionDepth(tree);
   const claimBearing = new Set(CLAIM_BEARING_SECTIONS.map((name) => name.toLowerCase()));
   const lines = lineStarts(markdown);
   const found: OrphanNumber[] = [];
@@ -169,8 +272,9 @@ export function orphanNumbers(markdown: string): OrphanNumber[] {
     node.children?.forEach(visit);
   };
   for (const node of tree.children ?? []) {
-    if (node.type === "heading" && node.depth === depth) {
-      section = plainText(node).trim();
+    // A heading at the sections' depth starts one; a shallower one, such as a title, ends it.
+    if (node.type === "heading" && depth !== null && (node.depth ?? 1) <= depth) {
+      section = node.depth === depth ? plainText(node).trim() : null;
       continue;
     }
     if (section !== null && claimBearing.has(section.toLowerCase())) visit(node);

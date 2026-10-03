@@ -1,5 +1,5 @@
 import { isClaimId, type ProofEvidence } from "../claims";
-import type { IntegrityFlags } from "../integrity";
+import { MISSING_FILE_REASONS, PAPER_SECTIONS, type IntegrityFlags } from "../integrity";
 import type { UnfinishedProof } from "../proofs";
 import { HIDDEN_KINDS, revealHidden } from "../scan";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../vocabulary";
 import { code, plural, shellQuote, shown, size } from "./format";
 import type { DeclaredComputation, JobRecord, ScanRecord } from "./job";
+import { withoutRrid, type MaterialsCheck } from "./materials";
 
 export interface Rubric {
   digest: string;
@@ -31,6 +32,8 @@ export interface BriefInput {
   proofs?: BriefProof[];
   /** For a proof check, as information: where the proofs use unfinished-proof keywords. */
   unfinished?: (UnfinishedProof & { path: string })[];
+  /** For a review of work that lists its materials: what each RRID it gives resolves to. */
+  materials?: MaterialsCheck;
   invocation: string;
   now: Date;
 }
@@ -63,9 +66,9 @@ const WHAT_TO_DO: Partial<Record<JobRecord["kind"], string>> = {
   hazard_review:
     "A verifier raised a hazard concern about this work. Read all of it and give your own hazard verdict; a panel of three settles the concern.",
   replication_match:
-    "Each replication claim below says it reached the same results as a claim from another organization's work. Judge whether it did: matched, mismatched, or could_not_judge. There is no hazard screen: the work was screened when it opened.",
+    "Each replication claim below says it reached the same results as a claim from another organization's work. Judge whether it did: matched, mismatched, or could_not_judge. If the work has a `bundle/deviations.json`, it says how the replication departed from each original and what the original left unstated; say in your report whether any difference in results could come from one. There is no hazard screen: the work was screened when it opened.",
   challenge_review: `Another operator challenges a claim in this work, on the ground and with the evidence below. Weigh the evidence against the work, and judge whether the challenge holds: ${CHALLENGE_VERDICTS.join(", ")}.`,
-  methods_review: `A methods review: judge whether the design and the statistics support each claim, and say what must change; ${REVIEW}`,
+  methods_review: `A methods review: judge whether the design and the statistics support each claim, and whether someone else could repeat the work from the bundle alone, and say what must change, including anything its Methods or materials leave out that a repeat would need; ${REVIEW}`,
   domain_review: `A domain review: judge whether each claim holds up against the ledger and the literature: whether it is as new as it says, and whether it accounts for prior work that bears on it, with links to that work; ${REVIEW}`,
   adversarial_review: `An adversarial review: build the strongest case against each claim, with evidence; ${REVIEW}`,
   duplicate_check: `A duplicate check: for each pair below, judge whether the claim from this work restates the earlier claim in other words (the same assertion, whatever its evidence): ${DUPLICATE_VERDICTS.join(", ")}. The node paired them because their statements share most of their words, which proves nothing either way. There is no hazard screen: the work was screened when it opened.`,
@@ -77,7 +80,7 @@ const UNKNOWN_KIND =
   "This harness doesn't know this kind of job yet. Read what /llms.txt says about it, and answer it the way it describes.";
 
 /** JOB.md: what the job is, what it asks, what the scan found, and the commands to run next. */
-export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [], unfinished = [], invocation, now }: BriefInput): string {
+export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [], unfinished = [], materials, invocation, now }: BriefInput): string {
   const run = (command: string, rest = "") => `\`${invocation} ${command} ${shellQuote(jobDir)}${rest}\``;
   const reviewing = (REVIEW_JOBS as readonly string[]).includes(record.kind);
   const asked = record.claims.filter((claim) => claim.needs_verdict);
@@ -141,6 +144,7 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
       ...asked.map((claim) => `| ${code(claim.local_id)} | \`${claim.claim_id}\` |`),
       ...(others.length > 0 ? ["", `No verdict on ${others.join(", ")}: their computations weren't reproduced, so they get no review.`] : []),
     );
+    if (materials) lines.push("", "## Materials", "", ...materialsLines(materials));
   }
   if (record.challenge) {
     const challenged = record.claims.find((claim) => claim.claim_id === record.challenge!.claim);
@@ -292,10 +296,57 @@ function described(citation: NonNullable<JobRecord["citations"]>[number]): strin
   return `${code(citation.title)}${citation.year ? ` (${citation.year})` : ""}${named ? `, by ${named}${authors.length > 3 ? ` and ${authors.length - 3} more` : ""}` : ""}`;
 }
 
+/** What the work's materials.json lists, and what each RRID it gives resolves to. */
+function materialsLines({ materials, lookups, not_looked_up }: MaterialsCheck): string[] {
+  const lines = [
+    `\`bundle/materials.json\` lists ${plural(materials.length, "material")}. Whether someone could get the same ones is part of whether the work can be repeated.`,
+  ];
+  if (lookups.length > 0) {
+    lines.push(
+      "",
+      "Each RRID it gives, as the RRID resolver has it. Check that each names what the work says it used, and weigh any problem in the record against the claims that rest on it:",
+      "",
+      "| RRID | The record names | Problems | Notes |",
+      "| --- | --- | --- | --- |",
+      ...lookups.map((lookup) => {
+        if (lookup.found === "unknown") return `| ${code(lookup.rrid)} | nothing: the resolver has no such RRID | | |`;
+        if (lookup.found === "unreachable") return `| ${code(lookup.rrid)} | not looked up: the resolver couldn't be reached | | |`;
+        const named = [lookup.name, lookup.citation].filter((part) => part !== undefined).map((part) => code(part!)).join(", ");
+        return `| ${code(lookup.rrid)} | ${named || "a record with no name"} | ${lookup.problems.map((problem) => code(problem)).join("; ") || "none"} | ${lookup.notes.map((note) => code(note)).join("; ")} |`;
+      }),
+    );
+  }
+  if (not_looked_up.length > 0) lines.push("", `Not looked up, past the most one job looks up: ${not_looked_up.map(code).join(", ")}.`);
+  const missing = withoutRrid(materials);
+  if (missing.length > 0) {
+    lines.push(
+      "",
+      `Of kinds RRIDs cover, these give none, so nothing pins down which one was used: ${missing
+        .slice(0, 12)
+        .map((material) => `${code(material.name)} (${material.kind.replaceAll("_", " ")})`)
+        .join(", ")}${missing.length > 12 ? `, and ${missing.length - 12} more` : ""}.`,
+    );
+  }
+  return lines;
+}
+
 /** What the node's deterministic checks flagged: each a thing to look at, not a finding. */
 function integrityFlagLines(flags: IntegrityFlags): string[] {
   const lines: string[] = [];
+  // A node that predates these checks doesn't send them.
+  const missingSections = flags.missing_sections ?? [];
+  const missingFiles = flags.missing_files ?? [];
+  if (missingSections.length > 0) {
+    lines.push(
+      `The paper has no ${missingSections.join(", ")} ${missingSections.length === 1 ? "section" : "sections"}, of the fixed ${PAPER_SECTIONS.join(", ")}. Methods is what someone needs to repeat the work: judge whether the paper says it elsewhere.`,
+    );
+  }
+  for (const path of missingFiles) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`The bundle has no \`${path}\`, though ${MISSING_FILE_REASONS[path]}.`);
+  }
   if (flags.orphan_numbers.length > 0) {
+    if (lines.length > 0) lines.push("");
     lines.push(
       `${plural(flags.orphan_numbers.length, "number")} typed into the paper's Summary, Claims, or Results instead of bound to a declared result with a placeholder such as \`{{R1.key}}\`. Check that each matches what the code produces:`,
       "",
@@ -317,7 +368,7 @@ function integrityFlagLines(flags: IntegrityFlags): string[] {
     );
   }
   for (const skipped of flags.skipped) lines.push(`- ${code(skipped.path)} (${size(skipped.bytes)}) was too large for the node to check.`);
-  if (lines.length === 0) return ["The node's checks flagged nothing: every number in the Summary, Claims, and Results is bound to a declared result, and the tables under `data/` show no repeated rows or Benford anomalies."];
+  if (lines.length === 0) return ["The node's checks flagged nothing: the paper has every fixed section, every number in its Summary, Claims, and Results is bound to a declared result, the bundle has every file its claims call for, and the tables under `data/` show no repeated rows or Benford anomalies."];
   return [
     ...lines,
     "",
