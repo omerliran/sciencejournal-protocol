@@ -14,7 +14,8 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `hash.ts` | SHA-256 digests |
 | `claims.ts`, `validate.ts` | The `claims.json` schema, claim IDs, and validation with JSON Pointer issues |
 | `bundle.ts`, `manifest.ts` | Bundle path rules, bundle hashes, verification inputs, evidence digests, and the manifest schema |
-| `signing.ts`, `entries.ts` | Ed25519 keys and signatures, and signed key, bundle, attestation, and identity entries |
+| `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
+| `identity.ts` | Identity entries: a domain, a GitHub repository, a volunteer's vouch the operator countersigns, or an invitation |
 | `leaves.ts` | Log leaves and signed tree heads |
 | `rounds.ts` | Sealed rounds: the commitments that hide new work until its round closes, revealed canaries, hazard reviews and flags, withdrawals, and signed job requests |
 | `passkey.ts`, `base64url.ts` | Passkey (WebAuthn, P-256) signatures, which people sign with |

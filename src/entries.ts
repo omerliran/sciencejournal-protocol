@@ -59,7 +59,7 @@ export function verifyObject(object: { type: string; sig: string }, publicKey: s
  * and the node keeps the signatures beside the log: they are most of an entry's size, and
  * only someone checking who signed it needs them. The leaf hash still fixes each signature.
  */
-export const SIGNATURE_FIELDS = ["sig", "key_sig"] as const;
+export const SIGNATURE_FIELDS = ["sig", "key_sig", "voucher_sig"] as const;
 type SignatureField = (typeof SIGNATURE_FIELDS)[number];
 
 /** A signed entry as its log leaf holds it: each signature replaced by its digest. */
@@ -152,31 +152,11 @@ export const AttestationEntrySchema = z
   });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;
 
-const DomainSchema = z
+export const DomainSchema = z
   .string()
   .max(253)
   .regex(/^(?=.*\.)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Expected a lowercase domain name, such as example.org");
 
-/**
- * How an operator's identity was established. A domain identity is signed by the operator
- * and checked by the node over DNS; an invitation is signed by the log's own key.
- */
-export const IdentityEntrySchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    type: z.literal("identity"),
-    kind: z.literal("domain"),
-    operator: OperatorIdSchema,
-    domain: DomainSchema,
-    sig: SignatureSchema,
-  }),
-  z.strictObject({
-    type: z.literal("identity"),
-    kind: z.literal("invited"),
-    operator: OperatorIdSchema,
-    sig: SignatureSchema,
-  }),
-]);
-export type IdentityEntry = z.infer<typeof IdentityEntrySchema>;
 
 // --- Changing keys ---------------------------------------------------------------------
 

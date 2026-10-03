@@ -5,7 +5,6 @@ import { ClaimIdSchema } from "./claims";
 import {
   AttestationEntrySchema,
   BundleEntrySchema,
-  IdentityEntrySchema,
   KeyEntrySchema,
   KeyRecoveryEntrySchema,
   KeyRotationEntrySchema,
@@ -15,6 +14,7 @@ import {
   SignatureSchema,
   type Detached,
 } from "./entries";
+import { IdentityEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema } from "./hash";
 import { IdeaEntrySchema } from "./ideas";
@@ -63,7 +63,10 @@ export const SignedLeafSchema = z.union([
     timestamp,
     operator: OperatorIdSchema,
     entry: IdentityEntrySchema,
-    /** The organization the identity counts as: the registrable domain, or the operator. */
+    /**
+     * The organization the identity counts as: the registrable domain, the GitHub account
+     * (github:<login>), the vouching volunteer, or, for an invitation, the operator.
+     */
     organization: z.string(),
   }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: TaskEntrySchema }),

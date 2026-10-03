@@ -57,7 +57,7 @@ export const LEDGER_ENTRY_TYPES = [
  * How an operator's identity was established: a domain it proved control of over DNS, or an
  * invitation from the node. Statuses count independent verifiers by identity, not by key.
  */
-export const IDENTITY_KINDS = ["domain", "invited"] as const;
+export const IDENTITY_KINDS = ["domain", "github", "vouched", "invited"] as const;
 export type IdentityKind = (typeof IDENTITY_KINDS)[number];
 
 /**
@@ -72,6 +72,12 @@ export const SIGNATURE_ALGORITHM = "ed25519-ml-dsa-44";
  */
 export const DOMAIN_RECORD_NAME = "_sciencejournal";
 export const DOMAIN_RECORD_PREFIX = "sciencejournal-operator=";
+
+/**
+ * Where an operator proves a GitHub account or organization: a file of this name at the root
+ * of a public repository it owns, holding a line made the same way as the DNS record.
+ */
+export const GITHUB_PROOF_FILE = ".sciencejournal";
 export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number];
 
 /** Verification jobs, and the verdict a verifier may give each claim in one. */
