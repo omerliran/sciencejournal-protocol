@@ -1,12 +1,28 @@
 import { z } from "zod";
 import { boundedText, PublicKeySchema } from "./entries";
 import { DigestSchema } from "./hash";
+import { WORK_KINDS } from "./vocabulary";
 import { WRITTEN_BY } from "./vocabulary";
 
 // An SPDX license identifier's shape, such as "CC-BY-4.0" or "MIT".
 const LicenseIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9.+-]{1,64}$/, "Expected an SPDX license identifier, such as CC-BY-4.0");
+
+/**
+ * What one independent replication of the work's measurements takes: hands-on hours of each
+ * kind of work, and how many days it takes from start to finish. A wet-lab replication might
+ * be 40 lab hours over 30 days. Its publisher prepays a bounty for it.
+ */
+export const ReplicationSchema = z.strictObject({
+  needs: z
+    .array(z.strictObject({ kind: z.enum(WORK_KINDS), hours: z.number().positive().max(100_000) }))
+    .min(1)
+    .max(WORK_KINDS.length)
+    .refine((needs) => new Set(needs.map((need) => need.kind)).size === needs.length, "List each kind once"),
+  days: z.number().positive().max(3650),
+});
+export type Replication = z.infer<typeof ReplicationSchema>;
 
 /** Licensed software a computation needs, such as "matlab" or "stata". */
 export const SoftwareTagSchema = z
@@ -46,6 +62,8 @@ export const ManifestSchema = z.strictObject({
   written_by: z.enum(WRITTEN_BY).optional(),
   /** Set when this bundle corrects an earlier one by the same operator. */
   replaces: DigestSchema.optional(),
+  /** What replicating its measurements takes; required exactly when a claim has a measurement. */
+  replication: ReplicationSchema.optional(),
   /**
    * The publisher's own hazard screen: the digest of the rubric it applied and the model that
    * applied it. A publisher submits only work its screen answered "none" for.

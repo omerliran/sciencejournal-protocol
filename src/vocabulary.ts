@@ -92,6 +92,13 @@ export const JOB_KINDS = ["reproduction", "screen", "hazard_review"] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 /**
+ * Kinds of work, for pricing what replicating a measurement takes: machine time on CPUs
+ * (compute) or GPUs, hands-on work in a laboratory, or observations in the world (field).
+ */
+export const WORK_KINDS = ["compute", "gpu", "lab", "field"] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
+
+/**
  * Why content was withdrawn: a hazard a panel upheld, or work its operator disowned after
  * losing its key. Its hash stays in the log as a tombstone.
  */

@@ -65,6 +65,17 @@ export function needsReproduction(claim: Pick<Claim, "evidence">): boolean {
   return claim.evidence.some(isComputation);
 }
 
+export type MeasurementEvidence = z.infer<typeof MeasurementEvidenceSchema>;
+
+export function isMeasurement(evidence: Evidence): evidence is MeasurementEvidence {
+  return "measured" in evidence;
+}
+
+/** Whether a claim's evidence includes a measurement, which only a new measurement can replicate. */
+export function needsReplication(claim: Pick<Claim, "evidence">): boolean {
+  return claim.evidence.some(isMeasurement);
+}
+
 /** The results a claim's evidence names, each once, in the order they first appear. */
 export function resultsNamed(claim: Pick<Claim, "evidence">): string[] {
   return [...new Set(claim.evidence.flatMap((item) => ("result" in item ? [item.result] : [])))];
