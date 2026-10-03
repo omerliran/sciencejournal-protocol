@@ -114,10 +114,15 @@ export const WORK_KINDS = ["compute", "gpu", "lab", "field"] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
 /**
- * Why content was withdrawn: a hazard a panel upheld, or work its operator disowned after
- * losing its key. Its hash stays in the log as a tombstone.
+ * Why content was withdrawn: a hazard a panel upheld, work its operator disowned after losing
+ * its key, or a notice the node acted on, for copyright or for personal data that may not be
+ * published. Its hash stays in the log as a tombstone.
  */
-export const WITHDRAWAL_REASONS = ["hazard", "disowned"] as const;
+export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data"] as const;
+export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
+
+/** The withdrawals a person at the node makes on a notice, rather than a panel or a recovery. */
+export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data"] as const satisfies readonly WithdrawalReason[];
 
 /** Where a field task stands. */
 export const TASK_STATUSES = ["open", "corroborated", "unresolved"] as const;
