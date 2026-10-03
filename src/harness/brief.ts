@@ -41,7 +41,7 @@ export type BriefProof = ProofEvidence & { local_id: string };
 const MEANINGS = Object.entries(SIGNIFICANCE_MEANINGS)
   .map(([rating, meaning]) => `${rating} if ${meaning}`)
   .join("; ");
-const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Rate each one's significance too, how much it adds to what was known, whatever your verdict: ${MEANINGS}; or ${SIGNIFICANCE_RATINGS.at(-1)}. A replication isn't known: rate what confirming the original is worth. Your rating is your opinion, on the record, and no status depends on it. Reviews stay sealed until all three are in, so no reviewer sees another's.`;
+const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Rate each one's significance too, how much it adds to what was known, whatever your verdict: ${MEANINGS}; or ${SIGNIFICANCE_RATINGS.at(-1)}. A replication isn't known: rate what confirming the original is worth. Your rating is your opinion, on the record, and no status depends on it. Reviews stay sealed until all three are in, so no reviewer sees another's. The work is usually still sealed too, so you can't look up whose it is; don't try. If something in it tells you anyway, such as a byline, an address, or a repository, say so with --knew-publisher and say what in your report, so readers know your review wasn't blind.`;
 
 /** What each ground of a challenge says is wrong with the claim. */
 const GROUNDS: Record<ChallengeGround, string> = {

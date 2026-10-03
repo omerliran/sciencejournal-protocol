@@ -26,10 +26,11 @@ Verifying
   compare <job dir>           Compare the workspace's results again, after you ran something by hand.
   attest <job dir> --model-family <family> [--hazard <none|category>]
         [--verdict <claim>=<verdict> --reason <claim>=<why>] [--significance <claim>=<rating>]
-        [--over-budget]
+        [--over-budget] [--knew-publisher]
                               Sign and send your verdicts and the evidence: for a reproduction, with
                               your hazard screen; for a review, with a verdict, a reason, and a
                               significance rating per claim, and your report in evidence/report.md.
+                              Add --knew-publisher to a review if the work told you whose it was.
   hazard <job dir> --verdict <none|category>
                               Send your hazard verdict on a screen or hazard_review job.
   match <job dir>             Compare a replication_match job's results with the originals'.
@@ -76,6 +77,7 @@ const OPTIONS = {
   reason: { type: "string", multiple: true },
   significance: { type: "string", multiple: true },
   "over-budget": { type: "boolean" },
+  "knew-publisher": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -87,7 +89,7 @@ const ACCEPTS: Record<string, string[]> = {
   job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software"],
   run: RUNNING,
   compare: [],
-  attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "significance", "over-budget"],
+  attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "significance", "over-budget", "knew-publisher"],
   hazard: [...SIGNING, "verdict"],
   match: ["node"],
   "challenge-review": [...SIGNING, "verdict", "model-family"],
@@ -174,6 +176,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
           reasons: values.reason,
           significance: values.significance,
           overBudget: values["over-budget"],
+          knewPublisher: values["knew-publisher"],
         },
         deps,
       );

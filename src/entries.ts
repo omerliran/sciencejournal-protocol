@@ -127,7 +127,8 @@ const GlobalClaimIdSchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a
  * A verifier's signed verdicts on claims from one bundle. `evidence` is the digest of the
  * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
  * the verifier's hazard screen of the bundle; attestations from assigned jobs must give it.
- * A review also rates each claim it judges for `significance`, and no other job does.
+ * A review also rates each claim it judges for `significance`, and no other job does; a review
+ * says `knew_publisher` when something in the work told the reviewer whose it was.
  */
 export const AttestationEntrySchema = z
   .strictObject({
@@ -148,6 +149,11 @@ export const AttestationEntrySchema = z
      * organizations say so, the publisher pays again and they are paid for their time.
      */
     over_budget: z.literal(true).optional(),
+    /**
+     * Something in the work told the reviewer who published it, such as a byline, an address,
+     * or a repository, so the review wasn't blind.
+     */
+    knew_publisher: z.literal(true).optional(),
     sig: SignatureSchema,
   })
   .superRefine((entry, ctx) => {
@@ -162,6 +168,9 @@ export const AttestationEntrySchema = z
     if (!(REVIEW_JOBS as readonly string[]).includes(entry.job)) {
       if (entry.significance !== undefined) {
         ctx.addIssue({ code: "custom", path: ["significance"], message: `Only a review rates significance, not a ${entry.job}` });
+      }
+      if (entry.knew_publisher !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["knew_publisher"], message: `Only a review says whether it knew whose work it judged, not a ${entry.job}` });
       }
       return;
     }

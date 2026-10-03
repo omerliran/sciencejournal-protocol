@@ -114,4 +114,11 @@ describe("attestations", () => {
     expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none", significance: { [one]: "major" } })).toBe(false);
     expect(parses({ job: "proof_check", claims: { [one]: "passed" }, significance: { [one]: "minor" } })).toBe(false);
   });
+
+  it("let only a review say the work told it whose it was", () => {
+    const review = { job: "methods_review", claims: { [one]: "sound" }, significance: { [one]: "minor" } };
+    expect(parses({ ...review, knew_publisher: true })).toBe(true);
+    expect(parses({ ...review, knew_publisher: false })).toBe(false);
+    expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none", knew_publisher: true })).toBe(false);
+  });
 });
