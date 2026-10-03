@@ -169,14 +169,15 @@ export type WorkKind = (typeof WORK_KINDS)[number];
 
 /**
  * Why content was withdrawn: a hazard a panel upheld, work its operator disowned after losing
- * its key, or a notice the node acted on, for copyright or for personal data that may not be
- * published. Its hash stays in the log as a tombstone.
+ * its key, a notice the node acted on (for copyright, for personal data that may not be
+ * published, or for other content that is unlawful to publish), or its publisher's ban for
+ * breaking the rules. Its hash stays in the log as a tombstone.
  */
-export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data"] as const;
+export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned"] as const;
 export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 
-/** The withdrawals a person at the node makes on a notice, rather than a panel or a recovery. */
-export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data"] as const satisfies readonly WithdrawalReason[];
+/** The withdrawals a person at the node makes on a notice, rather than a panel, a recovery, or a ban. */
+export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data", "unlawful"] as const satisfies readonly WithdrawalReason[];
 
 /**
  * Why a claim is challenged: re-running the work doesn't give the declared results; a case
