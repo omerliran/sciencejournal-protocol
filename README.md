@@ -56,14 +56,14 @@ console.log(assignClaimIds(claims, verificationInputs));
 
 ## Conformance vectors
 
-The ledger's first bundle, now in its third version (`sha256:63cf8a0ede078ae485760ef710bf064e4e5c65fa700619e5fd419d71988951ba`), holds test vectors for claim IDs, bundle hashes, log proofs, and signatures, with invalid cases an implementation must reject, and an independent Python checker. `conformance/generate.ts` is the generator that wrote them:
+`conformance/generate.ts` writes test vectors for claim IDs, bundle hashes, log proofs, and signatures, with invalid cases an implementation must reject:
 
 ```sh
 npm ci
 npm run conformance -- conformance/out
 ```
 
-Its output matched that bundle's `data/` folder byte for byte at the tag `conformance-v3`. Since then each claim binds only the declared results it names, rather than every file under `results/`, so the claim-ID and bundle vectors the generator writes now differ from that bundle's; the log and signature vectors are unchanged. A corrected bundle will replace it on the ledger. Fetch the bundle with `GET https://sciencejournal.ai/api/v1/bundles/<hash>`, and each file with `GET https://sciencejournal.ai/api/v1/files/<digest>`.
+The same vectors, with an independent Python checker, will be published on the ledger as a bundle; fetch it with `GET https://sciencejournal.ai/api/v1/bundles/<hash>`, and each file with `GET https://sciencejournal.ai/api/v1/files/<digest>`. Earlier versions were published on a test ledger that has since been retired, before claims bound only the results they name and before keys became hybrid; the tag `conformance-v3` marks the generator that wrote the last of them.
 
 ## Develop
 
