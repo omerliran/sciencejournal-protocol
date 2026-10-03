@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { shellQuote } from "./format";
 import { HarnessError } from "./context";
-import { cloneTree, LogTail, under } from "./files";
+import { cloneTree, under } from "./files";
 
 // The sandbox. Bundle code is someone else's code, so the harness runs it only in a container:
 // no network, no added privileges, bounded processes, memory, CPU, and time, as the user who
@@ -36,7 +36,8 @@ export const CONDA_IMAGE = "ghcr.io/mamba-org/micromamba:2";
 
 export interface CommandPlan {
   command: string;
-  from: "given" | "code/run" | "produced_by";
+  /** The verifier's command, the bundle's code/run, the computations' files, or each proof's checker. */
+  from: "given" | "code/run" | "produced_by" | "checker";
   files: string[];
 }
 
@@ -48,6 +49,11 @@ export interface Limits {
   pids: number;
 }
 
+/** Where a run's output goes, each piece with the stream it came on. */
+export interface OutputSink {
+  write(chunk: Uint8Array | string, stream?: "stdout" | "stderr"): void;
+}
+
 export interface ImageInfo {
   plan: ImagePlan;
   ref: string;
@@ -56,6 +62,11 @@ export interface ImageInfo {
   digests: string[];
   /** Whether an image built earlier from the same inputs was used again. */
   reused: boolean;
+  /**
+   * The home of the user the image runs as, when that isn't root: a run keeps it, so tools
+   * installed there, such as opam's or elan's, still find themselves.
+   */
+  home?: string;
   seconds: number;
 }
 
@@ -75,8 +86,8 @@ export interface Sandbox {
   /** The CPUs and memory available, which the default limits are taken from. */
   capacity: { cpus: number; memoryBytes: number };
   /** The image a run uses: given, pulled, or built from the bundle's env/. */
-  image(plan: ImagePlan, context: { workspace: string; scratch: string; key: string }, log: LogTail): Promise<ImageInfo>;
-  run(request: { image: ImageInfo; workspace: string; command: string; limits: Limits }, log: LogTail): Promise<RunResult>;
+  image(plan: ImagePlan, context: { workspace: string; scratch: string; key: string }, log: OutputSink): Promise<ImageInfo>;
+  run(request: { image: ImageInfo; workspace: string; command: string; limits: Limits }, log: OutputSink): Promise<RunResult>;
 }
 
 /** An image that didn't build or couldn't be fetched. */
@@ -132,7 +143,7 @@ export function planImage(paths: ReadonlySet<string>, given?: string): ImagePlan
 export function describePlan(plan: ImagePlan): string {
   switch (plan.from) {
     case "given":
-      return `the image given, ${plan.ref}`;
+      return "the image given with --image";
     case "Dockerfile":
       return `built from ${plan.file}, with code/, env/, data/, and proofs/ as its context`;
     case "requirements":
@@ -205,7 +216,7 @@ export function limitsFor(
 /** The arguments that run `command` in the sandbox: everything the run may and may not do. */
 export function runArguments(
   engine: Pick<Engine, "command" | "rootless">,
-  request: { name: string; image: string; workspace: string; command: string; limits: Limits },
+  request: { name: string; image: string; workspace: string; command: string; limits: Limits; home?: string },
   user: { uid: number; gid: number } | null,
 ): string[] {
   if (request.workspace.includes(",")) {
@@ -231,7 +242,7 @@ export function runArguments(
     limits.memory,
     "--cpus",
     String(limits.cpus),
-    ...asUser(engine, user),
+    ...asUser(engine, user, request.home),
     "--tmpfs",
     "/tmp:rw,exec,nosuid,nodev",
     "--mount",
@@ -248,13 +259,15 @@ export function runArguments(
 /**
  * Runs as the harness's own user, so whatever the run writes belongs to them and nothing it
  * does is root's. A rootless engine already maps the container's root to that user; Podman
- * does it with keep-id.
+ * does it with keep-id. HOME stays the image user's when the image runs as someone other than
+ * root, where tools such as opam and elan keep their installs; otherwise, since root's home is
+ * private, it is /tmp. Caches go to /tmp either way, which is the run's own.
  */
-function asUser(engine: Pick<Engine, "command" | "rootless">, user: { uid: number; gid: number } | null): string[] {
+function asUser(engine: Pick<Engine, "command" | "rootless">, user: { uid: number; gid: number } | null, home?: string): string[] {
   if (!user) return [];
-  const home = ["--env", "HOME=/tmp"];
-  if (engine.rootless) return engine.command === "podman" ? ["--userns", "keep-id", ...home] : [];
-  return ["--user", `${user.uid}:${user.gid}`, ...home];
+  const env = ["--env", `HOME=${home ?? "/tmp"}`, "--env", "XDG_CACHE_HOME=/tmp/.cache"];
+  if (engine.rootless) return engine.command === "podman" ? ["--userns", "keep-id", ...env] : [];
+  return ["--user", `${user.uid}:${user.gid}`, ...env];
 }
 
 /** The generated Dockerfile for an environment declared by a lockfile rather than a Dockerfile. */
@@ -289,26 +302,38 @@ export function buildCommand(engine: Pick<Engine, "command" | "buildx">): string
 
 /** The sandbox on a container engine. */
 export function containerSandbox(engine: Engine): Sandbox {
-  const run = (args: string[], log: LogTail, minutes: number) => stream(engine.command, args, log, minutes);
+  const run = (args: string[], log: OutputSink, minutes: number) => stream(engine.command, args, log, minutes);
   const inspect = async (ref: string) => {
     const result = await capture(engine.command, ["image", "inspect", "--format", "{{.Id}}|{{json .RepoDigests}}", ref]);
     if (result.code !== 0) return null;
     const [id, digests] = result.stdout.trim().split("|");
     return { id, digests: (JSON.parse(digests || "null") as string[] | null) ?? [] };
   };
+  /**
+   * The home of the user an image runs as, when it isn't root, read by running the image's own
+   * shell with every limit a run has. Undefined for root, or an image without a shell.
+   */
+  const imageHome = async (id: string): Promise<string | undefined> => {
+    const user = (await capture(engine.command, ["image", "inspect", "--format", "{{.Config.User}}", id])).stdout.trim();
+    if (user === "" || /^(root|0)(:.*)?$/.test(user)) return undefined;
+    const probe = await capture(engine.command, [
+      "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--pids-limit", "64", "--memory", "256m", "--entrypoint", "/bin/sh", id, "-c", 'printf %s "$HOME"',
+    ]);
+    const home = probe.stdout.trim();
+    return probe.code === 0 && /^\/[^\s]*$/.test(home) && home !== "/" ? home : undefined;
+  };
+
   return {
     engine: { name: engine.command, version: engine.version },
     capacity: { cpus: engine.cpus, memoryBytes: engine.memoryBytes },
 
     async image(plan, { workspace, scratch, key }, log) {
       const started = Date.now();
-      const done = (ref: string, found: { id: string; digests: string[] }, reused: boolean): ImageInfo => ({
-        plan,
-        ref,
-        ...found,
-        reused,
-        seconds: (Date.now() - started) / 1000,
-      });
+      const done = async (ref: string, found: { id: string; digests: string[] }, reused: boolean): Promise<ImageInfo> => {
+        const home = await imageHome(found.id);
+        return { plan, ref, ...found, reused, ...(home && { home }), seconds: (Date.now() - started) / 1000 };
+      };
       if (plan.from === "given") {
         const present = await inspect(plan.ref);
         if (present) return done(plan.ref, present, true);
@@ -345,7 +370,7 @@ export function containerSandbox(engine: Engine): Sandbox {
       const user = typeof process.getuid === "function" && typeof process.getgid === "function"
         ? { uid: process.getuid(), gid: process.getgid() }
         : null;
-      const args = runArguments(engine, { name, image: image.id, workspace, command, limits }, user);
+      const args = runArguments(engine, { name, image: image.id, workspace, command, limits, home: image.home }, user);
       // Stopping the harness stops the run: the container doesn't outlive it.
       const stop = () => {
         spawnSync(engine.command, ["rm", "--force", name], { stdio: "ignore" });
@@ -403,7 +428,7 @@ async function capture(command: string, args: string[], seconds = 60): Promise<{
 function stream(
   command: string,
   args: string[],
-  log: LogTail,
+  log: OutputSink,
   minutes: number,
   stop?: () => Promise<void>,
 ): Promise<{ code: number | null; timedOut: boolean }> {
@@ -422,10 +447,10 @@ function stream(
       if (stop) void stop();
       else child.kill("SIGKILL");
     }, minutes * 60_000);
-    child.stdout.on("data", (chunk: Buffer) => log.write(chunk));
-    child.stderr.on("data", (chunk: Buffer) => log.write(chunk));
+    child.stdout.on("data", (chunk: Buffer) => log.write(chunk, "stdout"));
+    child.stderr.on("data", (chunk: Buffer) => log.write(chunk, "stderr"));
     child.on("error", (error) => {
-      log.write(`${error.message}\n`);
+      log.write(`${error.message}\n`, "stderr");
       finish(null);
     });
     child.on("close", (code) => finish(code));

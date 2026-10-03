@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -126,6 +126,53 @@ describe.skipIf(!engine)(`the sandbox, on ${engine?.command ?? "no engine"}`, ()
       const run = await read<RunRecord>(join(outDir, "run.json"));
       expect(run.result).toMatchObject({ timedOut: true, exitCode: null });
       expect(run.result!.seconds).toBeLessThan(30);
+    },
+    MINUTES,
+  );
+});
+
+// A real proof checker is a large image (Rocq's official one is about 1 GB), so this runs only
+// when SJ_PROOF_IMAGE names a Rocq image to use, such as rocq/rocq-prover:9.0.
+const proofImage = process.env.SJ_PROOF_IMAGE;
+
+describe.skipIf(!engine || !proofImage)(`a proof check in ${proofImage ?? "a Rocq image"}`, () => {
+  it(
+    "passes a proved theorem, and fails an admitted one and one that rests on an axiom",
+    async () => {
+      const bundle = await writeBundle(0, {
+        "claims.json": JSON.stringify([
+          { local_id: "T1", type: "theoretical", core: true, statement: "Zero is a left identity of addition.", evidence: [{ proof: "proofs/Main.v", theorem: "plus_O_n", checker: "rocq" }], depends_on: [], confidence: 1 },
+          { local_id: "T2", type: "theoretical", core: true, statement: "Zero is a right identity of addition.", evidence: [{ proof: "proofs/Main.v", theorem: "plus_n_O", checker: "rocq" }], depends_on: [], confidence: 1 },
+          { local_id: "T3", type: "theoretical", core: false, statement: "Every proposition holds or fails.", evidence: [{ proof: "proofs/Main.v", theorem: "excluded", checker: "rocq" }], depends_on: [], confidence: 1 },
+        ]),
+        "proofs/Main.v": [
+          "(* Admitted in a comment doesn't count. *)",
+          "Theorem plus_O_n : forall n : nat, 0 + n = n.",
+          "Proof. intros n. reflexivity. Qed.",
+          "Theorem plus_n_O : forall n : nat, n + 0 = n.",
+          "Proof. intros n. admit. Admitted.",
+          "Axiom classic : forall P : Prop, P \\/ ~ P.",
+          "Theorem excluded : forall P : Prop, P \\/ ~ P.",
+          "Proof. exact classic. Qed.",
+          "",
+        ].join("\n"),
+        "code/compute.py": "",
+        "code/run": "",
+        "env/requirements.txt": "",
+        "results/R1.json": "{}",
+      });
+      // Only proofs: no computation for the self-check to re-run.
+      for (const path of ["code/compute.py", "code/run", "env/requirements.txt", "results/R1.json"]) await rm(join(bundle, path));
+      expect(await selfCheck(bundle, { image: proofImage }, deps())).toBe(1);
+      const verdicts = await read<VerdictsRecord>(join(`${bundle}-harness`, "proof-check", "verdicts.json"));
+      expect(verdicts.claims.map((claim) => [claim.local_id, claim.verdict])).toEqual([
+        ["T1", "passed"],
+        ["T2", "failed"],
+        ["T3", "failed"],
+      ]);
+      expect(verdicts.claims[1].reason).toBe("plus_n_O is itself assumed, not proved (Admitted).");
+      expect(verdicts.claims[2].reason).toBe("excluded rests on classic, beyond Rocq's own foundations, which assume no axioms.");
+      expect(verdicts.unfinished?.map((found) => found.keyword)).toEqual(["admit", "Admitted"]);
     },
     MINUTES,
   );

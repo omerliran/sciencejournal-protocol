@@ -18,6 +18,7 @@ export * from "./manifest";
 export * from "./merkle";
 export * from "./monitor";
 export * from "./passkey";
+export * from "./proofs";
 export * from "./receipts";
 export * from "./references";
 export * from "./results";

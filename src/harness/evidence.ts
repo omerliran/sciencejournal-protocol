@@ -6,6 +6,7 @@ import { code, plural, seconds, shown, size } from "./format";
 import { listOutputs, readOutput, removeTree, sha256Output, under, writeJsonFile, writeUnder, type LogTail } from "./files";
 import type { ScanRecord } from "./job";
 import { describePlan, type CommandPlan, type ImageInfo, type Limits, type RunResult } from "./sandbox";
+import type { CheckedTheorem } from "./proof-check";
 import type { MatchedResult, ReproducedResult, VerdictsRecord } from "./verdicts";
 
 /**
@@ -40,12 +41,12 @@ export interface RunRecord {
  * listed with their digests, so they can still be checked. Only regular files are copied.
  */
 export async function copyResults(
-  outDir: string,
+  workspace: string,
+  evidenceDir: string,
   named: ReadonlySet<string>,
   budget: number,
 ): Promise<NonNullable<VerdictsRecord["results_files"]>> {
-  const workspace = join(outDir, "workspace");
-  await removeTree(join(outDir, "evidence", "results"));
+  await removeTree(join(evidenceDir, "results"));
   const listed = await listOutputs(join(workspace, "results"));
   const files = await Promise.all(
     listed.files.map(async (path) => ({ path: `results/${path}`, bytes: (await stat(under(workspace, `results/${path}`))).size })),
@@ -71,7 +72,7 @@ export async function copyResults(
       await leaveOut(`because its name breaks the evidence path rules (${(error as Error).message})`);
       continue;
     }
-    await writeUnder(join(outDir, "evidence"), file.path, await readOutput(workspace, file.path, budget));
+    await writeUnder(evidenceDir, file.path, await readOutput(workspace, file.path, budget));
     accepted.set(file.path, new Uint8Array());
     used += file.bytes;
     copied.push(file.path);
@@ -80,24 +81,22 @@ export async function copyResults(
 }
 
 /** Writes the run's logs into the evidence. */
-export async function writeLogs(outDir: string, logs: { run?: LogTail; build?: LogTail }): Promise<void> {
-  const evidence = join(outDir, "evidence");
-  await mkdir(evidence, { recursive: true });
+export async function writeLogs(evidenceDir: string, logs: { run?: LogTail; build?: LogTail }): Promise<void> {
+  await mkdir(evidenceDir, { recursive: true });
   for (const [name, log] of Object.entries(logs)) {
-    if (log && log.total > 0) await writeFile(join(evidence, `${name}.log`), log.bytes());
+    if (log && log.total > 0) await writeFile(join(evidenceDir, `${name}.log`), log.bytes());
   }
 }
 
 /** What the logs and other harness files take, so the results get the rest of the budget. */
-export async function logBytes(outDir: string): Promise<number> {
+export async function logBytes(evidenceDir: string): Promise<number> {
   let total = 64 * 1024; // room for report.md and environment.json
-  for (const name of ["run.log", "build.log"]) total += (await stat(join(outDir, "evidence", name)).catch(() => null))?.size ?? 0;
+  for (const name of ["run.log", "build.log"]) total += (await stat(join(evidenceDir, name)).catch(() => null))?.size ?? 0;
   return total;
 }
 
 /** Writes evidence/report.md and evidence/environment.json. */
-export async function writeReport(outDir: string, run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): Promise<void> {
-  const evidence = join(outDir, "evidence");
+export async function writeReport(evidence: string, run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): Promise<void> {
   await mkdir(evidence, { recursive: true });
   if (run) {
     const environment: Partial<RunRecord> = { ...run };
@@ -107,8 +106,16 @@ export async function writeReport(outDir: string, run: RunRecord | null, verdict
   await writeFile(join(evidence, "report.md"), renderReport(run, verdicts, scan));
 }
 
+const TITLES: Partial<Record<VerdictsRecord["kind"], string>> = {
+  reproduction: "Reproduction report",
+  self_check: "Self-check report",
+  replication_match: "Replication match report",
+  proof_check: "Proof check report",
+  challenge_rerun: "Re-run of the challenged claim",
+};
+
 export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): string {
-  const title = { reproduction: "Reproduction report", self_check: "Self-check report", replication_match: "Replication match report" }[verdicts.kind];
+  const title = TITLES[verdicts.kind] ?? "Report";
   const lines = [
     `# ${title}`,
     "",
@@ -116,14 +123,18 @@ export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, sc
   ];
   if (run) lines.push("", "## How it ran", "", ...howItRan(run));
 
-  lines.push("", "## Verdicts", "", "| Claim | Verdict | Chosen by | Why |", "| --- | --- | --- | --- |");
+  // A re-run for a challenge review informs the reviewer's verdict on the challenge; it gives none of its own.
+  const heading = verdicts.kind === "challenge_rerun" ? "What the re-run found" : "Verdicts";
+  lines.push("", `## ${heading}`, "", "| Claim | Verdict | Chosen by | Why |", "| --- | --- | --- | --- |");
   for (const claim of verdicts.claims) {
     lines.push(`| ${code(claim.local_id)} | ${claim.verdict} | ${claim.by === "harness" ? "the harness" : "the verifier"} | ${cell(claim.reason)} |`);
   }
   lines.push("", `Claim IDs: ${verdicts.claims.map((claim) => `${claim.local_id} is \`${claim.claim_id}\``).join("; ")}.`);
   if (verdicts.over_budget) lines.push("", "Reported over budget: the work took more than the minutes its bundle declares.");
 
-  if (verdicts.kind === "replication_match") {
+  if (verdicts.kind === "proof_check") {
+    lines.push("", ...proofResults(verdicts));
+  } else if (verdicts.kind === "replication_match") {
     lines.push(
       "",
       "## Results",
@@ -164,17 +175,49 @@ export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, sc
   return `${lines.join("\n")}\n`;
 }
 
+function proofResults(verdicts: VerdictsRecord): string[] {
+  const lines = ["## Theorems", "", "| Claim | Proof | Theorem | Checker | Rests on | Checked |", "| --- | --- | --- | --- | --- | --- |"];
+  for (const claim of verdicts.claims) {
+    for (const theorem of claim.results as CheckedTheorem[]) {
+      const axioms = theorem.axioms === undefined ? "not reported" : theorem.axioms.length > 0 ? theorem.axioms.map(code).join(", ") : "no axioms";
+      lines.push(`| ${code(claim.local_id)} | ${code(theorem.proof)} | ${code(theorem.theorem)} | ${theorem.checker} | ${axioms} | ${theorem.status} |`);
+    }
+  }
+  lines.push(
+    "",
+    "The harness asked the checker, at the end of its own copy of each proof file, what each theorem rests on (`#print axioms` in Lean, `Print Assumptions` in Rocq), after a marker holding a nonce generated for this run, and read only the answer that followed its marker. A proof file runs code while it is checked and can print what it likes, so \`run.log\` is the record of what the checker printed.",
+  );
+  const unfinished = verdicts.unfinished ?? [];
+  lines.push("", "## Unfinished-proof keywords", "");
+  if (unfinished.length === 0) {
+    lines.push("As information: no proof file uses its checker's unfinished-proof keywords (Lean's `sorry` and `admit`, Rocq's `Admitted` and `admit`) outside comments and strings.");
+  } else {
+    lines.push(
+      "As information, where the proofs use their checker's unfinished-proof keywords, outside comments and strings; what each theorem rests on is what decides:",
+      "",
+      ...unfinished.slice(0, 50).map((found) => `- ${code(found.path)}, line ${found.line}, column ${found.column}: \`${found.keyword}\``),
+      ...(unfinished.length > 50 ? [`- and ${unfinished.length - 50} more`] : []),
+    );
+  }
+  return lines;
+}
+
 function howItRan(run: RunRecord): string[] {
   const lines: string[] = [];
   if (run.engine) lines.push(`- **Engine:** ${run.engine.name} ${run.engine.version}, on ${run.host.platform} ${run.host.arch} with Node ${run.host.node}.`);
   if (run.image) {
     const digests = run.image.digests.length > 0 ? ` Registry digest: ${run.image.digests.map((d) => `\`${d}\``).join(", ")}.` : "";
     lines.push(
-      `- **Image:** \`${run.image.ref}\`, ${describePlan(run.image.plan)}${run.image.reused ? " (built or pulled before, and used again)" : ""}. Image ID \`${run.image.id}\`.${digests}`,
+      `- **Image:** \`${run.image.ref}\`, ${describePlan(run.image.plan)}${run.image.reused ? (run.image.plan.from === "given" ? ", already here" : " (built before from the same inputs, and used again)") : ""}. Image ID \`${run.image.id}\`.${digests}${run.image.home ? ` It runs as a user whose home, \`${run.image.home}\`, the run keeps.` : ""}`,
     );
   }
   if (run.command) {
-    const from = { given: "given by the verifier", "code/run": "the bundle's code/run", produced_by: "the files the computations name" }[run.command.from];
+    const from = {
+      given: "given by the verifier",
+      "code/run": "the bundle's code/run",
+      produced_by: "the files the computations name",
+      checker: "each proof file's checker",
+    }[run.command.from];
     lines.push(`- **Command:** ${code(run.command.command)}, from ${from}, run from the bundle's root.`);
   }
   if (run.limits) {

@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { generateKeyPair } from "../signing";
-import { main } from "./cli";
+import { ATTESTATION_JOBS, JOB_KINDS } from "../vocabulary";
+import { COMMANDS, main } from "./cli";
 import { loadSecretKey, NodeClient } from "./client";
 import type { Deps } from "./context";
+import { ANSWERED_WITH } from "./job";
 import { HARNESS } from "./version";
 
 function deps(fetch: Deps["fetch"] = async () => Response.json({})): Deps & { lines: string[] } {
@@ -35,6 +37,11 @@ describe("the command line", () => {
     [["job", "--minutes", "soon"], /--minutes takes a positive number/],
   ])("refuses %j", async (argv, message) => {
     await expect(main(argv, deps())).rejects.toThrow(message);
+  });
+
+  it("answers every kind of job with a command it has, and attests to exactly the attestation jobs", () => {
+    for (const kind of JOB_KINDS) expect(COMMANDS).toContain(ANSWERED_WITH[kind]);
+    expect(JOB_KINDS.filter((kind) => ANSWERED_WITH[kind] === "attest").sort()).toEqual(Object.keys(ATTESTATION_JOBS).sort());
   });
 
   it("needs an operator to act as, and never shows the key", async () => {

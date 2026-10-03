@@ -1,7 +1,7 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { BundleLayoutError, digestBundle } from "../bundle";
-import { ClaimsFileSchema, isComputation, type Claim, type Computation } from "../claims";
+import { BundleLayoutError, digestBundle, digestEvidence } from "../bundle";
+import { ClaimsFileSchema, isComputation, isProof, type Claim, type Computation } from "../claims";
 import { sha256Digest, type Digest } from "../hash";
 import type { IntegrityFlags } from "../integrity";
 import { parseJson } from "../json";
@@ -10,12 +10,13 @@ import { bundleInputs, type BundleInputs } from "../results";
 import type { Capabilities } from "../rounds";
 import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
-import type { JobKind } from "../vocabulary";
-import { renderBrief, type Rubric } from "./brief";
+import type { ChallengeGround, JobKind } from "../vocabulary";
+import { renderBrief, type BriefProof, type Rubric } from "./brief";
 import { NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
 import { plural, size } from "./format";
+import { findUnfinished } from "./proof-check";
 import { HARNESS } from "./version";
 
 /** A job as the node hands it out. */
@@ -32,16 +33,48 @@ export interface JobView {
   files: Record<string, string>;
   /** What the node's deterministic checks flag; absent from nodes that don't run them. */
   integrity?: IntegrityFlags;
+  /** For a challenge review: the challenge's log index, the claim it disputes, its ground, and its evidence, base64. */
+  challenge?: { index: number; claim: string; ground: ChallengeGround; evidence: Record<string, string> };
+  /** For a citation check: each source the bundle cites, and the claims it is cited for. */
+  citations?: CitationView[];
+  /** For a duplicate check: each pair of a claim and an earlier claim whose statements share most of their words. */
+  pairs?: PairView[];
   downloads?: Record<
     string,
     { url: string; method: string; headers: Record<string, string>; expires_at: string; digest: string; bytes: number }
   >;
 }
 
+/**
+ * A source a citation check judges: a claim on the ledger or an outside source, the bundle's
+ * claims it is cited for, by global ID, and for an outside source what references.json says it is.
+ */
+export interface CitationView {
+  reference: string;
+  claims: string[];
+  title?: string;
+  authors?: string[];
+  year?: number;
+}
+
+/**
+ * A pair a duplicate check judges: a claim from the bundle and an earlier claim on the ledger,
+ * each with its statement, which their publishers wrote.
+ */
+export interface PairView {
+  claim: string;
+  statement: string;
+  earlier: string;
+  earlier_statement: string;
+  earlier_bundle: string;
+}
+
 /** job.json: the job without its files' contents, and what the harness checked about it. */
-export interface JobRecord extends Omit<JobView, "files" | "downloads"> {
+export interface JobRecord extends Omit<JobView, "files" | "downloads" | "challenge"> {
   /** Every file the job carries, by digest and size. The files themselves are under bundle/. */
   files: Record<string, { digest: Digest; bytes: number }>;
+  /** For a challenge review: the challenge, with its evidence files by digest and size, under challenge/. */
+  challenge?: { index: number; claim: string; ground: ChallengeGround; evidence: Record<string, { digest: Digest; bytes: number }> };
   node: string;
   operator: string;
   received_at: string;
@@ -128,6 +161,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
       { digest, bytes: inline.get(path)?.length ?? downloads.get(path)!.bytes },
     ]),
   );
+  const challenge = view.challenge && (await takeChallenge(join(jobDir, "challenge"), view.challenge));
   const record: JobRecord = {
     job: view.job,
     kind: view.kind,
@@ -138,6 +172,9 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     claims: view.claims,
     ...(view.replicates && { replicates: view.replicates }),
     ...(view.integrity && { integrity: view.integrity }),
+    ...(challenge && { challenge }),
+    ...(view.citations && { citations: view.citations }),
+    ...(view.pairs && { pairs: view.pairs }),
     credits: view.credits,
     files,
     node: client.base,
@@ -147,21 +184,102 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     verification_inputs: digests.verificationInputs,
     claim_ids: checkClaimIds(view, inline, digests.verificationInputs, new Set(downloads.keys())),
   };
+  // The challenger's evidence is someone else's text too, so it is scanned like the bundle.
   const scan = await scanBundle(bundleDir, files);
-  const rubric = view.kind === "replication_match" ? undefined : await hazardRubric(client);
+  if (challenge) addScan(scan, await scanBundle(join(jobDir, "challenge"), challenge.evidence), "challenge/");
+  const rubric = HAZARD_KINDS.includes(view.kind) ? await hazardRubric(client) : undefined;
   await writeJsonFile(join(jobDir, "job.json"), record);
   await writeJsonFile(join(jobDir, "scan.json"), scan);
+  const claims = parseClaims(inline.get("claims.json"));
   const inputs = bundleInputs(inline, digests.verificationInputs);
-  const declared = [...computationsOf(record, parseClaims(inline.get("claims.json")))].flatMap(([localId, computations]) =>
+  const declared = [...computationsOf(record, claims)].flatMap(([localId, computations]) =>
     computations.map((computation) => ({ local_id: localId, ...computation, declared: declaredValue(inputs, computation.result) })),
   );
-  await writeUnder(jobDir, "JOB.md", renderBrief({ record, jobDir, scan, rubric, declared, invocation: deps.invocation, now: deps.now() }));
+  const proofs = proofsOf(record, claims);
+  const unfinished = proofs.length > 0 ? await findUnfinished(bundleDir, Object.keys(files), proofs.map((proof) => proof.checker)) : [];
+  await writeUnder(
+    jobDir,
+    "JOB.md",
+    renderBrief({ record, jobDir, scan, rubric, declared, proofs, unfinished, invocation: deps.invocation, now: deps.now() }),
+  );
 
   deps.print(`${again ? "Your open job" : "New job"} ${view.job}: ${view.kind} of ${view.bundle}, due ${view.deadline}.`);
   deps.print(`Wrote ${jobDir}: bundle/ (${plural(Object.keys(files).length, "file")}), job.json, scan.json, and JOB.md.`);
   if (record.claim_ids !== "match") deps.print(`Warning: ${record.claim_ids}.`);
   if (scan.findings.length > 0) deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} to look at; JOB.md lists them.`);
   return { record, jobDir };
+}
+
+/** The kinds of job whose answer includes the verifier's hazard screen. */
+const HAZARD_KINDS: readonly JobKind[] = ["reproduction", "screen", "hazard_review"];
+
+/** The command that sends the answer to each kind of job. */
+export const ANSWERED_WITH: Record<JobKind, string> = {
+  reproduction: "attest",
+  screen: "hazard",
+  hazard_review: "hazard",
+  replication_match: "attest",
+  challenge_review: "challenge-review",
+  methods_review: "attest",
+  domain_review: "attest",
+  adversarial_review: "attest",
+  proof_check: "attest",
+  citation_check: "citation-check",
+  duplicate_check: "duplicate-check",
+};
+
+/**
+ * Refuses a job that `command` doesn't answer, naming the command that does. A job the node
+ * added after this harness was built is answered the way /llms.txt describes.
+ */
+export function answeredWith(record: Pick<JobRecord, "kind">, command: string): void {
+  const answering = Object.hasOwn(ANSWERED_WITH, record.kind) ? ANSWERED_WITH[record.kind] : undefined;
+  if (answering === command) return;
+  if (!answering) {
+    throw new HarnessError(`This harness doesn't know ${record.kind} jobs yet. Get the current one, or answer the job the way /llms.txt describes.`);
+  }
+  throw new HarnessError(`A ${record.kind} job is answered with the ${answering} command, not ${command}.`);
+}
+
+/** Whether a job's work runs in the sandbox: a reproduction, a proof check, or a challenge that re-running fails. */
+export function runsInSandbox(record: Pick<JobRecord, "kind" | "challenge">): boolean {
+  return record.kind === "reproduction" || record.kind === "proof_check" || (record.kind === "challenge_review" && record.challenge?.ground === "reproduction");
+}
+
+/** Writes a challenge's evidence under challenge/, read-only, held to the evidence path rules. */
+async function takeChallenge(directory: string, challenge: NonNullable<JobView["challenge"]>): Promise<JobRecord["challenge"]> {
+  const evidence = new Map(Object.entries(challenge.evidence).map(([path, base64]) => [path, new Uint8Array(Buffer.from(base64, "base64"))]));
+  let digested: ReturnType<typeof digestEvidence>;
+  try {
+    digested = digestEvidence(evidence);
+  } catch (error) {
+    if (error instanceof BundleLayoutError) throw new HarnessError(`The challenge's evidence breaks the path rules: ${error.message}`);
+    throw error;
+  }
+  for (const [path, bytes] of evidence) await writeUnder(directory, path, bytes, 0o444);
+  return {
+    index: challenge.index,
+    claim: challenge.claim,
+    ground: challenge.ground,
+    evidence: Object.fromEntries([...evidence].map(([path, bytes]) => [path, { digest: digested.files[path], bytes: bytes.length }])),
+  };
+}
+
+/** Adds another folder's scan to a job's, its paths given from the job directory with `prefix`. */
+function addScan(scan: ScanRecord, more: ScanRecord, prefix: string): void {
+  scan.scanned.push(...more.scanned.map((path) => prefix + path));
+  scan.binary.push(...more.binary.map((path) => prefix + path));
+  scan.findings.push(...more.findings.map((finding) => ({ ...finding, path: prefix + finding.path })));
+  for (const [path, count] of Object.entries(more.omitted)) scan.omitted[prefix + path] = count;
+  scan.skipped.push(...more.skipped.map((file) => ({ ...file, path: prefix + file.path })));
+}
+
+/** The proofs in the evidence of each claim that needs a verdict. */
+export function proofsOf(record: Pick<JobRecord, "claims">, claims: readonly Claim[] | null): BriefProof[] {
+  const byLocalId = new Map((claims ?? []).map((claim) => [claim.local_id, claim]));
+  return record.claims
+    .filter((claim) => claim.needs_verdict)
+    .flatMap((claim) => (byLocalId.get(claim.local_id)?.evidence.filter(isProof) ?? []).map((proof) => ({ local_id: claim.local_id, ...proof })));
 }
 
 /** Reads job.json from a job directory. */

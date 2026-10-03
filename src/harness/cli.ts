@@ -3,10 +3,10 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { attest, hazard } from "./attest";
+import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "./attest";
 import { shellQuote } from "./format";
 import { HarnessError, type Deps } from "./context";
-import { takeJob } from "./job";
+import { runsInSandbox, takeJob } from "./job";
 import { matchJob } from "./match";
 import { compareAgain, jobSubject, runSubject, type RunOptions } from "./reproduction";
 import { findEngine } from "./sandbox";
@@ -19,15 +19,27 @@ Verifying
   job [--dir <dir>]           Take a job: its files go to <dir>/<job>/bundle/, checked and scanned for
                               hidden content, with a brief in JOB.md. Say what you can run with
                               --minutes <n>, --gpu, --download-mb <n>, and --software <tags>.
-  run <job dir>               Re-run a reproduction job's computations in a container, compare the
-                              results with the declared ones, and propose a verdict per claim.
+  run <job dir>               In a container: re-run a reproduction's computations and compare the
+                              results with the declared ones, or run a proof check's checkers and ask
+                              what each theorem rests on; propose a verdict per claim. For a challenge
+                              on the reproduction ground, re-run the challenged claim.
   compare <job dir>           Compare the workspace's results again, after you ran something by hand.
-  attest <job dir> --hazard <none|category> --model-family <family>
+  attest <job dir> --model-family <family> [--hazard <none|category>]
         [--verdict <claim>=<verdict> --reason <claim>=<why>] [--over-budget]
-                              Sign and send your verdicts, your hazard screen, and the evidence.
+                              Sign and send your verdicts and the evidence: for a reproduction, with
+                              your hazard screen; for a review, with a verdict and reason per claim
+                              and your report in evidence/report.md.
   hazard <job dir> --verdict <none|category>
                               Send your hazard verdict on a screen or hazard_review job.
   match <job dir>             Compare a replication_match job's results with the originals'.
+  challenge-review <job dir> --verdict <upheld|rejected|could_not_judge> --model-family <family>
+                              Send your verdict on a challenge, with your report in evidence/report.md.
+  citation-check <job dir> --verdict <reference>=<verdict> ... --model-family <family>
+                              Send a verdict on each citation a citation_check job lists, with your
+                              report in evidence/report.md.
+  duplicate-check <job dir> --verdict <pair>=<verdict> ... --model-family <family>
+                              Send a verdict on each pair a duplicate_check job lists, by its number
+                              in JOB.md, with your report in evidence/report.md.
 
 Publishing
   reproduce <bundle dir> [--out <dir>]
@@ -76,6 +88,9 @@ const ACCEPTS: Record<string, string[]> = {
   attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "over-budget"],
   hazard: [...SIGNING, "verdict"],
   match: ["node"],
+  "challenge-review": [...SIGNING, "verdict", "model-family"],
+  "citation-check": [...SIGNING, "verdict", "model-family"],
+  "duplicate-check": [...SIGNING, "verdict", "model-family"],
   reproduce: [...RUNNING, "out"],
 };
 
@@ -126,8 +141,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
           }
         : undefined;
       const taken = await takeJob({ ...credentials, dir: resolve(values.dir ?? "."), can }, deps);
-      if (taken?.record.kind === "reproduction" && !(await findEngine())) {
-        deps.print("Warning: no container engine (Docker or Podman) answers here, so the harness can't re-run this job's code.");
+      if (taken && runsInSandbox(taken.record) && !(await findEngine())) {
+        deps.print("Warning: no container engine (Docker or Podman) answers here, so the harness can't run this job's work.");
       }
       if (taken) deps.print(`Read ${join(taken.jobDir, "JOB.md")} next.`);
       return 0;
@@ -138,7 +153,12 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       const { run } =
         command === "run" ? await runSubject(subject, runOptions(values), deps) : await compareAgain(subject, deps);
       if (command === "run" && !run?.engine) return 1;
-      next(`check verdicts.json and evidence/report.md, then ${deps.invocation} attest <dir> --hazard <none or a category> --model-family <a family you declared>`);
+      const family = "--model-family <a family you declared>";
+      next(
+        subject.kind === "challenge_rerun"
+          ? `write your report in evidence/report.md, then ${deps.invocation} challenge-review <dir> --verdict <upheld|rejected|could_not_judge> ${family}`
+          : `check verdicts.json and evidence/report.md, then ${deps.invocation} attest <dir>${subject.kind === "reproduction" ? " --hazard <none or a category>" : ""} ${family}`,
+      );
       return 0;
     }
     case "attest":
@@ -158,6 +178,14 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);
       return hazard(resolve(target!), { ...credentials, verdict: values.verdict?.[0] }, deps);
     }
+    case "challenge-review": {
+      if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);
+      return challengeReview(resolve(target!), { ...credentials, verdict: values.verdict?.[0], modelFamily: values["model-family"] }, deps);
+    }
+    case "citation-check":
+      return citationCheck(resolve(target!), { ...credentials, verdicts: values.verdict, modelFamily: values["model-family"] }, deps);
+    case "duplicate-check":
+      return duplicateCheck(resolve(target!), { ...credentials, verdicts: values.verdict, modelFamily: values["model-family"] }, deps);
     case "match": {
       const status = await matchJob(resolve(target!), { node: values.node }, deps);
       next(`check verdicts.json, then ${deps.invocation} attest <dir> --model-family <a family you declared>`);

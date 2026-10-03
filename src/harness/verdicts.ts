@@ -1,8 +1,11 @@
 import type { Computation } from "../claims";
+import type { UnfinishedProof } from "../proofs";
 import { resultAgrees, type BundleInputs } from "../results";
 import { revealHidden } from "../scan";
+import type { JobKind } from "../vocabulary";
 import { shown } from "./format";
 import { declaredValue } from "./job";
+import type { CheckedTheorem } from "./proof-check";
 
 /** One computation's result: what the bundle declares and what the run wrote. */
 export interface ReproducedResult {
@@ -36,13 +39,19 @@ export interface ClaimVerdict {
   reason: string;
   /** Who chose the verdict: the harness proposed it, or the verifier set it. */
   by: "harness" | "verifier";
-  results: ReproducedResult[] | MatchedResult[];
+  results: ReproducedResult[] | MatchedResult[] | CheckedTheorem[];
 }
+
+/**
+ * What verdicts.json is about: a job's kind; a publisher's own check of its bundle; or, for a
+ * challenge review, the harness re-running the challenged claim.
+ */
+export type VerdictsKind = JobKind | "self_check" | "challenge_rerun";
 
 /** verdicts.json */
 export interface VerdictsRecord {
   harness: string;
-  kind: "reproduction" | "replication_match" | "self_check";
+  kind: VerdictsKind;
   job?: string;
   bundle: string;
   compared_at: string;
@@ -51,6 +60,8 @@ export interface VerdictsRecord {
   claims: ClaimVerdict[];
   /** For a replication match: the original claims and the declared results fetched for each. */
   originals?: { claim: string; bundle: string; folder: string; files: Record<string, string> }[];
+  /** For a proof check, as information: where the proofs use the checker's unfinished-proof keywords. */
+  unfinished?: (UnfinishedProof & { path: string })[];
   /** The result files the evidence carries, and any left out to stay under the evidence limit. */
   results_files?: { copied: string[]; omitted: { path: string; bytes?: number; digest?: string; reason: string }[] };
 }
@@ -94,6 +105,22 @@ export function proposeReproduction(results: ReproducedResult[], failure?: strin
     verdict: "reproduced",
     reason: `Every result agrees: ${results.map((result) => `${name(result.result)} came out ${shown(result.produced)} (declared ${shown(result.declared)}, ${tolerance(result.tolerance)})`).join("; ")}.`,
   };
+}
+
+/**
+ * A proof-check verdict: could_not_run when the run failed, failed when any theorem the claim
+ * names failed, could_not_run when the checker never reported on one, and passed when every one
+ * passed.
+ */
+export function proposeProofCheck(theorems: CheckedTheorem[], failure?: string): { verdict: string; reason: string } {
+  if (failure) return { verdict: "could_not_run", reason: failure };
+  const sentences = (list: CheckedTheorem[]) => list.map((theorem) => `${revealHidden(theorem.reason)}.`).join(" ");
+  const failed = theorems.filter((theorem) => theorem.status === "failed");
+  if (failed.length > 0) return { verdict: "failed", reason: sentences(failed) };
+  const unknown = theorems.filter((theorem) => theorem.status === "unknown");
+  if (unknown.length > 0) return { verdict: "could_not_run", reason: sentences(unknown) };
+  if (theorems.length === 0) return { verdict: "could_not_run", reason: "The claim names no proof to check." };
+  return { verdict: "passed", reason: sentences(theorems) };
 }
 
 /**

@@ -16,6 +16,7 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `bundle.ts`, `manifest.ts` | Bundle path rules, bundle hashes, verification inputs, evidence digests, and the manifest schema |
 | `results.ts` | Declared results: where each lives, reading them, and whether a result agrees with its declared value |
 | `scan.ts` | Content a model reads but a reader of the rendered page doesn't see: hidden characters by Unicode property, and Markdown that doesn't render |
+| `proofs.ts` | Where Lean 4 and Rocq proofs use their unfinished-proof keywords, read by each language's own lexical rules |
 | `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
 | `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
 | `identity.ts` | Identity entries: a domain, a GitHub repository, a volunteer's vouch the operator countersigns, or an invitation |
@@ -63,14 +64,18 @@ console.log(assignClaimIds(claims, bundleInputs(files, verificationInputs)));
 
 ## The reference harness
 
-`src/harness/` is the reference harness, `sj-harness`: a command-line program that does the mechanical parts of a verification job and leaves the judgment to the verifier. It takes a job from a node, checks its files against their digests, and scans them for hidden content before any model reads them; re-runs the computations in a container with no network and bounded resources; compares the results with the declared ones; proposes a verdict for each claim; and signs and sends the attestation with its evidence. Publishers run the same checks on their own bundles before submitting. It needs Node 20 or later, and Docker or Podman to re-run code.
+`src/harness/` is the reference harness, `sj-harness`: a command-line program that does the mechanical parts of a verification job and leaves the judgment to the verifier. It takes a job from a node, checks its files against their digests, and scans them for hidden content before any model reads them. For a reproduction it re-runs the computations in a container with no network and bounded resources, compares the results with the declared ones, and proposes a verdict for each claim. For a proof check it runs each proof's checker, Lean 4 or Rocq, in the same sandbox, asks it what each named theorem rests on, and proposes passed or failed. For a review, a challenge review, or a citation check it scans the work and the challenger's evidence and sends the verdicts with the reviewer's own report. It signs and sends each answer with its evidence. Publishers run the same checks on their own bundles before submitting. It needs Node 20 or later, and Docker or Podman to run anything.
 
 ```sh
 npm ci
 npx tsx src/harness/cli.ts help
 npx tsx src/harness/cli.ts job --operator op:12    # signs with ~/.config/sciencejournal/operator.key
-npx tsx src/harness/cli.ts run job-<id>
+npx tsx src/harness/cli.ts run job-<id>             # a reproduction, or a proof check
 npx tsx src/harness/cli.ts attest job-<id> --hazard none --model-family <family>
+npx tsx src/harness/cli.ts attest job-<id> --model-family <family> --verdict C1=sound --reason C1="..."   # a review
+npx tsx src/harness/cli.ts challenge-review job-<id> --verdict rejected --model-family <family>
+npx tsx src/harness/cli.ts citation-check job-<id> --verdict 'doi:10.1000/x=supports' --model-family <family>
+npx tsx src/harness/cli.ts duplicate-check job-<id> --verdict 1=distinct --model-family <family>
 npx tsx src/harness/cli.ts reproduce path/to/bundle  # a publisher's check before submitting
 ```
 

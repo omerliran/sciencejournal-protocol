@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BundleLayoutError, digestBundle } from "../bundle";
-import { ClaimsFileSchema, isComputation } from "../claims";
+import { ClaimsFileSchema, isComputation, isProof } from "../claims";
 import type { Digest } from "../hash";
 import { parseJson } from "../json";
 import { ManifestSchema } from "../manifest";
@@ -65,8 +65,10 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     local_id: claim.local_id,
     claim_id: checked.claims[i].claim_id!,
     computations: claim.evidence.filter(isComputation),
+    proofs: claim.evidence.filter(isProof),
   }));
-  const reproducible = claims.filter((claim) => claim.computations.length > 0);
+  const reproducible = claims.filter((claim) => claim.computations.length > 0).map((claim) => ({ ...claim, proofs: [] }));
+  const provable = claims.filter((claim) => claim.proofs.length > 0).map((claim) => ({ ...claim, computations: [] }));
 
   const scan: ScanRecord = {
     harness: HARNESS,
@@ -85,40 +87,62 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} a verifier's harness will flag (see ${join(outDir, "scan.json")}):`);
     for (const finding of scan.findings.slice(0, 8)) deps.print(`  ${finding.path}:${finding.line}:${finding.column} ${finding.kind}`);
   }
-  if (reproducible.length === 0) {
-    deps.print("No claim's evidence has a computation, so there is nothing to re-run.");
+  if (reproducible.length === 0 && provable.length === 0) {
+    deps.print("No claim's evidence has a computation or a proof, so there is nothing to re-run or check.");
     return 0;
   }
 
-  const { run, verdicts } = await runSubject(
-    {
-      kind: "self_check",
-      bundle: digests.bundle,
-      bundleDir: root,
-      outDir,
-      verificationInputs: digests.verificationInputs,
-      files: Object.fromEntries([...sizes].map(([path, bytes]) => [path, { digest: digests.files[path], bytes }])),
-      declaredMinutes: manifest.data.compute.minutes,
-      claims: reproducible,
-    },
-    options,
-    deps,
-    sandbox,
-  );
-
-  // What a verifier's harness would do differently, or what would cost the publisher.
-  const declared = manifest.data.compute.minutes;
-  if (run?.result && !run.result.timedOut && run.result.seconds > declared * 60) {
-    deps.print(`It took ${Math.ceil(run.result.seconds / 60)} minutes, more than the ${declared} the manifest declares; verifiers may report it over budget.`);
+  if (reproducible.length > 0 && provable.length > 0 && (options.image || options.command)) {
+    throw new HarnessError(
+      "This bundle has computations and proofs, which run differently, so --image and --command would apply to both. Give neither: each then runs from env/, the way a verifier's harness will run it.",
+    );
+  }
+  // As verifiers will: computations re-run as a reproduction, and proofs checked as a proof check.
+  const common = {
+    bundle: digests.bundle,
+    bundleDir: root,
+    verificationInputs: digests.verificationInputs,
+    files: Object.fromEntries([...sizes].map(([path, bytes]) => [path, { digest: digests.files[path], bytes }])),
+    declaredMinutes: manifest.data.compute.minutes,
+  };
+  let passed = true;
+  if (reproducible.length > 0) {
+    const { run, verdicts } = await runSubject(
+      { ...common, kind: "self_check", outDir, evidenceDir: join(outDir, "evidence"), claims: reproducible },
+      options,
+      deps,
+      sandbox,
+    );
+    // What a verifier's harness would do differently, or what would cost the publisher.
+    const declared = manifest.data.compute.minutes;
+    if (run?.result && !run.result.timedOut && run.result.seconds > declared * 60) {
+      deps.print(`It took ${Math.ceil(run.result.seconds / 60)} minutes, more than the ${declared} the manifest declares; verifiers may report it over budget.`);
+    }
+    const reproduced = verdicts.claims.every((claim) => claim.verdict === "reproduced");
+    deps.print(reproduced ? "Every computed claim reproduced, as verifiers will need it to." : "Not every computed claim reproduced; fix that before you submit.");
+    passed &&= reproduced;
+  }
+  if (provable.length > 0) {
+    const proofDir = join(outDir, "proof-check");
+    await writeJsonFile(join(proofDir, "scan.json"), scan);
+    const { verdicts } = await runSubject(
+      { ...common, kind: "proof_check", outDir: proofDir, evidenceDir: join(proofDir, "evidence"), claims: provable },
+      options,
+      deps,
+      sandbox,
+    );
+    const checked = verdicts.claims.every((claim) => claim.verdict === "passed");
+    deps.print(checked ? "Every proof checked, as verifiers will need it to." : "Not every proof checked; fix that before you submit.");
+    passed &&= checked;
   }
   if (options.image || options.command) {
     deps.print(
-      "You gave --image or --command; a verifier's harness won't. Put the environment in env/ (a Dockerfile, requirements.txt, or environment.yml) and the command in code/run, so it runs the same way for them.",
+      reproducible.length > 0
+        ? "You gave --image or --command; a verifier's harness won't. Put the environment in env/ (a Dockerfile, requirements.txt, or environment.yml) and the command in code/run, so it runs the same way for them."
+        : "You gave --image or --command; a verifier's harness won't. Put an env/Dockerfile that builds the checker, with the toolchain your proofs pin, so they are checked the same way for verifiers.",
     );
   }
-  const reproduced = verdicts.claims.every((claim) => claim.verdict === "reproduced");
-  deps.print(reproduced ? "Every claim reproduced, as verifiers will need it to." : "Not every claim reproduced; fix that before you submit.");
-  return reproduced ? 0 : 1;
+  return passed ? 0 : 1;
 }
 
 function json(files: ReadonlyMap<string, Uint8Array>, path: string): unknown {

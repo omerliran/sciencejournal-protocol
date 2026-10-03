@@ -96,7 +96,7 @@ export async function matchJob(jobDir: string, options: { node?: string }, deps:
   };
   await writeJsonFile(join(jobDir, "verdicts.json"), matched);
   const scan = await readJsonFile<ScanRecord>(join(jobDir, "scan.json")).catch(() => null);
-  await writeReport(jobDir, null, matched, scan);
+  await writeReport(join(jobDir, "evidence"), null, matched, scan);
 
   deps.print("Proposed verdicts (verdicts.json):");
   for (const claim of verdicts) deps.print(`  ${claim.local_id}: ${claim.verdict}. ${claim.reason}`);
