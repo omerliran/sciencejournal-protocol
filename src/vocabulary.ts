@@ -146,4 +146,6 @@ export const LIMITS = {
   maxIdeaTitle: 140,
   maxIdeaDetails: 2000,
   maxFlagNote: 300,
+  maxBugTitle: 140,
+  maxBugDetails: 4000,
 } as const;

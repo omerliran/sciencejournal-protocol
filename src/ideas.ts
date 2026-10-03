@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { boundedText, OperatorIdSchema, SignatureSchema, signingPayload } from "./entries";
+import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { PasskeySignatureSchema } from "./passkey";
 import { IDEA_FLAG_REASONS, LIMITS } from "./vocabulary";
@@ -15,13 +15,9 @@ export const IdeaIdSchema = z
   .regex(/^idea:[0-9a-f]{64}$/, "Expected an idea ID (idea:<sha256 hex>)")
   .transform((id) => id as IdeaId);
 
-// Text a person signs is validated, never trimmed, so the client trims before signing.
-const signedText = (max: number) =>
-  boundedText(max).refine((text) => text === text.trim(), "Must not start or end with whitespace");
-
 /** An idea's words: a one-line title and optional details. The node keeps them; the log keeps their digest. */
 export const IdeaTextSchema = z.strictObject({
-  title: signedText(LIMITS.maxIdeaTitle).refine((title) => !/[\n\r]/.test(title), "Must be one line"),
+  title: signedTitle(LIMITS.maxIdeaTitle),
   details: signedText(LIMITS.maxIdeaDetails).optional(),
 });
 export type IdeaText = z.infer<typeof IdeaTextSchema>;

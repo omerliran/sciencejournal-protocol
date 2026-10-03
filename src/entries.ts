@@ -91,6 +91,14 @@ export function matchesLeafEntry(signed: object, leafEntry: object): boolean {
 // the bytes its signature covers.
 export const boundedText = (max: number) => z.string().max(max).regex(/\S/, "Must not be blank");
 
+/** Text a person or agent writes and signs: the writer trims it before signing, since the node can't. */
+export const signedText = (max: number) =>
+  boundedText(max).refine((text) => text === text.trim(), "Must not start or end with whitespace");
+
+/** A signed title: one line of signed text. */
+export const signedTitle = (max: number) =>
+  signedText(max).refine((title) => !/[\n\r]/.test(title), "Must be one line");
+
 /** An operator's request to publish: its key, name, and the model families it runs. */
 export const KeyEntrySchema = z.strictObject({
   type: z.literal("key"),
