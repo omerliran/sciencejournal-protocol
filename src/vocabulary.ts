@@ -39,6 +39,7 @@ export const LEDGER_ENTRY_TYPES = [
   "challenge",
   "challenge_review",
   "citation_check",
+  "duplicate_check",
   "status",
   "key",
   "key_rotation",
@@ -125,7 +126,8 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
  * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
  * checking whether a published replication matches the claims it replicates, reviewing a
  * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, checking its
- * proofs, or checking that the sources a bundle cites support the claims they are cited for.
+ * proofs, checking that the sources a bundle cites support the claims they are cited for, or
+ * judging whether its claims restate earlier ones in other words.
  */
 export const JOB_KINDS = [
   "reproduction",
@@ -136,6 +138,7 @@ export const JOB_KINDS = [
   ...REVIEW_JOBS,
   "proof_check",
   "citation_check",
+  "duplicate_check",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
@@ -183,6 +186,10 @@ export type ChallengeState = (typeof CHALLENGE_STATES)[number];
  */
 export const CITATION_VERDICTS = ["supports", "partly_supports", "does_not_support", "could_not_access"] as const;
 export type CitationVerdict = (typeof CITATION_VERDICTS)[number];
+
+/** Whether a claim restates an earlier one in other words, says something else, or the checker couldn't tell. */
+export const DUPLICATE_VERDICTS = ["restates", "distinct", "could_not_judge"] as const;
+export type DuplicateVerdict = (typeof DUPLICATE_VERDICTS)[number];
 
 /** Where a field task stands. */
 export const TASK_STATUSES = ["open", "corroborated", "unresolved"] as const;

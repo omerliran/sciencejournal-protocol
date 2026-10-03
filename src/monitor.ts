@@ -451,6 +451,7 @@ export class LogAuditor {
         return this.signedByOperator(index, entry.type, signed, operator, signedAt);
       }
       case "citation_check":
+      case "duplicate_check":
         this.notes.add("work");
         this.names(index, "checker", entry.checker, operator);
         this.requireIdentity(index, entry.type, operator, signedAt);
