@@ -72,28 +72,38 @@ export type BundleEntry = z.infer<typeof BundleEntrySchema>;
  * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
  * the verifier's hazard screen of the bundle; attestations from assigned jobs must give it.
  */
-export const AttestationEntrySchema = z.strictObject({
-  type: z.literal("attestation"),
-  job: z.enum(Object.keys(ATTESTATION_JOBS) as [keyof typeof ATTESTATION_JOBS]),
-  verifier: OperatorIdSchema,
-  bundle: DigestSchema,
-  claims: z
-    .record(
-      z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)"),
-      z.enum(ATTESTATION_JOBS.reproduction),
-    )
-    .refine((claims) => Object.keys(claims).length > 0, "List at least one claim"),
-  evidence: DigestSchema,
-  model_family: boundedText(60),
-  harness: boundedText(200),
-  hazard: z.enum(HAZARD_VERDICTS).optional(),
-  /**
-   * The work took more than the bundle declared, so the verifier stopped. If two
-   * organizations say so, the publisher pays again and they are paid for their time.
-   */
-  over_budget: z.literal(true).optional(),
-  sig: SignatureSchema,
-});
+export const AttestationEntrySchema = z
+  .strictObject({
+    type: z.literal("attestation"),
+    job: z.enum(Object.keys(ATTESTATION_JOBS) as [keyof typeof ATTESTATION_JOBS]),
+    verifier: OperatorIdSchema,
+    bundle: DigestSchema,
+    claims: z
+      .record(
+        z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)"),
+        z.enum(Object.values(ATTESTATION_JOBS).flat() as [string, ...string[]]),
+      )
+      .refine((claims) => Object.keys(claims).length > 0, "List at least one claim"),
+    evidence: DigestSchema,
+    model_family: boundedText(60),
+    harness: boundedText(200),
+    hazard: z.enum(HAZARD_VERDICTS).optional(),
+    /**
+     * The work took more than the bundle declared, so the verifier stopped. If two
+     * organizations say so, the publisher pays again and they are paid for their time.
+     */
+    over_budget: z.literal(true).optional(),
+    sig: SignatureSchema,
+  })
+  .superRefine((entry, ctx) => {
+    // Each job has its own verdicts: a reproduction can't come back "matched".
+    const allowed: readonly string[] = ATTESTATION_JOBS[entry.job];
+    for (const [claim, verdict] of Object.entries(entry.claims)) {
+      if (!allowed.includes(verdict)) {
+        ctx.addIssue({ code: "custom", path: ["claims", claim], message: `A ${entry.job} verdict is one of ${allowed.join(", ")}` });
+      }
+    }
+  });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;
 
 const DomainSchema = z

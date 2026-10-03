@@ -71,6 +71,8 @@ export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number];
 /** Verification jobs, and the verdict a verifier may give each claim in one. */
 export const ATTESTATION_JOBS = {
   reproduction: ["reproduced", "mismatch", "could_not_run"],
+  /** Whether a replication claim reached the same results as the claims it replicates. */
+  replication_match: ["matched", "mismatched", "could_not_judge"],
 } as const;
 export type AttestationJob = keyof typeof ATTESTATION_JOBS;
 
@@ -85,9 +87,10 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 
 /**
  * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
- * (when its computations can't be re-run while it is sealed), or reviewing a hazard concern.
+ * (when its computations can't be re-run while it is sealed), reviewing a hazard concern, or
+ * checking whether a published replication matches the claims it replicates.
  */
-export const JOB_KINDS = ["reproduction", "screen", "hazard_review"] as const;
+export const JOB_KINDS = ["reproduction", "screen", "hazard_review", "replication_match"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
