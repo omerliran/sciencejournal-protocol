@@ -48,6 +48,17 @@ describe("parseJson", () => {
     expect(parseJson('"\\ud83d\\ude00"')).toBe("😀");
   });
 
+  it("rejects Unicode noncharacters, escaped or literal, in names and values", () => {
+    rejects('{"s":"\\ufdd0"}', "/s", /noncharacter U\+FDD0/);
+    rejects('{"s":"a\\uffffb"}', "/s", /noncharacter U\+FFFF/);
+    rejects('{"s":["\\udbff\\udfff"]}', "/s/0", /noncharacter U\+10FFFF/);
+    rejects('{"s":"\u{1fffe}"}', "/s", /noncharacter U\+1FFFE/);
+    rejects('{"\\ufdef":1}', "", /Property name contains the Unicode noncharacter U\+FDEF/);
+    // Their neighbors are ordinary characters.
+    const neighbors = ["﷏", "ﷰ", "�", "\u{1fffd}", "\u{20000}", "\u{10fffd}"];
+    expect(parseJson(JSON.stringify(neighbors))).toEqual(neighbors);
+  });
+
   it("agrees with JSON.parse on random documents, and catches injected duplicates", () => {
     let seed = 7;
     const random = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
