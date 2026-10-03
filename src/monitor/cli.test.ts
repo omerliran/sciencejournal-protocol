@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { signObject } from "../entries";
+import { operatorId, signObject } from "../entries";
 import { generateKeyPair } from "../signing";
 import { main, type Io } from "./cli";
 import { httpSource, nodeUrl } from "./http";
@@ -18,7 +18,7 @@ const keyEntry = (i: number) => keyEntries[i];
 
 /** A log whose first entries are the key entries of operators `ids`, in order. */
 async function logOf(ids: number[], log = new MemoryLog()): Promise<MemoryLog> {
-  for (const i of ids) await log.append({ operator: `op:${i + 1}`, entry: keyEntry(i) });
+  for (const i of ids) await log.append({ operator: operatorId(keyEntry(i).key), entry: keyEntry(i) });
   return log;
 }
 

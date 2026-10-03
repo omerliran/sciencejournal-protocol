@@ -1,7 +1,7 @@
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
-import { canonicalDigest, DigestSchema, type Digest } from "./hash";
+import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { ATTESTATION_JOBS, HAZARD_VERDICTS, REVIEW_JOBS, SIGNATURE_ALGORITHM, SIGNIFICANCE_RATINGS } from "./vocabulary";
 import {
   PUBLIC_KEY_BYTES,
@@ -31,7 +31,29 @@ export const SignatureSchema = z
   )
   .transform((signature) => signature as Signature);
 
-export const OperatorIdSchema = z.string().regex(/^op:[1-9][0-9]*$/, "Expected an operator ID (op:<n>)");
+/**
+ * An operator's ID: `op:` and the hex SHA-256 of the first key it registered, as written, the
+ * way a log's ID comes from its key. No log assigns it, so every log, monitor, and reader
+ * derives the same ID from the key entry, and an agent knows its own before registering
+ * anywhere. Rotating or recovering the key keeps it.
+ */
+export const OperatorIdSchema = z
+  .string()
+  .regex(/^op:[0-9a-f]{64}$/, "Expected an operator ID: op: and the SHA-256 of its first key, in lowercase hex");
+
+/** The ID of the operator whose first key is `firstKey`. */
+export function operatorId(firstKey: string): string {
+  return `op:${sha256Hex(firstKey)}`;
+}
+
+/**
+ * An entry's digest as signed: the SHA-256 of its canonical JSON, signatures included. Every
+ * log that holds an entry gives it the same digest, whatever its index there, so two logs are
+ * compared entry by entry through it.
+ */
+export function entryDigest(entry: { type: string }): Digest {
+  return canonicalDigest(entry);
+}
 
 /**
  * The bytes a signature covers: the object's canonical JSON without its `sig` field. Every

@@ -13,6 +13,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { ml_dsa44 } from "@noble/post-quantum/ml-dsa.js";
+import { p256 } from "@noble/curves/nist.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -24,14 +25,21 @@ import {
   consistencyProof,
   declaredInputs,
   detachLeaf,
+  detachSignatures,
   digestBundle,
   EMPTY_ROOT,
+  entryDigest,
   inclusionProof,
   JsonError,
   keyDigest,
+  keyRotationPayload,
   leafBytes,
   leafHash,
   memorySource,
+  observerId,
+  ObserverIdSchema,
+  operatorId,
+  OperatorIdSchema,
   parseJson,
   publicKeyOf,
   ResultError,
@@ -493,12 +501,12 @@ const keyEntry = {
 const exampleLeaves: SignedLeaf[] = [
   {
     timestamp: "2026-10-02T12:00:00.000Z",
-    operator: "op:1",
+    operator: operatorId(operatorKey.public_key),
     entry: { ...keyEntry, sig: sign(signingPayload(keyEntry), operatorKey.secretKey) },
   },
   {
     timestamp: "2026-10-02T12:00:01.000Z",
-    operator: "op:1",
+    operator: operatorId(operatorKey.public_key),
     entry: {
       ...bundleSigningObject(INPUTS_A),
       sig: sign(signingPayload(bundleSigningObject(INPUTS_A)), operatorKey.secretKey),
@@ -650,6 +658,49 @@ write("signature-vectors.json", {
     sig: sign(signingPayload(object), key.secretKey),
     sig_digest: signatureDigest(sign(signingPayload(object), key.secretKey)),
   })),
+});
+
+// --- IDs -----------------------------------------------------------------------------------
+
+/** A volunteer's test passkey: a P-256 key from a fixed string, compressed, as a passkey gives it. */
+function testPasskey(n: number): string {
+  return `p256:${bytesToHex(p256.getPublicKey(sha256(utf8ToBytes(`sciencejournal conformance test passkey ${n}`)), true))}`;
+}
+
+const operatorCases = [1, 2, 3].map((n) => ({ public_key: testKey(n).public_key, operator_id: operatorId(testKey(n).public_key) }));
+const observerCases = [1, 2].map((n) => ({ passkey: testPasskey(n), observer_id: observerId(testPasskey(n)) }));
+
+// A key rotation from the first test key to the second: the operator keeps its ID.
+const rotated = { operator: operatorId(testKey(1).public_key), key: testKey(2).public_key as PublicKey };
+const rotationUnsigned = { type: "key_rotation" as const, ...rotated, key_sig: sign(keyRotationPayload(rotated), testKey(2).secretKey) };
+const rotation = { ...rotationUnsigned, sig: sign(signingPayload(rotationUnsigned), testKey(1).secretKey) };
+const entryCases = [
+  { name: "a key entry", entry: exampleLeaves[0].entry },
+  { name: "a bundle entry", entry: exampleLeaves[1].entry },
+  { name: "a key rotation, which keeps the operator's ID", entry: rotation },
+].map(({ name, entry }) => ({ name, entry, entry_digest: entryDigest(entry), leaf_entry: detachSignatures(entry) }));
+
+const another = testKey(2).public_key;
+const invalidIds = [
+  { name: "a number a log assigned", public_key: testKey(1).public_key, operator_id: "op:1" },
+  { name: "uppercase hex", public_key: testKey(1).public_key, operator_id: operatorId(testKey(1).public_key).toUpperCase().replace("OP:", "op:") },
+  { name: "the digest's own prefix kept", public_key: testKey(1).public_key, operator_id: `op:${keyDigest(testKey(1).public_key)}` },
+  { name: "another key's ID", public_key: testKey(1).public_key, operator_id: operatorId(another) },
+  { name: "the SHA-256 of the key's bytes rather than of the key as written", public_key: testKey(1).public_key, operator_id: `op:${bytesToHex(sha256(Buffer.from(testKey(1).public_key.slice(SIGNATURE_ALGORITHM.length + 1), "hex")))}` },
+  { name: "a volunteer's ID for an operator's key", public_key: testKey(1).public_key, operator_id: observerId(testKey(1).public_key) },
+];
+for (const c of invalidIds) {
+  mustReject(c.name, () => OperatorIdSchema.safeParse(c.operator_id).success && c.operator_id === operatorId(c.public_key));
+}
+for (const c of observerCases) if (!ObserverIdSchema.safeParse(c.observer_id).success) throw new Error("An observer ID the schema rejects");
+
+write("id-vectors.json", {
+  description:
+    "Operator and volunteer IDs, which no log assigns, and entries' digests as signed, by which two logs are compared. An operator's ID is \"op:\" and the lowercase hex SHA-256 of the first public key it registered, as written (the hex of its key_digest); rotating or recovering the key keeps it. A volunteer's ID is \"obs:\" and the lowercase hex SHA-256 of the first passkey they joined with, as written. An entry's digest as signed is the SHA-256 of its canonical JSON with its signatures, the same on every log that holds it; leaf_entry is the entry as a log leaf holds it, each signature replaced by its digest. Every case under invalid must not be the ID its public_key makes.",
+  operators: operatorCases,
+  observers: observerCases,
+  entries: entryCases,
+  invalid: invalidIds,
 });
 
 console.log("Wrote vectors to", data);

@@ -48,7 +48,7 @@ function observed(values: Record<string, number | string>, extra: Partial<Logged
   return {
     index: next,
     timestamp: `2026-10-04T12:00:${String(next % 60).padStart(2, "0")}Z`,
-    observer: `obs:${next}`,
+    observer: `obs:${next.toString(16).padStart(64, "0")}`,
     record: createRecord(ID, values),
     ...extra,
   };

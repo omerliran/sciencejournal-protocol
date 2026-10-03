@@ -3,6 +3,10 @@ import type { IntegrityFlags } from "../integrity";
 import { renderBrief } from "./brief";
 import type { JobRecord, ScanRecord } from "./job";
 
+// IDs of the shape operators' and volunteers' first keys make: op: or obs: and 64 hex digits.
+const exampleId = (kind: "op" | "obs", n: number) => `${kind}:${n.toString(16).padStart(64, "0")}`;
+const op1 = exampleId("op", 1);
+
 const record = (integrity?: IntegrityFlags): JobRecord => ({
   job: "job:abc",
   kind: "screen",
@@ -14,7 +18,7 @@ const record = (integrity?: IntegrityFlags): JobRecord => ({
   credits: 1,
   files: {},
   node: "https://sciencejournal.ai",
-  operator: "op:1",
+  operator: op1,
   received_at: "2026-10-03T12:00:00.000Z",
   harness: "test",
   verification_inputs: `sha256:${"b".repeat(64)}`,

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { readFile, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { signObject } from "../entries";
+import { operatorId, OperatorIdSchema, signObject } from "../entries";
 import { sha256Digest } from "../hash";
 import { parseJson } from "../json";
 import { keyDigest, publicKeyOf, SECRET_KEY_BYTES, type PublicKey } from "../signing";
@@ -153,19 +153,25 @@ export function nodeUrl(flag: string | undefined, deps: Pick<Deps, "env">): stri
 }
 
 /**
- * The operator the harness acts as: its ID from --operator or SJ_OPERATOR, and its secret key
- * from --key or the key file the Python client writes. The key never leaves this process: it
+ * The operator the harness acts as: its secret key from --key or the key file the Python
+ * client writes, and its ID from --operator or SJ_OPERATOR, or else the ID that key makes,
+ * which is the operator's until it rotates its key. The key never leaves this process: it
  * signs, and only signatures are sent. The node confirms the ID holds this key.
  */
 export async function signIn(credentials: Credentials, client: NodeClient, deps: Pick<Deps, "env" | "home">): Promise<Operator> {
-  const id = credentials.operator ?? deps.env.SJ_OPERATOR;
-  if (!id) {
-    throw new HarnessError("Say which operator you are with --operator op:<n>, or set SJ_OPERATOR: the ID registering gave you.");
-  }
-  if (!/^op:[1-9][0-9]*$/.test(id)) throw new HarnessError(`"${id}" isn't an operator ID such as op:12`);
   const secretKey = await loadSecretKey(credentials.key ?? defaultKeyPath(deps.home));
   const publicKey = publicKeyOf(secretKey);
-  const registered = await client.get<{ key_digest: string; model_families: string[] }>(`/api/v1/operators/${id}`);
+  const named = credentials.operator ?? deps.env.SJ_OPERATOR;
+  const id = named ?? operatorId(publicKey);
+  if (!OperatorIdSchema.safeParse(id).success) {
+    throw new HarnessError(`"${id}" isn't an operator ID: op: and the 64 hex digits of the SHA-256 of your first key`);
+  }
+  const registered = await client.get<{ key_digest: string; model_families: string[] }>(`/api/v1/operators/${id}`).catch((error) => {
+    if (named || !(error instanceof NodeError && error.status === 404)) throw error;
+    throw new HarnessError(
+      `No operator on ${client.base} has ${id}, the ID your key makes: register first, or, once you have changed keys, name your ID with --operator or SJ_OPERATOR`,
+    );
+  });
   if (registered.key_digest !== keyDigest(publicKey)) {
     throw new HarnessError(`${id}'s key on ${client.base} isn't the one in your key file; check --operator and --key`);
   }

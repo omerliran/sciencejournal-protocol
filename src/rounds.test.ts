@@ -6,6 +6,12 @@ import { HazardReviewEntrySchema, JobRequestSchema, sealCommitment, WithdrawalEn
 import { SIGNATURE_BYTES } from "./signing";
 import { SIGNATURE_ALGORITHM } from "./vocabulary";
 
+// IDs of the shape operators' and volunteers' first keys make: op: or obs: and 64 hex digits.
+const exampleId = (kind: "op" | "obs", n: number) => `${kind}:${n.toString(16).padStart(64, "0")}`;
+const op1 = exampleId("op", 1);
+const op2 = exampleId("op", 2);
+const op3 = exampleId("op", 3);
+
 const sig = `${SIGNATURE_ALGORITHM}:${"ab".repeat(SIGNATURE_BYTES)}`;
 // What a log leaf holds in place of the signature.
 const sigDigest = signatureDigest(sig);
@@ -26,13 +32,13 @@ describe("sealed rounds", () => {
     const commitment = sealCommitment({ type: "bundle", bundle, sig: sigDigest }, salt);
     const sealed = { timestamp, entry: { type: "sealed", commitment, sig: sigDigest } };
     expect(LogLeafSchema.safeParse(sealed).success).toBe(true);
-    expect(LogLeafSchema.safeParse({ ...sealed, operator: "op:1" }).success).toBe(false);
+    expect(LogLeafSchema.safeParse({ ...sealed, operator: op1 }).success).toBe(false);
     // A leaf holds signatures by digest, never in full.
     expect(LogLeafSchema.safeParse({ ...sealed, entry: { ...sealed.entry, sig } }).success).toBe(false);
 
     const opened = {
       timestamp,
-      operator: "op:1",
+      operator: op1,
       entry: { type: "bundle", bundle, sig: sigDigest },
       claims: [],
       fields: ["machine-learning"],
@@ -43,7 +49,7 @@ describe("sealed rounds", () => {
   });
 
   it("take hazard verdicts only from the shared vocabulary", () => {
-    const review = { type: "hazard_review", reviewer: "op:3", bundle, verdict: "none", sig };
+    const review = { type: "hazard_review", reviewer: op3, bundle, verdict: "none", sig };
     expect(HazardReviewEntrySchema.safeParse(review).success).toBe(true);
     expect(HazardReviewEntrySchema.safeParse({ ...review, verdict: "chemical" }).success).toBe(true);
     expect(HazardReviewEntrySchema.safeParse({ ...review, verdict: "maybe" }).success).toBe(false);
@@ -52,7 +58,7 @@ describe("sealed rounds", () => {
   it("name what a withdrawal closes, and want job requests in UTC", () => {
     expect(WithdrawalEntrySchema.safeParse({ type: "withdrawal", bundle, reason: "hazard", sealed: 7, sig }).success).toBe(true);
     expect(WithdrawalEntrySchema.safeParse({ type: "withdrawal", bundle, reason: "boredom", sig }).success).toBe(false);
-    const request = { type: "job_request", operator: "op:2", time: "2026-10-02T12:00:00Z", sig };
+    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", sig };
     expect(JobRequestSchema.safeParse(request).success).toBe(true);
     expect(JobRequestSchema.safeParse({ ...request, time: "2026-10-02T12:00:00+02:00" }).success).toBe(false);
   });

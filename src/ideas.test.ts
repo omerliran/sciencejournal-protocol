@@ -9,6 +9,12 @@ import { generateKeyPair, SIGNATURE_BYTES, verify } from "./signing";
 import { SIGNATURE_ALGORITHM } from "./vocabulary";
 import { virtualPasskey } from "./virtual-passkey";
 
+// IDs of the shape operators' and volunteers' first keys make: op: or obs: and 64 hex digits.
+const exampleId = (kind: "op" | "obs", n: number) => `${kind}:${n.toString(16).padStart(64, "0")}`;
+const obs3 = exampleId("obs", 3);
+const op3 = exampleId("op", 3);
+const op4 = exampleId("op", 4);
+
 const passkey = virtualPasskey();
 const sign = (text: IdeaText, key = passkey) => key.sign({ type: "idea" as const, text: ideaTextDigest(text) });
 
@@ -55,16 +61,16 @@ describe("ideas", () => {
   });
 
   it("are logged under the observer who signed them", () => {
-    const leaf = { timestamp: "2026-10-04T12:00:00.000Z", observer: "obs:3", entry: detachSignatures(sign(words)) };
+    const leaf = { timestamp: "2026-10-04T12:00:00.000Z", observer: obs3, entry: detachSignatures(sign(words)) };
     expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
-    expect(LogLeafSchema.safeParse({ ...leaf, observer: undefined, operator: "op:3" }).success).toBe(false);
+    expect(LogLeafSchema.safeParse({ ...leaf, observer: undefined, operator: op3 }).success).toBe(false);
   });
 });
 
 describe("idea flags", () => {
   const operator = generateKeyPair();
   const flag = (fields: Record<string, unknown>) =>
-    signObject({ type: "idea_flag" as const, operator: "op:4", idea: ideaId(sign({ title: "A question" })), reason: "harmful", ...fields }, operator.secretKey);
+    signObject({ type: "idea_flag" as const, operator: op4, idea: ideaId(sign({ title: "A question" })), reason: "harmful", ...fields }, operator.secretKey);
 
   it("are signed by an operator, with a reason and an optional note", () => {
     const parsed = IdeaFlagSchema.parse(flag({ note: "Asks how to culture a pathogen." }));

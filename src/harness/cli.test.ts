@@ -44,8 +44,8 @@ describe("the command line", () => {
     expect(JOB_KINDS.filter((kind) => ANSWERED_WITH[kind] === "attest").sort()).toEqual(Object.keys(ATTESTATION_JOBS).sort());
   });
 
-  it("needs an operator to act as, and never shows the key", async () => {
-    await expect(main(["job"], deps())).rejects.toThrow(/--operator op:<n>/);
+  it("needs a key to act as", async () => {
+    await expect(main(["job"], deps())).rejects.toThrow(/give its file with --key/);
   });
 });
 

@@ -7,6 +7,10 @@ import { inclusionProof, leafHash, memorySource, rootHash } from "./merkle";
 import { signBundle, verifyReceipt, type Receipt } from "./receipts";
 import { generateKeyPair } from "./signing";
 
+// IDs of the shape operators' and volunteers' first keys make: op: or obs: and 64 hex digits.
+const exampleId = (kind: "op" | "obs", n: number) => `${kind}:${n.toString(16).padStart(64, "0")}`;
+const op1 = exampleId("op", 1);
+
 const operator = generateKeyPair();
 const log = generateKeyPair();
 
@@ -29,7 +33,7 @@ describe("verifyReceipt", () => {
     const leaves = Array.from({ length: size }, (_, i) =>
       detachLeaf({
         timestamp: new Date(Date.UTC(2026, 9, 2, 12, 0, i)).toISOString(),
-        operator: "op:1",
+        operator: op1,
         entry: signObject(
           { type: "bundle" as const, bundle: `sha256:${String(i).padStart(64, "0")}` as const },
           operator.secretKey,

@@ -17,9 +17,19 @@ export const TaskIdSchema = z
   .regex(/^task:[0-9a-f]{64}$/, "Expected a task ID (task:<sha256 hex>)")
   .transform((id) => id as TaskId);
 
+/**
+ * A volunteer's ID: `obs:` and the hex SHA-256 of the first passkey they joined with, as
+ * written, derived the way an operator's is. A volunteer who loses their passkey and is
+ * rebound to a new one keeps it.
+ */
 export const ObserverIdSchema = z
   .string()
-  .regex(/^obs:[1-9][0-9]*$/, "Expected an observer ID (obs:<n>)");
+  .regex(/^obs:[0-9a-f]{64}$/, "Expected an observer ID: obs: and the SHA-256 of its first passkey, in lowercase hex");
+
+/** The ID of the volunteer whose first passkey is `firstPasskey`. */
+export function observerId(firstPasskey: string): string {
+  return `obs:${sha256Hex(firstPasskey)}`;
+}
 
 // --- Observers ------------------------------------------------------------------------
 

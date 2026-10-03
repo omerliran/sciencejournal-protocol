@@ -6,6 +6,7 @@ import {
   DomainSchema,
   keyRotationPayload,
   matchesLeafEntry,
+  operatorId,
   OperatorIdSchema,
   PublicKeySchema,
   SIGNATURE_FIELDS,
@@ -13,7 +14,7 @@ import {
   type Detached,
   type KeyRotationEntry,
 } from "./entries";
-import { ObserverIdSchema } from "./fieldwork";
+import { observerId, ObserverIdSchema } from "./fieldwork";
 import { DigestSchema, type Digest } from "./hash";
 import {
   RepositorySchema,
@@ -73,7 +74,7 @@ export const PROBLEMS = {
   signed_entry: "The entry served as signed isn't the one its leaf holds",
   signature: "A signature doesn't verify against the key that must have made it",
   signer: "A leaf names someone other than the entry's signer, or a signer with no key on the log",
-  key: "A key entry, rotation, or recovery the protocol doesn't allow",
+  key: "A key entry, rotation, or recovery the protocol doesn't allow, or an operator or observer ID that isn't the SHA-256 of its first key",
   seal: "A revealed entry doesn't open its commitment, or a commitment is opened or closed twice",
   identity: "An identity the protocol doesn't allow, or an entry from an operator without the identity it needs",
   withdrawal: "A bundle withdrawn twice",
@@ -347,9 +348,8 @@ export class LogAuditor {
   }
 
   state(): AuditState {
-    // op:2 before op:10, so the saved state reads in order.
-    const record = <T>(map: Map<string, T>) =>
-      Object.fromEntries([...map].sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true })));
+    // Sorted by ID, so the same log always saves the same state.
+    const record = <T>(map: Map<string, T>) => Object.fromEntries([...map].sort(([a], [b]) => (a < b ? -1 : 1)));
     return {
       size: this.size,
       range: this.range.map(bytesToHex),
@@ -467,6 +467,10 @@ export class LogAuditor {
       case "observer_key":
         this.names(index, "observer", entry.observer, leaf.observer!);
         this.signedByLog(index, entry.type, signed);
+        // A volunteer's first passkey makes their ID; one rebound to a new passkey keeps it.
+        if (!this.observers.has(leaf.observer!) && leaf.observer !== observerId(entry.key as string)) {
+          this.problem(index, "key", `The observer key entry names ${leaf.observer}, but the passkey it records first makes ${observerId(entry.key as string)}`);
+        }
         return this.addKey(this.observers, leaf.observer!, index, entry.key as string);
       case "observation":
         return this.observation(index, leaf.observer!, signed);
@@ -529,6 +533,9 @@ export class LogAuditor {
   }
 
   private register(index: number, operator: string, key: string, signed: Signed | null): void {
+    if (operator !== operatorId(key)) {
+      this.problem(index, "key", `The key entry names ${operator}, but the key it registers makes ${operatorId(key)}`);
+    }
     const existing = this.operators.get(operator);
     if (existing) {
       this.problem(index, "key", `${operator} already registered a key at entry ${existing[0].index}; an operator changes keys only by rotation or recovery`);
