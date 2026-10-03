@@ -136,6 +136,10 @@ describe("monitor check", () => {
     expect(await run(["check", "ftp://node.example"], {})).toBe(2);
     expect(await run(["check", NODE, "--max-entries", "-1"], {})).toBe(2);
     expect(await run(["check", NODE, "--node", NODE], {})).toBe(2);
+    expect(await run(["check", NODE, "--trust", "not a key"], {})).toBe(2);
+    expect(err).toMatch(/--trust takes a log's public key/);
+    expect(await run(["compare", "a.json", "b.json", "--trust", generateKeyPair().publicKey], {})).toBe(2);
+    expect(err).toMatch(/--trust is for check/);
     expect(await run(["check"], {})).toBe(2);
     expect(await run(["watch", NODE], {})).toBe(2);
     expect(await run(["check", NODE, "--frequency", "1"], {})).toBe(2);

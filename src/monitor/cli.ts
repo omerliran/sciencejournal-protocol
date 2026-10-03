@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { PublicKeySchema } from "../entries";
 import { JsonError, parseJson } from "../json";
 import type { TreeHead } from "../leaves";
 import {
@@ -35,6 +36,9 @@ Options for check:
                         (default: a file per log in ~/.config/sciencejournal/monitor)
   --pin                 Pin the log the node serves now, even if it isn't the pinned one
   --max-entries <n>     Audit at most n new entries this run (default: all; 0 skips the audit)
+  --trust <key>         Count entries another log signed (its commitments, invitations, observer
+                        keys) when signed by this public key, as a second log holds the first's;
+                        give it once for each log
   --checkpoint <file>   After a run that passes, write the verified head to <file> (- for stdout)
   --json                Print the report as JSON
 
@@ -75,6 +79,7 @@ export async function main(args: string[], io: Io = processIo()): Promise<number
         pin: { type: "boolean" },
         "max-entries": { type: "string" },
         checkpoint: { type: "string" },
+        trust: { type: "string", multiple: true },
         node: { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -96,10 +101,12 @@ export async function main(args: string[], io: Io = processIo()): Promise<number
       if (maxEntries !== undefined && !(Number.isSafeInteger(maxEntries) && maxEntries >= 0)) {
         return usage(io, "--max-entries takes a whole number, 0 or more");
       }
+      const untrustworthy = (values.trust ?? []).find((key) => !PublicKeySchema.safeParse(key).success);
+      if (untrustworthy !== undefined) return usage(io, "--trust takes a log's public key, as its GET /api/v1/log gives it");
       return await check(io, operands[0], { ...values, maxEntries });
     }
     if (command === "compare" && operands.length === 2) {
-      const misplaced = (["state", "pin", "max-entries", "checkpoint"] as const).find((name) => values[name] !== undefined);
+      const misplaced = (["state", "pin", "max-entries", "checkpoint", "trust"] as const).find((name) => values[name] !== undefined);
       if (misplaced) return usage(io, `--${misplaced} is for check`);
       return await compare(io, operands[0], operands[1], values);
     }
@@ -124,6 +131,7 @@ interface CheckOptions {
   pin?: boolean;
   maxEntries?: number;
   checkpoint?: string;
+  trust?: string[];
   json?: boolean;
 }
 
@@ -138,7 +146,7 @@ async function check(io: Io, address: string, options: CheckOptions): Promise<nu
   const servedBefore = saved ? (Object.hasOwn(saved.nodes, node) ? saved.nodes[node] : 0) : undefined;
   const leader = Object.entries(saved?.nodes ?? {}).find(([url, size]) => url !== node && size === saved?.head?.size)?.[0];
   const ahead = leader ? httpSource(leader, { fetch: io.fetch }) : undefined;
-  const run = { pin: options.pin, maxEntries: options.maxEntries, servedBefore, ahead };
+  const run = { pin: options.pin, maxEntries: options.maxEntries, servedBefore, ahead, trustedLogKeys: options.trust };
   const { report, state } = await monitorLog(source, saved, run);
 
   let path: string | null = null;

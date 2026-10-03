@@ -39,8 +39,11 @@ const timestamp = z.iso.datetime();
  * bundles, the claim IDs and fields are derived from the bundle's contents, so anyone holding
  * the bundle can check them; for identities, the log adds the organization the identity
  * counts as. Entries the node signs itself (commitments, canaries, withdrawals) name no one.
- * An entry that was sealed first carries `sealed`: the commitment it opens and the salt that
- * opens it. The log holds the leaf with its entry's signatures detached (see `LogLeafSchema`).
+ * An entry that was sealed first carries `sealed`: the commitment it opens, on the same log,
+ * and the salt that opens it. A log that only logs, with no bundles to read, can't derive
+ * what a bundle holds, so its bundle leaves name no claims, fields, or version, and its canary
+ * leaves no claims; anyone holding the bundle derives them. The log holds the leaf with its
+ * entry's signatures detached (see `LogLeafSchema`).
  */
 export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyEntrySchema }),
@@ -56,6 +59,7 @@ export const SignedLeafSchema = z.union([
     replaces: DigestSchema.optional(),
     sealed: SealRevealSchema.optional(),
   }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: BundleEntrySchema, sealed: SealRevealSchema.optional() }),
   z.strictObject({
     timestamp,
     operator: OperatorIdSchema,
@@ -84,6 +88,7 @@ export const SignedLeafSchema = z.union([
     claims: z.array(ClaimIdSchema),
     sealed: SealRevealSchema,
   }),
+  z.strictObject({ timestamp, entry: CanaryEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardFlagEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeEntrySchema }),

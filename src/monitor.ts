@@ -150,23 +150,23 @@ export const MonitorStateSchema = z
   .refine((state) => state.audit.size <= (state.head?.size ?? 0), "The audit reaches past the verified head");
 export type MonitorState = z.infer<typeof MonitorStateSchema>;
 
-function newState(log: string, publicKey: MonitorState["public_key"]): MonitorState {
+/** An audit that has read nothing yet. */
+export function emptyAuditState(): AuditState {
   return {
-    log,
-    public_key: publicKey,
-    head: null,
-    audit: {
-      size: 0,
-      range: [],
-      timestamp: null,
-      operators: {},
-      identities: {},
-      observers: {},
-      commitments: {},
-      challenges: [],
-      withdrawn: [],
-    },
+    size: 0,
+    range: [],
+    timestamp: null,
+    operators: {},
+    identities: {},
+    observers: {},
+    commitments: {},
+    challenges: [],
+    withdrawn: [],
   };
+}
+
+function newState(log: string, publicKey: MonitorState["public_key"]): MonitorState {
+  return { log, public_key: publicKey, head: null, audit: emptyAuditState() };
 }
 
 // --- Answers from the node -----------------------------------------------------------
@@ -247,12 +247,13 @@ function headProblem(head: TreeHead, log: string, publicKey: string): Problem | 
 // --- Auditing entries ----------------------------------------------------------------
 
 /** Each leaf's schema, by the type of entry it holds. */
-const LEAF_SCHEMAS: ReadonlyMap<string, z.ZodType> = new Map(
-  (LogLeafSchema as unknown as z.ZodUnion<z.ZodObject[]>).options.map((option) => [
-    entryTypeOf(option.shape.entry as z.ZodType),
-    option,
-  ]),
-);
+// Each entry type's leaf shapes: a bundle's or a canary's has two, the full one a log that
+// reads bundles derives, and the one a log that only logs holds.
+const LEAF_SCHEMAS = new Map<string, z.ZodType[]>();
+for (const option of (LogLeafSchema as unknown as z.ZodUnion<z.ZodObject[]>).options) {
+  const type = entryTypeOf(option.shape.entry as z.ZodType);
+  LEAF_SCHEMAS.set(type, [...(LEAF_SCHEMAS.get(type) ?? []), option]);
+}
 
 function entryTypeOf(schema: z.ZodType): string {
   if (schema instanceof z.ZodDiscriminatedUnion) return entryTypeOf((schema.options as z.ZodType[])[0]);
@@ -311,9 +312,15 @@ export class LogAuditor {
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
 
+  /**
+   * `logKey` is the audited log's key. A log that also holds entries another log signed, as a
+   * second log holds the first's commitments, invitations, and observer keys, names that log's
+   * key in `trustedLogKeys`; an entry a log signs then counts if any of the keys signed it.
+   */
   constructor(
     private readonly logKey: string,
     state: AuditState,
+    private readonly trustedLogKeys: readonly string[] = [],
   ) {
     this.size = state.size;
     this.range = state.range.map(hexToBytes);
@@ -376,11 +383,12 @@ export class LogAuditor {
     const type = (leaf.entry as { type?: unknown } | undefined)?.type;
     if (typeof type !== "string") return this.problem(index, "leaf", "The leaf holds no entry with a type");
     this.types.set(type, (this.types.get(type) ?? 0) + 1);
-    const schema = LEAF_SCHEMAS.get(type);
-    if (!schema) return this.unknownType(index, type);
-    const parsed = schema.safeParse(leaf);
-    if (!parsed.success) {
-      const issues = toIssues(parsed.error).map((issue) => `${issue.path || "/"}: ${issue.message}`);
+    const schemas = LEAF_SCHEMAS.get(type);
+    if (!schemas) return this.unknownType(index, type);
+    // A leaf fits if it fits any of its type's shapes; one that fits none is told what the full shape needs.
+    const parsed = schemas.map((schema) => schema.safeParse(leaf));
+    if (!parsed.some((result) => result.success)) {
+      const issues = toIssues(parsed[0].error!).map((issue) => `${issue.path || "/"}: ${issue.message}`);
       return this.problem(index, "leaf", `The ${type} leaf doesn't fit the protocol (${issues.join("; ")})`);
     }
     const checked = leaf as unknown as Leaf;
@@ -758,8 +766,9 @@ export class LogAuditor {
   }
 
   private signedByLog(index: number, type: string, signed: Signed | null): void {
-    if (signed && !verifyObject(signed, this.logKey)) {
-      this.problem(index, "signature", `The ${type} entry's sig doesn't verify against the log's key`);
+    if (signed && ![this.logKey, ...this.trustedLogKeys].some((key) => verifyObject(signed, key))) {
+      const which = this.trustedLogKeys.length > 0 ? "the log's key or a log it trusts" : "the log's key";
+      this.problem(index, "signature", `The ${type} entry's sig doesn't verify against ${which}`);
     }
   }
 
@@ -819,6 +828,8 @@ export interface MonitorOptions {
    * node can't prove anything about a tree it doesn't have. By default, the node itself.
    */
   ahead?: LogSource;
+  /** The keys of the logs whose own entries this log also holds, as a second log holds the first's. */
+  trustedLogKeys?: readonly string[];
 }
 
 export interface MonitorReport {
@@ -967,7 +978,7 @@ async function auditEntries(
   options: MonitorOptions,
   report: MonitorReport,
 ): Promise<AuditState> {
-  const auditor = new LogAuditor(state.public_key, state.audit);
+  const auditor = new LogAuditor(state.public_key, state.audit, options.trustedLogKeys);
   const from = auditor.audited;
   const to = Math.min(head.size, from + Math.max(0, options.maxEntries ?? Infinity));
   try {
