@@ -87,6 +87,11 @@ export const AttestationEntrySchema = z.strictObject({
   model_family: boundedText(60),
   harness: boundedText(200),
   hazard: z.enum(HAZARD_VERDICTS).optional(),
+  /**
+   * The work took more than the bundle declared, so the verifier stopped. If two
+   * organizations say so, the publisher pays again and they are paid for their time.
+   */
+  over_budget: z.literal(true).optional(),
   sig: SignatureSchema,
 });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;

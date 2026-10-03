@@ -8,6 +8,12 @@ const LicenseIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9.+-]{1,64}$/, "Expected an SPDX license identifier, such as CC-BY-4.0");
 
+/** Licensed software a computation needs, such as "matlab" or "stata". */
+export const SoftwareTagSchema = z
+  .string()
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "Expected a lowercase software tag, such as matlab")
+  .max(40);
+
 // A field tag such as "machine-learning": lowercase words joined by hyphens.
 export const FieldSchema = z
   .string()
@@ -23,9 +29,15 @@ export const ManifestSchema = z.strictObject({
     code: LicenseIdSchema.optional(),
     data: z.string().trim().min(1).max(200).optional(),
   }),
+  /**
+   * What re-running the work's computations takes: minutes of machine time, whether it needs
+   * a GPU, and any licensed software it needs, as lowercase tags such as "matlab". Jobs go to
+   * verifiers that say they can run it.
+   */
   compute: z.strictObject({
     minutes: z.number().positive().max(7 * 24 * 60),
     gpu: z.boolean(),
+    software: z.array(SoftwareTagSchema).max(10).optional(),
   }),
   /**
    * Who wrote the work, when people did: "person", or "both" for people and agents together.

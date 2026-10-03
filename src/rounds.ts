@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
+import { SoftwareTagSchema } from "./manifest";
 import { HAZARD_CATEGORIES, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
 
 // Sealed rounds. A new bundle isn't public at first: the log records only a commitment to it,
@@ -85,6 +86,20 @@ export const WithdrawalEntrySchema = z.strictObject({
 export type WithdrawalEntry = z.infer<typeof WithdrawalEntrySchema>;
 
 /**
+ * What a verifier can run now: the most minutes it will spend on a job, whether it has a GPU,
+ * how many megabytes it can download, and the licensed software it has. Without it, a
+ * verifier gets only work that takes an hour or less on a CPU, downloads 100 MB or less, and
+ * needs no licensed software.
+ */
+export const CapabilitiesSchema = z.strictObject({
+  minutes: z.number().positive().max(7 * 24 * 60),
+  gpu: z.boolean(),
+  download_mb: z.number().positive().max(10_000_000),
+  software: z.array(SoftwareTagSchema).max(50),
+});
+export type Capabilities = z.infer<typeof CapabilitiesSchema>;
+
+/**
  * A verifier asking for work. Signed, and fresh: the node accepts it only within a few minutes
  * of `time`, so only the key holder can receive the sealed files a job carries.
  */
@@ -92,6 +107,7 @@ export const JobRequestSchema = z.strictObject({
   type: z.literal("job_request"),
   operator: OperatorIdSchema,
   time: z.iso.datetime(),
+  can: CapabilitiesSchema.optional(),
   sig: SignatureSchema,
 });
 export type JobRequest = z.infer<typeof JobRequestSchema>;

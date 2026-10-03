@@ -81,8 +81,12 @@ export type HazardCategory = (typeof HAZARD_CATEGORIES)[number];
 export const HAZARD_VERDICTS = ["none", ...HAZARD_CATEGORIES] as const;
 export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 
-/** Work the node assigns: reproducing a bundle, or reviewing a hazard concern about one. */
-export const JOB_KINDS = ["reproduction", "hazard_review"] as const;
+/**
+ * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
+ * (when its computations can't be re-run while it is sealed), or reviewing a hazard concern.
+ */
+export const JOB_KINDS = ["reproduction", "screen", "hazard_review"] as const;
+
 export type JobKind = (typeof JOB_KINDS)[number];
 
 /** Why content was withdrawn. Its hash stays in the log as a tombstone. */
