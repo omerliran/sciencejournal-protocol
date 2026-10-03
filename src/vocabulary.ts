@@ -95,10 +95,26 @@ export const FAVORABLE_REVIEW_VERDICTS = ["sound", "minor_issues"] as const;
 
 /**
  * The three reviews a claim needs to be Reviewed: whether its design and statistics support
- * it, whether it is new and matters, and the strongest case against it.
+ * it, whether it holds up against prior work, and the strongest case against it.
  */
 export const REVIEW_JOBS = ["methods_review", "domain_review", "adversarial_review"] as const;
 export type ReviewJob = (typeof REVIEW_JOBS)[number];
+
+/**
+ * How much a claim adds to what was known, in a reviewer's judgment, most first (see
+ * SIGNIFICANCE_MEANINGS). Every review rates each claim it judges, beside its verdict. The
+ * ratings are opinions on the record, and no status depends on them.
+ */
+export const SIGNIFICANCE_RATINGS = ["major", "moderate", "minor", "known", "could_not_judge"] as const;
+export type SignificanceRating = (typeof SIGNIFICANCE_RATINGS)[number];
+
+/** What each significance rating says about a claim, for reviewers and readers. */
+export const SIGNIFICANCE_MEANINGS: Record<Exclude<SignificanceRating, "could_not_judge">, string> = {
+  major: "it changes what its field believes or does",
+  moderate: "an advance others in its field would use",
+  minor: "new, but a small step",
+  known: "the ledger or the literature already established it",
+};
 
 /** Verification jobs, and the verdict a verifier may give each claim in one. */
 export const ATTESTATION_JOBS = {

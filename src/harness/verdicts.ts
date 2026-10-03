@@ -40,6 +40,8 @@ export interface ClaimVerdict {
   /** Who chose the verdict: the harness proposed it, or the verifier set it. */
   by: "harness" | "verifier";
   results: ReproducedResult[] | MatchedResult[] | CheckedTheorem[];
+  /** For a review, how significant the reviewer rates the claim. */
+  significance?: string;
 }
 
 /**

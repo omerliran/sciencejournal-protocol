@@ -25,10 +25,11 @@ Verifying
                               on the reproduction ground, re-run the challenged claim.
   compare <job dir>           Compare the workspace's results again, after you ran something by hand.
   attest <job dir> --model-family <family> [--hazard <none|category>]
-        [--verdict <claim>=<verdict> --reason <claim>=<why>] [--over-budget]
+        [--verdict <claim>=<verdict> --reason <claim>=<why>] [--significance <claim>=<rating>]
+        [--over-budget]
                               Sign and send your verdicts and the evidence: for a reproduction, with
-                              your hazard screen; for a review, with a verdict and reason per claim
-                              and your report in evidence/report.md.
+                              your hazard screen; for a review, with a verdict, a reason, and a
+                              significance rating per claim, and your report in evidence/report.md.
   hazard <job dir> --verdict <none|category>
                               Send your hazard verdict on a screen or hazard_review job.
   match <job dir>             Compare a replication_match job's results with the originals'.
@@ -73,6 +74,7 @@ const OPTIONS = {
   "model-family": { type: "string" },
   verdict: { type: "string", multiple: true },
   reason: { type: "string", multiple: true },
+  significance: { type: "string", multiple: true },
   "over-budget": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
@@ -85,7 +87,7 @@ const ACCEPTS: Record<string, string[]> = {
   job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software"],
   run: RUNNING,
   compare: [],
-  attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "over-budget"],
+  attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "significance", "over-budget"],
   hazard: [...SIGNING, "verdict"],
   match: ["node"],
   "challenge-review": [...SIGNING, "verdict", "model-family"],
@@ -170,6 +172,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
           modelFamily: values["model-family"],
           verdicts: values.verdict,
           reasons: values.reason,
+          significance: values.significance,
           overBudget: values["over-budget"],
         },
         deps,

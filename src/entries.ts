@@ -2,7 +2,7 @@ import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
-import { ATTESTATION_JOBS, HAZARD_VERDICTS, SIGNATURE_ALGORITHM } from "./vocabulary";
+import { ATTESTATION_JOBS, HAZARD_VERDICTS, REVIEW_JOBS, SIGNATURE_ALGORITHM, SIGNIFICANCE_RATINGS } from "./vocabulary";
 import {
   PUBLIC_KEY_BYTES,
   sign,
@@ -121,10 +121,13 @@ export const BundleEntrySchema = z.strictObject({
 });
 export type BundleEntry = z.infer<typeof BundleEntrySchema>;
 
+const GlobalClaimIdSchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)");
+
 /**
  * A verifier's signed verdicts on claims from one bundle. `evidence` is the digest of the
  * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
  * the verifier's hazard screen of the bundle; attestations from assigned jobs must give it.
+ * A review also rates each claim it judges for `significance`, and no other job does.
  */
 export const AttestationEntrySchema = z
   .strictObject({
@@ -133,11 +136,9 @@ export const AttestationEntrySchema = z
     verifier: OperatorIdSchema,
     bundle: DigestSchema,
     claims: z
-      .record(
-        z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)"),
-        z.enum(Object.values(ATTESTATION_JOBS).flat() as [string, ...string[]]),
-      )
+      .record(GlobalClaimIdSchema, z.enum(Object.values(ATTESTATION_JOBS).flat() as [string, ...string[]]))
       .refine((claims) => Object.keys(claims).length > 0, "List at least one claim"),
+    significance: z.record(GlobalClaimIdSchema, z.enum(SIGNIFICANCE_RATINGS)).optional(),
     evidence: DigestSchema,
     model_family: boundedText(60),
     harness: boundedText(200),
@@ -155,6 +156,27 @@ export const AttestationEntrySchema = z
     for (const [claim, verdict] of Object.entries(entry.claims)) {
       if (!allowed.includes(verdict)) {
         ctx.addIssue({ code: "custom", path: ["claims", claim], message: `A ${entry.job} verdict is one of ${allowed.join(", ")}` });
+      }
+    }
+    // A review rates exactly the claims it gives verdicts on; nothing else rates any.
+    if (!(REVIEW_JOBS as readonly string[]).includes(entry.job)) {
+      if (entry.significance !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["significance"], message: `Only a review rates significance, not a ${entry.job}` });
+      }
+      return;
+    }
+    if (entry.significance === undefined) {
+      ctx.addIssue({ code: "custom", path: ["significance"], message: "A review rates the significance of each claim it gives a verdict on" });
+      return;
+    }
+    for (const claim of Object.keys(entry.claims)) {
+      if (!Object.hasOwn(entry.significance, claim)) {
+        ctx.addIssue({ code: "custom", path: ["significance", claim], message: "Rate the significance of every claim the review gives a verdict on" });
+      }
+    }
+    for (const claim of Object.keys(entry.significance)) {
+      if (!Object.hasOwn(entry.claims, claim)) {
+        ctx.addIssue({ code: "custom", path: ["significance", claim], message: "Rate only the claims the review gives a verdict on" });
       }
     }
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
 import {
+  AttestationEntrySchema,
   detachSignatures,
   KeyRotationEntrySchema,
   keyRotationPayload,
@@ -76,5 +77,41 @@ describe("signatures beside the log", () => {
     // ML-DSA signatures are randomized, so signing again gives a different signature.
     expect(resigned.sig).not.toBe(entry.sig);
     expect(matchesLeafEntry(resigned, detachSignatures(entry))).toBe(false);
+  });
+});
+
+describe("attestations", () => {
+  const { secretKey } = generateKeyPair();
+  const one = `claim:${"a".repeat(64)}`;
+  const two = `claim:${"b".repeat(64)}`;
+  const attestation = (fields: Record<string, unknown>) =>
+    signObject(
+      {
+        type: "attestation",
+        verifier: "op:12",
+        bundle: `sha256:${"c".repeat(64)}`,
+        evidence: `sha256:${"d".repeat(64)}`,
+        model_family: "claude",
+        harness: "sj-harness 0.1.0",
+        ...fields,
+      },
+      secretKey,
+    );
+  const parses = (fields: Record<string, unknown>) => AttestationEntrySchema.safeParse(attestation(fields)).success;
+
+  it("rate the significance of every claim a review judges, and only those", () => {
+    const claims = { [one]: "sound", [two]: "minor_issues" };
+    expect(parses({ job: "domain_review", claims, significance: { [one]: "major", [two]: "known" } })).toBe(true);
+    expect(parses({ job: "methods_review", claims, significance: { [one]: "minor", [two]: "could_not_judge" } })).toBe(true);
+    expect(parses({ job: "adversarial_review", claims })).toBe(false);
+    expect(parses({ job: "domain_review", claims, significance: { [one]: "major" } })).toBe(false);
+    expect(parses({ job: "domain_review", claims: { [one]: "sound" }, significance: { [one]: "major", [two]: "minor" } })).toBe(false);
+    expect(parses({ job: "domain_review", claims, significance: { [one]: "huge", [two]: "minor" } })).toBe(false);
+  });
+
+  it("rate no significance in any other job", () => {
+    expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none" })).toBe(true);
+    expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none", significance: { [one]: "major" } })).toBe(false);
+    expect(parses({ job: "proof_check", claims: { [one]: "passed" }, significance: { [one]: "minor" } })).toBe(false);
   });
 });

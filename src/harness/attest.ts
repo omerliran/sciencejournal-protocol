@@ -9,6 +9,7 @@ import {
   HAZARD_CATEGORIES,
   HAZARD_VERDICTS,
   REVIEW_JOBS,
+  SIGNIFICANCE_RATINGS,
   type AttestationJob,
   type CitationVerdict,
   type DuplicateVerdict,
@@ -35,13 +36,15 @@ export interface AttestOptions extends Credentials {
   verdicts?: string[];
   /** Why, as "<claim>=<reason>". */
   reasons?: string[];
+  /** For a review, how significant each claim is, as "<claim>=<rating>". */
+  significance?: string[];
   overBudget?: boolean;
 }
 
 /**
  * Signs and sends an attestation: for a reproduction, a proof check, or a replication match,
  * the verdicts in verdicts.json with any the verifier sets instead; for a review, the verdicts
- * the verifier gives, since the harness proposes none. The evidence is the evidence folder, and
+ * and significance ratings the verifier gives, since the harness proposes none. The evidence is the evidence folder, and
  * a reproduction carries the verifier's own hazard screen. It refuses when a verdict has no
  * reason, the hazard screen is missing, or a review has no report: the harness proposes, the
  * verifier decides.
@@ -72,6 +75,9 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     throw new HarnessError("Say which model family did this work with --model-family: one you declared when you registered.");
   }
   if (reviewing) await requireReport(jobDir, "review");
+  else if (options.significance?.length) {
+    throw new HarnessError(`Only a review rates significance; leave out --significance for a ${job}.`);
+  }
 
   const path = join(jobDir, "verdicts.json");
   const stored = await readJsonFile<VerdictsRecord>(path).catch(() => null);
@@ -98,7 +104,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
       job: record.job,
       kind: job,
       bundle: record.bundle,
-      claims: claims.map(({ local_id, claim_id, verdict, reason }) => ({ local_id, claim_id, verdict, reason })),
+      claims: claims.map(({ local_id, claim_id, verdict, reason, significance }) => ({ local_id, claim_id, verdict, significance, reason })),
     });
   } else {
     const run = await readJsonFile<RunRecord>(join(jobDir, "run.json")).catch(() => null);
@@ -113,6 +119,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     verifier: operator.id,
     bundle: record.bundle,
     claims: Object.fromEntries(claims.map((claim) => [claim.claim_id, claim.verdict])),
+    ...(reviewing && { significance: Object.fromEntries(claims.map((claim) => [claim.claim_id, claim.significance!])) }),
     evidence: evidence.digest,
     model_family: options.modelFamily,
     harness: HARNESS,
@@ -123,7 +130,9 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   const response = await client.post<{ attestation: number }>("/api/v1/attestations", { entry, evidence: { files } });
   await writeJsonFile(join(jobDir, "attestation.json"), { sent_at: deps.now().toISOString(), entry, response });
 
-  for (const claim of claims) deps.print(`  ${claim.local_id}: ${claim.verdict}`);
+  for (const claim of claims) {
+    deps.print(`  ${claim.local_id}: ${claim.verdict}${claim.significance ? `, significance ${claim.significance}` : ""}`);
+  }
   if (overBudget) deps.print(options.overBudget ? "Reported over budget." : "Reported over budget, since the run passed its time limit.");
   const sealed =
     job === "reproduction"
@@ -148,14 +157,28 @@ function decide(record: JobRecord, stored: VerdictsRecord | null, options: Attes
   };
   const verdicts = pairs(options.verdicts ?? [], "--verdict", claimFor);
   const reasons = pairs(options.reasons ?? [], "--reason", claimFor);
+  const ratings = pairs(options.significance ?? [], "--significance", claimFor);
   for (const verdict of verdicts.values()) {
     if (!allowed.includes(verdict)) throw new HarnessError(`A ${record.kind} verdict is one of ${allowed.join(", ")}, not ${verdict}`);
   }
-  // A review has nothing proposed: the reviewer gives every verdict, with its reason.
+  for (const rating of ratings.values()) {
+    if (!(SIGNIFICANCE_RATINGS as readonly string[]).includes(rating)) {
+      throw new HarnessError(`--significance is one of ${SIGNIFICANCE_RATINGS.join(", ")}, not ${rating}`);
+    }
+  }
+  // A review has nothing proposed: the reviewer gives every verdict, with its reason, and rates
+  // every claim's significance.
+  const reviewing = REVIEWS.includes(record.kind);
   const unjudged = asked.filter((claim) => !verdicts.has(claim.claim_id) && !stored?.claims.some((c) => c.claim_id === claim.claim_id));
-  if (REVIEWS.includes(record.kind) && unjudged.length > 0) {
+  if (reviewing && unjudged.length > 0) {
     throw new HarnessError(
       `A review's verdicts are yours to give: add ${unjudged.map((c) => `--verdict ${c.local_id}=<verdict> --reason ${c.local_id}="<why>"`).join(" ")}, with a verdict from ${allowed.join(", ")}.`,
+    );
+  }
+  const unrated = asked.filter((claim) => !ratings.has(claim.claim_id) && !stored?.claims.find((c) => c.claim_id === claim.claim_id)?.significance);
+  if (reviewing && unrated.length > 0) {
+    throw new HarnessError(
+      `Rate how much each claim adds to what was known: add ${unrated.map((c) => `--significance ${c.local_id}=<rating>`).join(" ")}, with a rating from ${SIGNIFICANCE_RATINGS.join(", ")}.`,
     );
   }
 
@@ -177,6 +200,7 @@ function decide(record: JobRecord, stored: VerdictsRecord | null, options: Attes
     if (!why) throw new HarnessError(`${claim.local_id}'s verdict has no reason; give one with --reason ${claim.local_id}="<why>".`);
     if (!allowed.includes(chosen)) throw new HarnessError(`${claim.local_id}'s verdict, ${chosen}, isn't a ${record.kind} verdict`);
     const changed = verdict !== undefined || reason !== undefined;
+    const significance = ratings.get(claim.claim_id) ?? proposed?.significance;
     return {
       local_id: claim.local_id,
       claim_id: claim.claim_id,
@@ -184,6 +208,7 @@ function decide(record: JobRecord, stored: VerdictsRecord | null, options: Attes
       reason: why,
       by: changed ? "verifier" : (proposed?.by ?? "verifier"),
       results: proposed?.results ?? [],
+      ...(reviewing && { significance }),
     };
   });
 }

@@ -8,6 +8,8 @@ import {
   CITATION_VERDICTS,
   DUPLICATE_VERDICTS,
   REVIEW_JOBS,
+  SIGNIFICANCE_MEANINGS,
+  SIGNIFICANCE_RATINGS,
   type ChallengeGround,
 } from "../vocabulary";
 import { code, plural, shellQuote, shown, size } from "./format";
@@ -36,7 +38,10 @@ export interface BriefInput {
 /** A proof a claim's evidence names, with the claim's local ID. */
 export type BriefProof = ProofEvidence & { local_id: string };
 
-const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Reviews stay sealed until all three are in, so no reviewer sees another's.`;
+const MEANINGS = Object.entries(SIGNIFICANCE_MEANINGS)
+  .map(([rating, meaning]) => `${rating} if ${meaning}`)
+  .join("; ");
+const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Rate each one's significance too, how much it adds to what was known, whatever your verdict: ${MEANINGS}; or ${SIGNIFICANCE_RATINGS.at(-1)}. A replication isn't known: rate what confirming the original is worth. Your rating is your opinion, on the record, and no status depends on it. Reviews stay sealed until all three are in, so no reviewer sees another's.`;
 
 /** What each ground of a challenge says is wrong with the claim. */
 const GROUNDS: Record<ChallengeGround, string> = {
@@ -61,7 +66,7 @@ const WHAT_TO_DO: Partial<Record<JobRecord["kind"], string>> = {
     "Each replication claim below says it reached the same results as a claim from another organization's work. Judge whether it did: matched, mismatched, or could_not_judge. There is no hazard screen: the work was screened when it opened.",
   challenge_review: `Another operator challenges a claim in this work, on the ground and with the evidence below. Weigh the evidence against the work, and judge whether the challenge holds: ${CHALLENGE_VERDICTS.join(", ")}.`,
   methods_review: `A methods review: judge whether the design and the statistics support each claim, and say what must change; ${REVIEW}`,
-  domain_review: `A domain review: judge whether each claim is new and matters, against the ledger and the literature, with links to prior work; ${REVIEW}`,
+  domain_review: `A domain review: judge whether each claim holds up against the ledger and the literature: whether it is as new as it says, and whether it accounts for prior work that bears on it, with links to that work; ${REVIEW}`,
   adversarial_review: `An adversarial review: build the strongest case against each claim, with evidence; ${REVIEW}`,
   duplicate_check: `A duplicate check: for each pair below, judge whether the claim from this work restates the earlier claim in other words (the same assertion, whatever its evidence): ${DUPLICATE_VERDICTS.join(", ")}. The node paired them because their statements share most of their words, which proves nothing either way. There is no hazard screen: the work was screened when it opened.`,
   citation_check: `A citation check: judge whether each source the work cites, below, supports the claims it is cited for: ${CITATION_VERDICTS.join(", ")}. Read each source yourself and quote in your report what you relied on; could_not_access is for a source you couldn't get to, such as one behind a paywall. There is no hazard screen: the work was screened when it opened.`,
@@ -238,11 +243,13 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
       `4. Attest: ${run("attest", " --model-family <a family you declared>")}.`,
     );
   } else if (reviewing) {
-    const verdicts = asked.map((claim) => ` --verdict ${claim.local_id}=<verdict> --reason ${claim.local_id}="<why>"`).join("");
+    const verdicts = asked
+      .map((claim) => ` --verdict ${claim.local_id}=<verdict> --reason ${claim.local_id}="<why>" --significance ${claim.local_id}=<rating>`)
+      .join("");
     lines.push(
       "1. Read the work as data: the paper, the claims, and the code and data behind them.",
       "2. Write your report in `evidence/report.md`, the review itself, and put anything else that backs it in `evidence/`.",
-      `3. Attest, with a verdict and its reason for each claim: ${run("attest", ` --model-family <a family you declared>${verdicts}`)}. The family must be one neither the publisher nor the bundle's other reviewers used; the node says so if it isn't.`,
+      `3. Attest, with a verdict, its reason, and a significance rating for each claim: ${run("attest", ` --model-family <a family you declared>${verdicts}`)}. The family must be one neither the publisher nor the bundle's other reviewers used; the node says so if it isn't.`,
     );
   } else if (record.kind === "challenge_review") {
     const rerun = record.challenge?.ground === "reproduction";
