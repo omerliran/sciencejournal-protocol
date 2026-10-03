@@ -66,6 +66,16 @@ export function needsReproduction(claim: Pick<Claim, "evidence">): boolean {
 }
 
 export type MeasurementEvidence = z.infer<typeof MeasurementEvidenceSchema>;
+export type ProofEvidence = z.infer<typeof ProofEvidenceSchema>;
+
+export function isProof(evidence: Evidence): evidence is ProofEvidence {
+  return "proof" in evidence;
+}
+
+/** Whether a claim's evidence includes a proof, which proof checks run. */
+export function needsProofCheck(claim: Pick<Claim, "evidence">): boolean {
+  return claim.evidence.some(isProof);
+}
 
 export function isMeasurement(evidence: Evidence): evidence is MeasurementEvidence {
   return "measured" in evidence;

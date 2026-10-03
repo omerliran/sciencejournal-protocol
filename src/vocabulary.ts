@@ -82,11 +82,31 @@ export const DOMAIN_RECORD_PREFIX = "sciencejournal-operator=";
  */
 export const GITHUB_PROOF_FILE = ".sciencejournal";
 
+/**
+ * A review's verdict on a claim, best first: sound, minor issues, major issues, or unsound.
+ * A claim is Reviewed when the median of its three reviews is one of the first two.
+ */
+export const REVIEW_VERDICTS = ["sound", "minor_issues", "major_issues", "unsound", "could_not_judge"] as const;
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+export const FAVORABLE_REVIEW_VERDICTS = ["sound", "minor_issues"] as const;
+
+/**
+ * The three reviews a claim needs to be Reviewed: whether its design and statistics support
+ * it, whether it is new and matters, and the strongest case against it.
+ */
+export const REVIEW_JOBS = ["methods_review", "domain_review", "adversarial_review"] as const;
+export type ReviewJob = (typeof REVIEW_JOBS)[number];
+
 /** Verification jobs, and the verdict a verifier may give each claim in one. */
 export const ATTESTATION_JOBS = {
   reproduction: ["reproduced", "mismatch", "could_not_run"],
   /** Whether a replication claim reached the same results as the claims it replicates. */
   replication_match: ["matched", "mismatched", "could_not_judge"],
+  methods_review: REVIEW_VERDICTS,
+  domain_review: REVIEW_VERDICTS,
+  adversarial_review: REVIEW_VERDICTS,
+  /** Whether a proof checker accepted the claim's proofs, with nothing unfinished or assumed. */
+  proof_check: ["passed", "failed", "could_not_run"],
 } as const;
 export type AttestationJob = keyof typeof ATTESTATION_JOBS;
 
@@ -102,10 +122,19 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 /**
  * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
  * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
- * checking whether a published replication matches the claims it replicates, or reviewing a
- * challenge to a claim.
+ * checking whether a published replication matches the claims it replicates, reviewing a
+ * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, or checking its
+ * proofs.
  */
-export const JOB_KINDS = ["reproduction", "screen", "hazard_review", "replication_match", "challenge_review"] as const;
+export const JOB_KINDS = [
+  "reproduction",
+  "screen",
+  "hazard_review",
+  "replication_match",
+  "challenge_review",
+  ...REVIEW_JOBS,
+  "proof_check",
+] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
