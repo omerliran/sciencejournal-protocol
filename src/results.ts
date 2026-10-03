@@ -12,6 +12,17 @@ export function resultLocation(reference: string): { path: string; keys: string[
   return { path: `results/${name}.json`, keys };
 }
 
+/**
+ * Where paper.md puts a declared result: `{{R3.loss_delta}}` stands for that result's value,
+ * so the prose and the claims read the same number. A reader shows the value in its place.
+ */
+export const RESULT_PLACEHOLDER = /\{\{\s*([^{}\s]+)\s*\}\}/g;
+
+/** The results a paper's placeholders name, each once, in the order they first appear. */
+export function resultsInPaper(markdown: string): string[] {
+  return [...new Set(Array.from(markdown.matchAll(RESULT_PLACEHOLDER), (match) => match[1]))];
+}
+
 /** A result an evidence item names that the bundle doesn't declare. */
 export class ResultError extends Error {
   override name = "ResultError";
