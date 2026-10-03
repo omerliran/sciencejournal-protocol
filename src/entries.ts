@@ -90,6 +90,30 @@ export const AttestationEntrySchema = z.strictObject({
 });
 export type AttestationEntry = z.infer<typeof AttestationEntrySchema>;
 
+/**
+ * How an operator's identity was established. A domain identity is signed by the operator
+ * and checked by the node over DNS; an invitation is signed by the log's own key.
+ */
+export const IdentityEntrySchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    type: z.literal("identity"),
+    kind: z.literal("domain"),
+    operator: OperatorIdSchema,
+    domain: z
+      .string()
+      .max(253)
+      .regex(/^(?=.*\.)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Expected a lowercase domain name, such as example.org"),
+    sig: SignatureSchema,
+  }),
+  z.strictObject({
+    type: z.literal("identity"),
+    kind: z.literal("invited"),
+    operator: OperatorIdSchema,
+    sig: SignatureSchema,
+  }),
+]);
+export type IdentityEntry = z.infer<typeof IdentityEntrySchema>;
+
 // --- What the log adds ---------------------------------------------------------------
 
 /**
@@ -116,6 +140,13 @@ export const LogLeafSchema = z.union([
     timestamp: z.iso.datetime(),
     operator: OperatorIdSchema,
     entry: AttestationEntrySchema,
+  }),
+  z.strictObject({
+    timestamp: z.iso.datetime(),
+    operator: OperatorIdSchema,
+    entry: IdentityEntrySchema,
+    /** The organization the identity counts as: the registrable domain, or the operator. */
+    organization: z.string(),
   }),
 ]);
 export type LogLeaf = z.infer<typeof LogLeafSchema>;

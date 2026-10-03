@@ -14,7 +14,7 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `hash.ts` | SHA-256 digests |
 | `claims.ts`, `validate.ts` | The `claims.json` schema, claim IDs, and validation with JSON Pointer issues |
 | `bundle.ts`, `manifest.ts` | Bundle path rules, bundle hashes, verification inputs, evidence digests, and the manifest schema |
-| `signing.ts`, `entries.ts` | Ed25519 keys and signatures, signed key, bundle, and attestation entries, log leaves, and tree heads |
+| `signing.ts`, `entries.ts` | Ed25519 keys and signatures, signed key, bundle, attestation, and identity entries, log leaves, and tree heads |
 | `merkle.ts`, `receipts.ts` | RFC 9162 Merkle tree hashing, inclusion and consistency proofs, and receipt verification |
 | `vocabulary.ts` | Claim types, statuses, entry types, verdicts, and limits |
 
