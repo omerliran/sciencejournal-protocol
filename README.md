@@ -18,6 +18,7 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `materials.ts`, `deviations.ts` | What someone needs to repeat the work: the `materials.json` schema (a key resources table, with RRIDs), and the `deviations.json` schema for how a replication or pre-registered work departed from what it follows |
 | `scan.ts` | Content a model reads but a reader of the rendered page doesn't see: hidden characters by Unicode property, and Markdown that doesn't render |
 | `proofs.ts` | Where Lean 4 and Rocq proofs use their unfinished-proof keywords, read by each language's own lexical rules |
+| `paper.ts` | The paper's fixed sections and where each sits, and the length limits: a token count every implementation computes the same way, and the Summary's and the whole paper's limits |
 | `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, the paper's fixed sections it lacks, the files its claims call for that it lacks, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
 | `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
 | `identity.ts` | Identity entries: a domain, a GitHub repository, a volunteer's vouch the operator countersigns, or an invitation |

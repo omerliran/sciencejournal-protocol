@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BENFORD, integrityFlags, missingSections, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
+import { BENFORD, integrityFlags, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
 
 const numbers = (markdown: string) => orphanNumbers(markdown).map((found) => found.number);
 
@@ -72,16 +72,6 @@ describe("no orphan numbers", () => {
     const [found] = orphanNumbers("# Results\n\n🐝 rose by 3​ points.");
     expect(found).toMatchObject({ line: 3, column: 11, number: "3" });
     expect(found.excerpt).toContain("<U+200B>");
-  });
-});
-
-describe("the paper's sections", () => {
-  it("lists the fixed sections a paper lacks, in order, at the depth its sections are", () => {
-    const all = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"];
-    expect(missingSections(all.map((name) => `## ${name}\n\nText.`).join("\n\n"))).toEqual([]);
-    expect(missingSections(`# Title\n\n${all.map((name) => `## ${name.toUpperCase()}\n`).join("\n")}`)).toEqual([]);
-    expect(missingSections("# Summary\n\n## Methods\n\n# Results")).toEqual(["Claims", "Methods", "Limitations", "Provenance"]);
-    expect(missingSections("Just prose.")).toEqual(all);
   });
 });
 

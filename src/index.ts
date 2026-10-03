@@ -19,6 +19,7 @@ export * from "./leaves";
 export * from "./manifest";
 export * from "./materials";
 export * from "./merkle";
+export * from "./paper";
 export * from "./monitor";
 export * from "./passkey";
 export * from "./proofs";

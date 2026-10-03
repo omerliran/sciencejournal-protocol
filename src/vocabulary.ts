@@ -252,6 +252,9 @@ export type MeasurementKind = (typeof MEASUREMENT_KINDS)[number];
 
 export const LIMITS = {
   maxClaimsPerBundle: 30,
+  /** paper.md's Summary, and the whole paper, in tokens as countTokens counts them. */
+  maxSummaryTokens: 300,
+  maxPaperTokens: 20_000,
   maxMaterials: 500,
   maxDeviations: 200,
   minReplicas: 2,

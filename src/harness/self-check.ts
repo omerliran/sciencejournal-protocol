@@ -6,6 +6,7 @@ import type { Digest } from "../hash";
 import { integrityFlags, MISSING_FILE_REASONS } from "../integrity";
 import { parseJson } from "../json";
 import { ManifestSchema } from "../manifest";
+import { overLimitMessage, paperOverLimits } from "../paper";
 import { bundleInputs } from "../results";
 import { scanFiles } from "../scan";
 import { checkClaims } from "../validate";
@@ -56,6 +57,10 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
   if (!manifest.success) {
     throw new HarnessError(`manifest.json doesn't check: ${manifest.error.issues.map((issue) => `/${issue.path.join("/")} ${issue.message}`).join("; ")}`);
   }
+  const paper = files.get("paper.md");
+  if (!paper) throw new HarnessError("The bundle has no paper.md");
+  const over = paperOverLimits(new TextDecoder().decode(paper));
+  if (over.length > 0) throw new HarnessError(`A node would refuse this bundle: ${over.map(overLimitMessage).join("; ")}.`);
   const inputs = bundleInputs(files, digests.verificationInputs);
   const claimsJson = json(files, "claims.json");
   const checked = checkClaims(claimsJson, { ...inputs, has: (path) => sizes.has(path) });

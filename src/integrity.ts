@@ -1,11 +1,7 @@
-import { fromMarkdown } from "mdast-util-from-markdown";
-import { gfmFromMarkdown } from "mdast-util-gfm";
-import { mathFromMarkdown } from "mdast-util-math";
-import { gfm } from "micromark-extension-gfm";
-import { math } from "micromark-extension-math";
 import { ClaimsFileSchema, needsReplication } from "./claims";
 import { followed } from "./deviations";
 import { parseJson } from "./json";
+import { missingSections, parseMarkdown, plainText, sectionDepth, type MarkdownNode } from "./paper";
 import { ReferencesFileSchema } from "./references";
 import { RESULT_PLACEHOLDER } from "./results";
 import { revealHidden } from "./scan";
@@ -28,9 +24,6 @@ import { revealHidden } from "./scan";
 // Data forensics: in a table under data/, exact duplicate rows, and numeric columns whose
 // first digits stray from Benford's law, which naturally occurring numbers spanning several
 // orders of magnitude follow and invented ones often don't.
-
-/** The sections paper.md has, by their fixed names, in order. */
-export const PAPER_SECTIONS = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"] as const;
 
 /** The sections of paper.md that state results, by their fixed names. */
 export const CLAIM_BEARING_SECTIONS = ["Summary", "Claims", "Results"] as const;
@@ -156,7 +149,7 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, p
   if (paper !== undefined) {
     const tree = parseMarkdown(paper);
     flags.orphan_numbers.push(...orphanNumbersIn(paper, tree).slice(0, INTEGRITY_LIMITS.orphanNumbersShown));
-    flags.missing_sections.push(...missingSectionsIn(tree));
+    flags.missing_sections.push(...missingSections(paper, tree));
   }
   flags.missing_files.push(
     ...missingFiles(texts.get("claims.json"), texts.get("references.json"), new Set(paths ?? read.map(([path]) => path))),
@@ -189,16 +182,6 @@ function parsed(text: string): unknown {
 
 // --- No orphan numbers -------------------------------------------------------------------
 
-/** What the checks need of a Markdown syntax tree node. */
-type MarkdownNode = {
-  type: string;
-  depth?: number;
-  url?: string;
-  value?: string;
-  position?: { start: { offset?: number }; end: { offset?: number } };
-  children?: MarkdownNode[];
-};
-
 /** Nodes whose text isn't prose a reader takes as a stated result. */
 const NOT_PROSE = new Set(["code", "inlineCode", "math", "inlineMath", "html", "image", "imageReference", "definition", "footnoteDefinition"]);
 
@@ -218,41 +201,6 @@ const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
  */
 export function orphanNumbers(markdown: string): OrphanNumber[] {
   return orphanNumbersIn(markdown, parseMarkdown(markdown));
-}
-
-/** paper.md's fixed sections that it doesn't have, in order. */
-export function missingSections(markdown: string): string[] {
-  return missingSectionsIn(parseMarkdown(markdown));
-}
-
-function parseMarkdown(markdown: string): MarkdownNode {
-  return fromMarkdown(markdown, {
-    extensions: [gfm(), math()],
-    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
-  }) as MarkdownNode;
-}
-
-/**
- * The heading depth the paper's sections are at: the shallowest that names one of the fixed
- * sections, so a title above them is fine, whatever depth the paper starts at. Null when no
- * heading names one.
- */
-function sectionDepth(tree: MarkdownNode): number | null {
-  const fixed = new Set(PAPER_SECTIONS.map((name) => name.toLowerCase()));
-  const depths = (tree.children ?? [])
-    .filter((node) => node.type === "heading" && fixed.has(plainText(node).trim().toLowerCase()))
-    .map((node) => node.depth ?? 1);
-  return depths.length === 0 ? null : Math.min(...depths);
-}
-
-function missingSectionsIn(tree: MarkdownNode): string[] {
-  const depth = sectionDepth(tree);
-  const present = new Set(
-    (tree.children ?? [])
-      .filter((node) => node.type === "heading" && node.depth === depth)
-      .map((node) => plainText(node).trim().toLowerCase()),
-  );
-  return PAPER_SECTIONS.filter((name) => !present.has(name.toLowerCase()));
 }
 
 function orphanNumbersIn(markdown: string, tree: MarkdownNode): OrphanNumber[] {
@@ -323,11 +271,6 @@ function bareAddress(address: string): string {
 
 function isYear(number: string): boolean {
   return /^\d{4}$/.test(number) && Number(number) >= 1900 && Number(number) <= 2099;
-}
-
-function plainText(node: MarkdownNode): string {
-  if (node.value !== undefined && (node.type === "text" || node.type === "inlineCode")) return node.value;
-  return (node.children ?? []).map(plainText).join("");
 }
 
 function lineStarts(text: string): number[] {

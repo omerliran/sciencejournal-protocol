@@ -1,5 +1,6 @@
 import { isClaimId, type ProofEvidence } from "../claims";
-import { MISSING_FILE_REASONS, PAPER_SECTIONS, type IntegrityFlags } from "../integrity";
+import { MISSING_FILE_REASONS, type IntegrityFlags } from "../integrity";
+import { PAPER_SECTIONS } from "../paper";
 import type { UnfinishedProof } from "../proofs";
 import { HIDDEN_KINDS, revealHidden } from "../scan";
 import {
