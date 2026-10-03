@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
-import { signObject } from "./entries";
+import { detachSignatures, signObject } from "./entries";
 import { sha256Hex } from "./hash";
 import { IdeaEntrySchema, IdeaFlagSchema, ideaId, IdeaTextSchema, ideaTextDigest, type IdeaText } from "./ideas";
 import { LogLeafSchema } from "./leaves";
 import { verifyPasskeyObject } from "./passkey";
-import { generateKeyPair, verify } from "./signing";
+import { generateKeyPair, SIGNATURE_BYTES, verify } from "./signing";
+import { SIGNATURE_ALGORITHM } from "./vocabulary";
 import { virtualPasskey } from "./virtual-passkey";
 
 const passkey = virtualPasskey();
@@ -47,14 +48,14 @@ describe("ideas", () => {
     expect(IdeaTextSchema.safeParse(text).success).toBe(false);
   });
 
-  it("keep the words out of the log, and reject Ed25519 signatures", () => {
+  it("keep the words out of the log, and reject operator signatures", () => {
     const idea = sign(words);
     expect(IdeaEntrySchema.safeParse({ ...idea, title: words.title }).success).toBe(false);
-    expect(IdeaEntrySchema.safeParse({ ...idea, sig: `ed25519:${"0".repeat(128)}` }).success).toBe(false);
+    expect(IdeaEntrySchema.safeParse({ ...idea, sig: `${SIGNATURE_ALGORITHM}:${"0".repeat(2 * SIGNATURE_BYTES)}` }).success).toBe(false);
   });
 
   it("are logged under the observer who signed them", () => {
-    const leaf = { timestamp: "2026-10-04T12:00:00.000Z", observer: "obs:3", entry: sign(words) };
+    const leaf = { timestamp: "2026-10-04T12:00:00.000Z", observer: "obs:3", entry: detachSignatures(sign(words)) };
     expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
     expect(LogLeafSchema.safeParse({ ...leaf, observer: undefined, operator: "op:3" }).success).toBe(false);
   });

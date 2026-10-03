@@ -1,18 +1,34 @@
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
-import { DigestSchema, type Digest } from "./hash";
-import { ATTESTATION_JOBS, HAZARD_VERDICTS } from "./vocabulary";
-import { sign, verify, type PublicKey, type Signature } from "./signing";
+import { canonicalDigest, DigestSchema, type Digest } from "./hash";
+import { ATTESTATION_JOBS, HAZARD_VERDICTS, SIGNATURE_ALGORITHM } from "./vocabulary";
+import {
+  PUBLIC_KEY_BYTES,
+  sign,
+  SIGNATURE_BYTES,
+  verify,
+  type PublicKey,
+  type Signature,
+  type SigningKey,
+} from "./signing";
+
+const hexOf = (bytes: number) => new RegExp(`^${SIGNATURE_ALGORITHM}:[0-9a-f]{${2 * bytes}}$`);
 
 export const PublicKeySchema = z
   .string()
-  .regex(/^ed25519:[0-9a-f]{64}$/, "Expected an Ed25519 public key (ed25519:<64 hex>)")
+  .regex(
+    hexOf(PUBLIC_KEY_BYTES),
+    `Expected a public key: ${SIGNATURE_ALGORITHM}: and ${PUBLIC_KEY_BYTES} bytes in lowercase hex`,
+  )
   .transform((key) => key as PublicKey);
 
 export const SignatureSchema = z
   .string()
-  .regex(/^ed25519:[0-9a-f]{128}$/, "Expected an Ed25519 signature (ed25519:<128 hex>)")
+  .regex(
+    hexOf(SIGNATURE_BYTES),
+    `Expected a signature: ${SIGNATURE_ALGORITHM}: and ${SIGNATURE_BYTES} bytes in lowercase hex`,
+  )
   .transform((signature) => signature as Signature);
 
 export const OperatorIdSchema = z.string().regex(/^op:[1-9][0-9]*$/, "Expected an operator ID (op:<n>)");
@@ -28,15 +44,45 @@ export function signingPayload(object: { type: string }): Uint8Array {
   return utf8ToBytes(canonicalJson(unsigned));
 }
 
-export function signObject<T extends { type: string }>(
-  object: T,
-  secretKey: Uint8Array,
-): T & { sig: Signature } {
-  return { ...object, sig: sign(signingPayload(object), secretKey) };
+export function signObject<T extends { type: string }>(object: T, key: SigningKey): T & { sig: Signature } {
+  return { ...object, sig: sign(signingPayload(object), key) };
 }
 
 export function verifyObject(object: { type: string; sig: string }, publicKey: string): boolean {
   return verify(object.sig, signingPayload(object), publicKey);
+}
+
+// --- Signatures beside the log ---------------------------------------------------------
+
+/**
+ * The fields of a signed entry that hold signatures. A log leaf holds each as its digest,
+ * and the node keeps the signatures beside the log: they are most of an entry's size, and
+ * only someone checking who signed it needs them. The leaf hash still fixes each signature.
+ */
+export const SIGNATURE_FIELDS = ["sig", "key_sig"] as const;
+type SignatureField = (typeof SIGNATURE_FIELDS)[number];
+
+/** A signed entry as its log leaf holds it: each signature replaced by its digest. */
+export type Detached<T> = T extends unknown
+  ? { [K in keyof T]: K extends SignatureField ? Digest : T[K] }
+  : never;
+
+/** A signature's digest: the SHA-256 of its canonical JSON, which covers passkey signatures too. */
+export function signatureDigest(signature: unknown): Digest {
+  return canonicalDigest(signature);
+}
+
+export function detachSignatures<T extends object>(entry: T): Detached<T> {
+  const detached: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+  for (const field of SIGNATURE_FIELDS) {
+    if (field in detached) detached[field] = signatureDigest(detached[field]);
+  }
+  return detached as Detached<T>;
+}
+
+/** Whether `signed` is the entry a leaf holds, signatures and all. */
+export function matchesLeafEntry(signed: object, leafEntry: object): boolean {
+  return canonicalJson(detachSignatures(signed)) === canonicalJson(leafEntry);
 }
 
 // --- Entries an operator signs -------------------------------------------------------
@@ -156,7 +202,7 @@ export function keyRotationPayload(entry: Pick<KeyRotationEntry, "operator" | "k
 }
 
 /** Signs a rotation from `currentSecret`'s key to `newSecret`'s, for `operator`. */
-export function signKeyRotation(operator: string, newSecret: Uint8Array, currentSecret: Uint8Array, key: PublicKey) {
+export function signKeyRotation(operator: string, newSecret: SigningKey, currentSecret: SigningKey, key: PublicKey) {
   const key_sig = sign(keyRotationPayload({ operator, key }), newSecret);
   return signObject({ type: "key_rotation" as const, operator, key, key_sig }, currentSecret);
 }

@@ -1,6 +1,6 @@
 import { bytesToHex, randomBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
-import { boundedText, PublicKeySchema, SignatureSchema, signingPayload } from "./entries";
+import { boundedText, SignatureSchema, signingPayload } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { FieldSchema } from "./manifest";
 import { PasskeyKeySchema, PasskeySignatureSchema } from "./passkey";
@@ -115,7 +115,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const TaskEntrySchema = z
   .strictObject({
     type: z.literal("task"),
-    operator_key: PublicKeySchema,
+    /** The posting operator's key, by digest, as a manifest names it. */
+    operator_key_digest: DigestSchema,
     title: boundedText(120),
     instructions: boundedText(4000),
     fields: z.array(FieldSchema).min(1).max(5),

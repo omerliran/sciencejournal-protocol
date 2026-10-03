@@ -2,7 +2,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
 import { digestBundle } from "./bundle";
 import { bundleSigningObject, signObject, verifyObject } from "./entries";
-import { leafBytes, type LogLeaf } from "./leaves";
+import { detachLeaf, leafBytes } from "./leaves";
 import { inclusionProof, leafHash, memorySource, rootHash } from "./merkle";
 import { signBundle, verifyReceipt, type Receipt } from "./receipts";
 import { generateKeyPair } from "./signing";
@@ -26,16 +26,18 @@ describe("signBundle", () => {
 
 describe("verifyReceipt", () => {
   async function receiptFor(index: number, size: number): Promise<Receipt> {
-    const leaves: LogLeaf[] = Array.from({ length: size }, (_, i) => ({
-      timestamp: new Date(Date.UTC(2026, 9, 2, 12, 0, i)).toISOString(),
-      operator: "op:1",
-      entry: signObject(
-        { type: "bundle" as const, bundle: `sha256:${String(i).padStart(64, "0")}` as const },
-        operator.secretKey,
-      ),
-      claims: [],
-      fields: ["machine-learning"],
-    }));
+    const leaves = Array.from({ length: size }, (_, i) =>
+      detachLeaf({
+        timestamp: new Date(Date.UTC(2026, 9, 2, 12, 0, i)).toISOString(),
+        operator: "op:1",
+        entry: signObject(
+          { type: "bundle" as const, bundle: `sha256:${String(i).padStart(64, "0")}` as const },
+          operator.secretKey,
+        ),
+        claims: [],
+        fields: ["machine-learning"],
+      }),
+    );
     const source = memorySource(leaves.map((leaf) => leafHash(leafBytes(leaf))));
     const treeHead = signObject(
       {

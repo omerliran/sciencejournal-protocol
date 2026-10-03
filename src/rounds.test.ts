@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { signatureDigest } from "./entries";
 import { canonicalDigest } from "./hash";
 import { LogLeafSchema } from "./leaves";
 import { HazardReviewEntrySchema, JobRequestSchema, sealCommitment, WithdrawalEntrySchema } from "./rounds";
+import { SIGNATURE_BYTES } from "./signing";
+import { SIGNATURE_ALGORITHM } from "./vocabulary";
 
-const sig = `ed25519:${"ab".repeat(64)}`;
+const sig = `${SIGNATURE_ALGORITHM}:${"ab".repeat(SIGNATURE_BYTES)}`;
+// What a log leaf holds in place of the signature.
+const sigDigest = signatureDigest(sig);
 const salt = "cd".repeat(32);
 const bundle = `sha256:${"ef".repeat(32)}`;
 
@@ -18,14 +23,17 @@ describe("sealed rounds", () => {
 
   it("log commitments naming no one, and reveal entries with the salt that opens them", () => {
     const timestamp = "2026-10-02T12:00:00.000Z";
-    const sealed = { timestamp, entry: { type: "sealed", commitment: sealCommitment({ type: "bundle", bundle, sig }, salt), sig } };
+    const commitment = sealCommitment({ type: "bundle", bundle, sig: sigDigest }, salt);
+    const sealed = { timestamp, entry: { type: "sealed", commitment, sig: sigDigest } };
     expect(LogLeafSchema.safeParse(sealed).success).toBe(true);
     expect(LogLeafSchema.safeParse({ ...sealed, operator: "op:1" }).success).toBe(false);
+    // A leaf holds signatures by digest, never in full.
+    expect(LogLeafSchema.safeParse({ ...sealed, entry: { ...sealed.entry, sig } }).success).toBe(false);
 
     const opened = {
       timestamp,
       operator: "op:1",
-      entry: { type: "bundle", bundle, sig },
+      entry: { type: "bundle", bundle, sig: sigDigest },
       claims: [],
       fields: ["machine-learning"],
       sealed: { index: 4, salt },

@@ -10,7 +10,10 @@ import {
   KeyRecoveryEntrySchema,
   KeyRotationEntrySchema,
   OperatorIdSchema,
+  detachSignatures,
+  SIGNATURE_FIELDS,
   SignatureSchema,
+  type Detached,
 } from "./entries";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema } from "./hash";
@@ -27,15 +30,16 @@ import {
 const timestamp = z.iso.datetime();
 
 /**
- * A log leaf: the signed entry, plus what the log attests about it. The timestamp settles
- * priority. Entries an operator's agent signs name the operator; entries a person signs name
- * the observer, whether they observe, suggest ideas, or both. For bundles, the claim IDs and fields are derived from the bundle's
- * contents, so anyone holding the bundle can check them; for identities, the log adds the
- * organization the identity counts as. Entries the node signs itself (commitments, canaries,
- * withdrawals) name no one. An entry that was sealed first carries `sealed`: the commitment
- * it opens and the salt that opens it.
+ * A log leaf as the node assembles it: the signed entry, plus what the log attests about it.
+ * The timestamp settles priority. Entries an operator's agent signs name the operator;
+ * entries a person signs name the observer, whether they observe, suggest ideas, or both. For
+ * bundles, the claim IDs and fields are derived from the bundle's contents, so anyone holding
+ * the bundle can check them; for identities, the log adds the organization the identity
+ * counts as. Entries the node signs itself (commitments, canaries, withdrawals) name no one.
+ * An entry that was sealed first carries `sealed`: the commitment it opens and the salt that
+ * opens it. The log holds the leaf with its entry's signatures detached (see `LogLeafSchema`).
  */
-export const LogLeafSchema = z.union([
+export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyRotationEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: KeyRecoveryEntrySchema }),
@@ -78,7 +82,36 @@ export const LogLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: HazardFlagEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
 ]);
-export type LogLeaf = z.infer<typeof LogLeafSchema>;
+export type SignedLeaf = z.infer<typeof SignedLeafSchema>;
+
+/**
+ * A log leaf as the log holds it: the signed leaf with each signature in its entry replaced
+ * by the signature's digest. The signatures themselves are kept beside the log.
+ */
+export const LogLeafSchema = z.union(
+  SignedLeafSchema.options.map((option) =>
+    option.extend({ entry: detachedSchema(option.shape.entry) }),
+  ) as unknown as readonly [z.ZodType, ...z.ZodType[]],
+);
+type DetachedLeaf<L> = L extends { entry: infer E } ? Omit<L, "entry"> & { entry: Detached<E> } : never;
+export type LogLeaf = DetachedLeaf<SignedLeaf>;
+
+/** The leaf the log holds for a signed leaf: its entry's signatures replaced by their digests. */
+export function detachLeaf(leaf: SignedLeaf): LogLeaf {
+  return { ...leaf, entry: detachSignatures(leaf.entry) } as LogLeaf;
+}
+
+/** A signed entry's schema with each signature field holding a digest instead. */
+function detachedSchema(schema: z.ZodType): z.ZodType {
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    const options = (schema.options as z.ZodType[]).map(detachedSchema);
+    return z.discriminatedUnion(schema.def.discriminator, options as [z.ZodObject, ...z.ZodObject[]]);
+  }
+  const object = schema as z.ZodObject;
+  const digests = SIGNATURE_FIELDS.filter((field) => field in object.shape).map((field) => [field, DigestSchema]);
+  // safeExtend keeps an entry's refinements, which extend would refuse.
+  return object.safeExtend(Object.fromEntries(digests));
+}
 
 /** A leaf's bytes in the Merkle tree. */
 export function leafBytes(leaf: LogLeaf): Uint8Array {

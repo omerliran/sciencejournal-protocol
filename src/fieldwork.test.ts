@@ -11,7 +11,7 @@ import {
   type LoggedObservation,
   type TaskEntry,
 } from "./fieldwork";
-import { generateKeyPair } from "./signing";
+import { generateKeyPair, keyDigest } from "./signing";
 
 const operator = generateKeyPair();
 
@@ -19,7 +19,7 @@ function task(overrides: Record<string, unknown> = {}): TaskEntry {
   return signObject(
     {
       type: "task",
-      operator_key: operator.publicKey,
+      operator_key_digest: keyDigest(operator.publicKey),
       title: "Water temperature at the pier",
       instructions: "Lower the thermometer 10 cm below the surface at the end of the pier and wait a minute.",
       fields: ["ecology"],

@@ -61,8 +61,14 @@ export const IDENTITY_KINDS = ["domain", "invited"] as const;
 export type IdentityKind = (typeof IDENTITY_KINDS)[number];
 
 /**
+ * The algorithm every operator key and every signature uses: a hybrid of Ed25519 and
+ * ML-DSA-44 (FIPS 204), written before the key or signature it names.
+ */
+export const SIGNATURE_ALGORITHM = "ed25519-ml-dsa-44";
+
+/**
  * Where an operator proves control of a domain: a TXT record at this name under the domain,
- * whose value is the prefix below followed by the operator's public key.
+ * whose value is the prefix below followed by the digest of the operator's public key.
  */
 export const DOMAIN_RECORD_NAME = "_sciencejournal";
 export const DOMAIN_RECORD_PREFIX = "sciencejournal-operator=";

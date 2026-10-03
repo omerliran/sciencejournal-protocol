@@ -1,7 +1,8 @@
 // Writes the conformance vectors to the directory given on the command line, using the
-// protocol library. Everything is deterministic: test keys come from fixed strings and
-// there is no randomness, so rerunning this produces identical files. The conformance
-// bundles on the ledger hold what each version of this generator wrote.
+// protocol library. Everything is deterministic: test keys come from fixed strings, and the
+// ML-DSA half of each signature uses FIPS 204's deterministic variant, so rerunning this
+// produces identical files. The conformance bundles on the ledger hold what each version of
+// this generator wrote.
 //
 // Every invalid case is first checked to be rejected by the library, so the vectors can't
 // encode a rule the implementation doesn't enforce.
@@ -9,8 +10,9 @@
 //   npx tsx generate.ts <output directory>
 
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { ml_dsa44 } from "@noble/post-quantum/ml-dsa.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -21,24 +23,30 @@ import {
   ClaimsFileSchema,
   consistencyProof,
   declaredInputs,
+  detachLeaf,
   digestBundle,
   EMPTY_ROOT,
   inclusionProof,
   JsonError,
+  keyDigest,
   leafBytes,
   leafHash,
   memorySource,
   parseJson,
+  publicKeyOf,
   ResultError,
   rootHash,
-  sign,
+  SIGNATURE_ALGORITHM,
+  signatureDigest,
   signingPayload,
   verify,
   verifyConsistency,
   verifyInclusion,
   type Claim,
   type Digest,
-  type LogLeaf,
+  type PublicKey,
+  type Signature,
+  type SignedLeaf,
 } from "@sciencejournal/protocol";
 
 const data = process.argv[2];
@@ -62,14 +70,21 @@ function mustReject(name: string, check: () => boolean) {
 const write = (name: string, value: unknown) =>
   writeFileSync(join(data, name), `${JSON.stringify(value, null, 2)}\n`);
 
-/** A test key: never used for anything but these vectors. */
+/** A test key: never used for anything but these vectors. Its two seeds are a SHA-512. */
 function testKey(n: number) {
-  const secretKey = sha256(utf8ToBytes(`sciencejournal conformance test key ${n}`));
-  return {
-    secret_key: bytesToHex(secretKey),
-    public_key: `ed25519:${bytesToHex(ed25519.getPublicKey(secretKey))}`,
-    secretKey,
-  };
+  const secretKey = sha512(utf8ToBytes(`sciencejournal conformance test key ${n}`));
+  return { secret_key: bytesToHex(secretKey), public_key: publicKeyOf(secretKey), secretKey };
+}
+
+/**
+ * Signs like the library's `sign`, but with FIPS 204's deterministic ML-DSA so the vectors
+ * reproduce byte for byte. Signers should keep the default, hedged variant; a verifier
+ * can't tell the two apart.
+ */
+function sign(message: Uint8Array, secretKey: Uint8Array): Signature {
+  const ed = ed25519.sign(message, secretKey.subarray(0, 32));
+  const ml = ml_dsa44.sign(message, ml_dsa44.keygen(secretKey.subarray(32)).secretKey, { extraEntropy: false });
+  return `${SIGNATURE_ALGORITHM}:${bytesToHex(ed)}${bytesToHex(ml)}`;
 }
 
 // --- Claim IDs ---------------------------------------------------------------------------
@@ -410,7 +425,7 @@ const bundleCases: { name: string; files: Map<string, Uint8Array> }[] = [
     files: new Map([
       ["paper.md", bytes("# Summary\n\nResults follow.\n")],
       ["code/eval.py", bytes("print(-0.031)\n")],
-      ["signature", bytes("ed25519:00")],
+      ["signature", bytes(`${SIGNATURE_ALGORITHM}:00`)],
     ]),
   },
 ];
@@ -471,11 +486,11 @@ const hex = (list: Uint8Array[]) => list.map(bytesToHex);
 const operatorKey = testKey(1);
 const keyEntry = {
   type: "key" as const,
-  key: operatorKey.public_key as `ed25519:${string}`,
+  key: operatorKey.public_key as PublicKey,
   name: "Conformance test operator",
   model_families: ["test-family"],
 };
-const exampleLeaves: LogLeaf[] = [
+const exampleLeaves: SignedLeaf[] = [
   {
     timestamp: "2026-10-02T12:00:00.000Z",
     operator: "op:1",
@@ -546,7 +561,7 @@ for (const c of invalidConsistency) {
 
 write("log-vectors.json", {
   description:
-    "RFC 9162 Merkle trees over the listed leaf inputs (hex): the empty-tree root, the root of every tree size, an inclusion proof for every leaf in every tree, a consistency proof between every pair of sizes, and the hashes of two example log leaves (canonical JSON, prefixed with 0x00). Every proof under invalid_inclusion and invalid_consistency must fail verification.",
+    "RFC 9162 Merkle trees over the listed leaf inputs (hex): the empty-tree root, the root of every tree size, an inclusion proof for every leaf in every tree, a consistency proof between every pair of sizes, and two example log leaves: each entry as signed, the leaf the log holds, in which each signature field (sig, and a key rotation's key_sig) is replaced by the SHA-256 of the signature's canonical JSON, and the leaf's hash (its canonical JSON, prefixed with 0x00). Every proof under invalid_inclusion and invalid_consistency must fail verification.",
   empty_root: bytesToHex(EMPTY_ROOT),
   invalid_inclusion: invalidInclusion,
   invalid_consistency: invalidConsistency,
@@ -554,10 +569,10 @@ write("log-vectors.json", {
   trees,
   inclusion,
   consistency,
-  leaf_examples: exampleLeaves.map((leaf) => ({
-    leaf,
-    leaf_hash: bytesToHex(leafHash(leafBytes(leaf))),
-  })),
+  leaf_examples: exampleLeaves.map((signedLeaf) => {
+    const leaf = detachLeaf(signedLeaf);
+    return { signed_entry: signedLeaf.entry, leaf, leaf_hash: bytesToHex(leafHash(leafBytes(leaf))) };
+  }),
 });
 
 // --- Signatures --------------------------------------------------------------------------
@@ -593,9 +608,28 @@ const signatureCases = [
 ];
 
 const signed = signatureCases.map(({ key, object }) => ({ key, object, sig: sign(signingPayload(object), key.secretKey) }));
-const flipSig = (sig: string) => `ed25519:${flip(sig.slice(8))}`;
+const prefix = SIGNATURE_ALGORITHM.length + 1;
+const flipSig = (sig: string) => `${sig.slice(0, prefix)}${flip(sig.slice(prefix))}`;
+// Each half has to verify: flip a byte of the ML-DSA half alone, or the Ed25519 half alone.
+const flipMlDsa = (sig: string) => {
+  const at = prefix + 2 * 64;
+  return `${sig.slice(0, at)}${flip(sig.slice(at))}`;
+};
 const invalidSignatures = [
-  { name: "a tampered signature", public_key: signed[0].key.public_key, object: signed[0].object, sig: flipSig(signed[0].sig) },
+  { name: "a tampered Ed25519 half", public_key: signed[0].key.public_key, object: signed[0].object, sig: flipSig(signed[0].sig) },
+  { name: "a tampered ML-DSA-44 half", public_key: signed[0].key.public_key, object: signed[0].object, sig: flipMlDsa(signed[0].sig) },
+  {
+    name: "one key's Ed25519 half with another's ML-DSA-44 half",
+    public_key: `${signed[0].key.public_key.slice(0, prefix + 64)}${signed[1].key.public_key.slice(prefix + 64)}`,
+    object: signed[0].object,
+    sig: signed[0].sig,
+  },
+  {
+    name: "an Ed25519 signature alone",
+    public_key: signed[0].key.public_key,
+    object: signed[0].object,
+    sig: `ed25519:${signed[0].sig.slice(prefix, prefix + 128)}`,
+  },
   { name: "another key", public_key: signed[1].key.public_key, object: signed[0].object, sig: signed[0].sig },
   { name: "a changed field", public_key: signed[0].key.public_key, object: { ...signed[0].object, name: "Someone else" }, sig: signed[0].sig },
   { name: "a signature for another object type", public_key: signed[1].key.public_key, object: { ...signed[1].object, type: "key" }, sig: signed[1].sig },
@@ -604,15 +638,17 @@ for (const c of invalidSignatures) mustReject(c.name, () => verify(c.sig, signin
 
 write("signature-vectors.json", {
   description:
-    "Ed25519 (RFC 8032) signatures over canonical JSON without the sig field. The secret keys are test keys published only for these vectors; signatures are deterministic, so they can be reproduced byte for byte. Every case under invalid must fail verification.",
+    `Hybrid ${SIGNATURE_ALGORITHM} signatures over canonical JSON without the sig field. A public key is "${SIGNATURE_ALGORITHM}:" and, in hex, the 32-byte Ed25519 key (RFC 8032) followed by the 1,312-byte ML-DSA-44 key (FIPS 204); a signature is the 64-byte Ed25519 signature followed by the 2,420-byte ML-DSA-44 signature, both over the same payload, with an empty ML-DSA context. It verifies only if both halves do. A secret key is the 32-byte Ed25519 seed followed by the 32-byte ML-DSA-44 seed. The secret keys are test keys published only for these vectors. Ed25519 signatures are deterministic, and these ML-DSA signatures use the deterministic variant so the file reproduces byte for byte; real signers use the hedged default, which verifies the same way. key_digest is the SHA-256 of the public key as written, which manifests, tasks, and DNS records name keys by; sig_digest is the SHA-256 of the signature's canonical JSON (the quoted string), which a log leaf holds in place of the signature. Every case under invalid must fail verification.`,
   invalid: invalidSignatures,
   cases: signatureCases.map(({ name, key, object }) => ({
     name,
     secret_key: key.secret_key,
     public_key: key.public_key,
+    key_digest: keyDigest(key.public_key),
     object,
     payload: canonicalJson(object),
     sig: sign(signingPayload(object), key.secretKey),
+    sig_digest: signatureDigest(sign(signingPayload(object), key.secretKey)),
   })),
 });
 

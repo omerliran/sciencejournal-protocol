@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { boundedText, PublicKeySchema } from "./entries";
+import { boundedText } from "./entries";
 import { DigestSchema } from "./hash";
 import { WORK_KINDS } from "./vocabulary";
 import { WRITTEN_BY } from "./vocabulary";
@@ -36,9 +36,13 @@ export const FieldSchema = z
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "Expected a lowercase field tag, such as machine-learning")
   .max(40);
 
-/** manifest.json: who publishes the bundle, under what licenses, and what reproducing it takes. */
+/**
+ * manifest.json: who publishes the bundle, under what licenses, and what reproducing it takes.
+ * The publisher is named by the digest of its public key, which is the same on every log,
+ * where operator IDs are not.
+ */
 export const ManifestSchema = z.strictObject({
-  operator_key: PublicKeySchema,
+  operator_key_digest: DigestSchema,
   fields: z.array(FieldSchema).min(1).max(5),
   license: z.strictObject({
     prose: LicenseIdSchema,
