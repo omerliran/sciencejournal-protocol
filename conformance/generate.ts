@@ -29,7 +29,9 @@ import {
   digestBundle,
   EMPTY_ROOT,
   entryDigest,
+  IdentityEntrySchema,
   inclusionProof,
+  invitePayload,
   JsonError,
   keyDigest,
   keyRotationPayload,
@@ -50,6 +52,7 @@ import {
   verify,
   verifyConsistency,
   verifyInclusion,
+  vouchPayload,
   type Claim,
   type Digest,
   type PublicKey,
@@ -77,6 +80,23 @@ function mustReject(name: string, check: () => boolean) {
 }
 const write = (name: string, value: unknown) =>
   writeFileSync(join(data, name), `${JSON.stringify(value, null, 2)}\n`);
+
+/** An invite code from a fixed string: invite: and the first 20 bytes of its SHA-256 in lowercase base32. */
+function inviteCode(seed: string): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  let bits = 0;
+  let value = 0;
+  let code = "";
+  for (const byte of sha256(utf8ToBytes(seed)).subarray(0, 20)) {
+    value = ((value << 8) | byte) & 0xffff;
+    bits += 8;
+    while (bits >= 5) {
+      code += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return `invite:${code}`;
+}
 
 /** A test key: never used for anything but these vectors. Its two seeds are a SHA-512. */
 function testKey(n: number) {
@@ -677,18 +697,64 @@ function testPasskey(n: number): string {
   return `p256:${bytesToHex(p256.getPublicKey(sha256(utf8ToBytes(`sciencejournal conformance test passkey ${n}`)), true))}`;
 }
 
-const operatorCases = [1, 2, 3].map((n) => ({ public_key: testKey(n).public_key, operator_id: operatorId(testKey(n).public_key) }));
+const operatorCases = [1, 2, 3, 4].map((n) => ({ public_key: testKey(n).public_key, operator_id: operatorId(testKey(n).public_key) }));
 const observerCases = [1, 2].map((n) => ({ passkey: testPasskey(n), observer_id: observerId(testPasskey(n)) }));
 
 // A key rotation from the first test key to the second: the operator keeps its ID.
 const rotated = { operator: operatorId(testKey(1).public_key), key: testKey(2).public_key as PublicKey };
 const rotationUnsigned = { type: "key_rotation" as const, ...rotated, key_sig: sign(keyRotationPayload(rotated), testKey(2).secretKey) };
 const rotation = { ...rotationUnsigned, sig: sign(signingPayload(rotationUnsigned), testKey(1).secretKey) };
+// The test log's key, which attests a vouch as a log attests a GitHub account's sign-in or a card's payment.
+const logKey = testKey(9);
+const signedBy = <T extends object>(unsigned: T, keys: { secretKey: Uint8Array }) => ({ ...unsigned, sig: sign(signingPayload(unsigned as { type: string }), keys.secretKey) });
+
+// The third operator is vouched for by a GitHub account: the log attests the vouch in
+// voucher_sig, and the operator countersigns everything but sig.
+const vouchFields = { operator: operatorId(testKey(3).public_key), voucher: "github:583231" };
+const vouch = signedBy(
+  { type: "identity" as const, kind: "vouched" as const, ...vouchFields, voucher_sig: sign(vouchPayload(vouchFields), logKey.secretKey) },
+  testKey(3),
+);
+// It makes an invite code, signing the invite in what becomes sponsor_sig, and the fourth
+// operator uses it, countersigning everything but sig.
+const invite = { sponsor: vouchFields.operator, code: inviteCode("a code for the fourth operator") };
+const sponsoredFields = { type: "identity" as const, kind: "sponsored" as const, operator: operatorId(testKey(4).public_key), ...invite };
+const sponsored = signedBy({ ...sponsoredFields, sponsor_sig: sign(invitePayload(invite), testKey(3).secretKey) }, testKey(4));
+for (const entry of [vouch, sponsored]) IdentityEntrySchema.parse(entry);
+if (!verify(vouch.voucher_sig, vouchPayload(vouch), logKey.public_key) || !verify(sponsored.sponsor_sig, invitePayload(sponsored), testKey(3).public_key)) {
+  throw new Error("The reference implementation rejects a valid attestation");
+}
+
 const entryCases = [
   { name: "a key entry", entry: exampleLeaves[0].entry },
   { name: "a bundle entry", entry: exampleLeaves[1].entry },
   { name: "a key rotation, which keeps the operator's ID", entry: rotation },
+  { name: "a vouched identity: the log's voucher_sig, countersigned by the operator", entry: vouch },
+  { name: "an identity from an invite code: its sponsor's sponsor_sig, countersigned by the operator", entry: sponsored },
 ].map(({ name, entry }) => ({ name, entry, entry_digest: entryDigest(entry), leaf_entry: detachSignatures(entry) }));
+
+// Entries whose own sig is sound but whose attestation isn't: each must be rejected.
+const invalidEntries = [
+  {
+    name: "a vouch the operator attested itself, not the log",
+    entry: signedBy({ type: "identity" as const, kind: "vouched" as const, ...vouchFields, voucher_sig: sign(vouchPayload(vouchFields), testKey(3).secretKey) }, testKey(3)),
+  },
+  {
+    name: "an invite signed by the operator that used it, not its sponsor",
+    entry: signedBy({ ...sponsoredFields, sponsor_sig: sign(invitePayload(invite), testKey(4).secretKey) }, testKey(4)),
+  },
+  {
+    name: "an invite whose sponsor signed the identity entry rather than the invite",
+    entry: signedBy({ ...sponsoredFields, sponsor_sig: sign(signingPayload(sponsoredFields), testKey(3).secretKey) }, testKey(4)),
+  },
+];
+for (const { name, entry } of invalidEntries) {
+  mustReject(name, () =>
+    entry.kind === "vouched"
+      ? verify(entry.voucher_sig, vouchPayload(entry), logKey.public_key)
+      : verify(entry.sponsor_sig, invitePayload(entry), testKey(3).public_key),
+  );
+}
 
 const another = testKey(2).public_key;
 const invalidIds = [
@@ -706,11 +772,13 @@ for (const c of observerCases) if (!ObserverIdSchema.safeParse(c.observer_id).su
 
 write("id-vectors.json", {
   description:
-    "Operator and volunteer IDs, which no log assigns, and entries' digests as signed, by which two logs are compared. An operator's ID is \"op:\" and the lowercase hex SHA-256 of the first public key it registered, as written (the hex of its key_digest); rotating or recovering the key keeps it. A volunteer's ID is \"obs:\" and the lowercase hex SHA-256 of the first passkey they joined with, as written. An entry's digest as signed is the SHA-256 of its canonical JSON with its signatures, the same on every log that holds it; leaf_entry is the entry as a log leaf holds it, each signature replaced by its digest. Every case under invalid must not be the ID its public_key makes.",
+    "Operator and volunteer IDs, which no log assigns, and entries' digests as signed, by which two logs are compared. An operator's ID is \"op:\" and the lowercase hex SHA-256 of the first public key it registered, as written (the hex of its key_digest); rotating or recovering the key keeps it. A volunteer's ID is \"obs:\" and the lowercase hex SHA-256 of the first passkey they joined with, as written. An entry's digest as signed is the SHA-256 of its canonical JSON with its signatures, the same on every log that holds it; leaf_entry is the entry as a log leaf holds it, each signature (sig, key_sig, voucher_sig, and sponsor_sig) replaced by its digest. Every signature in an entry verifies against its signer: sig is the operator's key's over the entry without sig (for these entries, the key of the operator the entry names); a key rotation's key_sig is the new key's over the entry without sig and key_sig; a vouch's voucher_sig is the log's key's (log_public_key) over {\"type\": \"identity\", \"kind\": \"vouched\", \"operator\", \"voucher\"}; and an invite code's sponsor_sig is its sponsor's key's over {\"type\": \"invite\", \"sponsor\", \"code\"}. Every case under invalid must not be the ID its public_key makes, and every entry under invalid_entries has an attestation that must fail.",
+  log_public_key: logKey.public_key,
   operators: operatorCases,
   observers: observerCases,
   entries: entryCases,
   invalid: invalidIds,
+  invalid_entries: invalidEntries,
 });
 
 console.log("Wrote vectors to", data);
