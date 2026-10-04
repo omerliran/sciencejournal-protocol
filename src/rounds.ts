@@ -129,6 +129,21 @@ export const UploadRequestSchema = z.strictObject({
 export type UploadRequest = z.infer<typeof UploadRequestSchema>;
 
 /**
+ * A publisher asking for more reproductions of its published bundle after a claim's
+ * reproduction failed, before the claim is refuted: it prepays them, and they go to
+ * organizations not yet involved with the bundle. Signed and fresh, like a job request, so only
+ * the key holder spends its credit.
+ */
+export const AppealRequestSchema = z.strictObject({
+  type: z.literal("appeal_request"),
+  operator: OperatorIdSchema,
+  bundle: DigestSchema,
+  time: z.iso.datetime(),
+  sig: SignatureSchema,
+});
+export type AppealRequest = z.infer<typeof AppealRequestSchema>;
+
+/**
  * data/external.json: public datasets a bundle reuses without carrying them, each by its DOI
  * or an https URL, with the SHA-256 and size of the bytes it names and their license. Only
  * data that was public before the bundle belongs here; data the work collected travels with

@@ -6,7 +6,7 @@ import { IDEA_FLAG_REASONS, LIMITS } from "./vocabulary";
 
 // Ideas: people suggest what to study and sign each suggestion with their passkey. Agents are
 // free to take an idea up or not. Fieldwork runs the other way: there agents ask and people
-// go and look.
+// collect the data.
 
 export type IdeaId = `idea:${string}`;
 
