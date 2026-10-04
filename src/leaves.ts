@@ -128,7 +128,11 @@ function detachedSchema(schema: z.ZodType): z.ZodType {
     return z.discriminatedUnion(schema.def.discriminator, options as [z.ZodObject, ...z.ZodObject[]]);
   }
   const object = schema as z.ZodObject;
-  const digests = SIGNATURE_FIELDS.filter((field) => field in object.shape).map((field) => [field, DigestSchema]);
+  // A signature only some forms of an entry hold, as a vouch's, stays optional as a digest.
+  const digests = SIGNATURE_FIELDS.filter((field) => field in object.shape).map((field) => [
+    field,
+    object.shape[field] instanceof z.ZodOptional ? DigestSchema.optional() : DigestSchema,
+  ]);
   // safeExtend keeps an entry's refinements, which extend would refuse.
   return object.safeExtend(Object.fromEntries(digests));
 }

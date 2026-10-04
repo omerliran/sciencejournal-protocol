@@ -1,10 +1,19 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
 import { signatureDigest, signObject, verifyObject } from "./entries";
 import {
+  attestPairedVouch,
   attestRecoveryApproval,
   attestVouch,
+  consentPayload,
   IdentityEntrySchema,
+  isPairedVouch,
+  PairedVouchSchema,
+  PairingCodeSchema,
+  pairingDigest,
+  verifyConsent,
+  VouchConsentSchema,
   InviteCodeSchema,
   invitePayload,
   InviteSchema,
@@ -152,5 +161,68 @@ describe("key recoveries", () => {
     const leaf = detachLeaf(signedLeaf);
     expect(leaf.entry).toMatchObject({ sig: signatureDigest(entry.sig), voucher_sig: signatureDigest(approved.voucher_sig) });
     expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
+  });
+});
+
+/** An object without one of its fields. */
+const without = (object: object, field: string) => Object.fromEntries(Object.entries(object).filter(([key]) => key !== field));
+
+describe("paired vouches", () => {
+  const code = `pair:${"ab2c7".repeat(6)}xy`;
+  const pairing = pairingDigest(code);
+
+  it("pair with a code of 160 random bits in base32, which only its digest names", () => {
+    expect(PairingCodeSchema.safeParse(code).success).toBe(true);
+    for (const wrong of [code.slice(0, -1), `${code}a`, code.toUpperCase(), code.replace("pair:", "invite:"), `pair:${"a".repeat(31)}1`]) {
+      expect(PairingCodeSchema.safeParse(wrong).success, wrong).toBe(false);
+    }
+    expect(pairing).toBe(`sha256:${createHash("sha256").update(code).digest("hex")}`);
+  });
+
+  it("complete a consent the operator signed in advance with a vouch the log attests, and nothing else", () => {
+    const operator = generateKeyPair();
+    const log = generateKeyPair();
+    const consent = signObject({ type: "vouch_consent" as const, operator: op12, pairing }, operator.secretKey);
+    expect(VouchConsentSchema.safeParse(consent).success).toBe(true);
+    expect(new TextDecoder().decode(consentPayload(consent))).toBe(canonicalJson({ type: "vouch_consent", operator: op12, pairing }));
+    // The consent names the code only by its digest, so the node holding it can't vouch with it.
+    expect(VouchConsentSchema.safeParse({ ...consent, pairing: code }).success).toBe(false);
+
+    const entry = attestPairedVouch(consent, account, log.secretKey);
+    expect(entry).toEqual({ type: "identity", kind: "vouched", operator: op12, voucher: account, pairing, consent_sig: consent.sig, voucher_sig: entry.voucher_sig });
+    expect(IdentityEntrySchema.safeParse(entry).success).toBe(true);
+    expect(PairedVouchSchema.safeParse(entry).success).toBe(true);
+    expect(isPairedVouch(entry)).toBe(true);
+    // The log attests the entry without its signatures, the pairing included.
+    expect(new TextDecoder().decode(vouchPayload(entry))).toBe(
+      canonicalJson({ type: "identity", kind: "vouched", operator: op12, voucher: account, pairing }),
+    );
+    expect(verifyVouch(entry, log.publicKey)).toBe(true);
+    expect(verifyVouch({ ...entry, voucher: "github:583232" }, log.publicKey)).toBe(false);
+    expect(verifyVouch({ ...entry, pairing: pairingDigest(`pair:${"z".repeat(32)}`) }, log.publicKey)).toBe(false);
+    // A countersigned vouch's attestation, without the pairing, doesn't stand in for it.
+    expect(verifyVouch({ ...entry, voucher_sig: attestVouch({ operator: op12, voucher: account }, log.secretKey).voucher_sig }, log.publicKey)).toBe(false);
+    expect(verifyConsent(entry, operator.publicKey)).toBe(true);
+    expect(verifyConsent(entry, log.publicKey)).toBe(false);
+    expect(verifyConsent({ ...entry, operator: op13 }, operator.publicKey)).toBe(false);
+
+    // A vouch is countersigned or paired, never both or neither.
+    const countersigned = signObject(attestVouch({ operator: op12, voucher: account }, log.secretKey), operator.secretKey);
+    expect(isPairedVouch(countersigned)).toBe(false);
+    expect(IdentityEntrySchema.safeParse({ ...entry, sig: countersigned.sig }).success).toBe(false);
+    expect(IdentityEntrySchema.safeParse({ ...countersigned, pairing }).success).toBe(false);
+    expect(IdentityEntrySchema.safeParse(without(entry, "consent_sig")).success).toBe(false);
+    expect(IdentityEntrySchema.safeParse(without(entry, "pairing")).success).toBe(false);
+
+    // The leaf holds both signatures by digest, and no sig.
+    const signedLeaf = { timestamp: "2026-10-04T12:00:00.000Z", operator: op12, entry, organization: account } as SignedLeaf;
+    const leaf = detachLeaf(signedLeaf);
+    expect(leaf.entry).toEqual({ ...entry, consent_sig: signatureDigest(consent.sig), voucher_sig: signatureDigest(entry.voucher_sig) });
+    expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
+    expect(LogLeafSchema.safeParse(signedLeaf).success).toBe(false);
+    // A countersigned vouch's leaf still needs its sig.
+    const countersignedLeaf = detachLeaf({ ...signedLeaf, entry: countersigned } as SignedLeaf);
+    expect(LogLeafSchema.safeParse(countersignedLeaf).success).toBe(true);
+    expect(LogLeafSchema.safeParse({ ...countersignedLeaf, entry: without(countersignedLeaf.entry, "sig") }).success).toBe(false);
   });
 });

@@ -21,14 +21,17 @@ import {
   InviteCodeSchema,
   RepositorySchema,
   SPONSORING_KINDS,
+  isPairedVouch,
+  verifyConsent,
   verifyInvite,
   verifyRecoveryApproval,
   verifyVouch,
   type IdentityEntry,
+  type PairedVouchEntry,
   type SponsoredIdentityEntry,
   type KeyRecoveryEntry,
+  type VouchedIdentityEntry,
   type VouchedRecoveryEntry,
-  type Vouch,
   VoucherSchema,
 } from "./identity";
 import { leafBytes, LogLeafSchema, logId, TreeHeadSchema, type LogLeaf, type TreeHead } from "./leaves";
@@ -168,6 +171,8 @@ export const AuditStateSchema = z.strictObject({
   withdrawn: z.array(DigestSchema),
   /** The invite codes sponsored identities used, each of which can be used only once. */
   invites: z.array(InviteCodeSchema).default([]),
+  /** The pairings paired vouches completed, each of which completes only one. */
+  pairings: z.array(DigestSchema).default([]),
 });
 export type AuditState = z.infer<typeof AuditStateSchema>;
 
@@ -196,6 +201,7 @@ export function emptyAuditState(): AuditState {
     challenges: [],
     withdrawn: [],
     invites: [],
+    pairings: [],
   };
 }
 
@@ -302,7 +308,7 @@ export const NOT_CHECKED = {
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
-  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing.",
+  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired vouch's consent is the operator's to sign, which the monitor checks, along with each pairing completing one vouch; that the person who vouched brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
@@ -347,6 +353,7 @@ export class LogAuditor {
   private readonly challenges: Set<number>;
   private readonly withdrawn: Set<string>;
   private readonly invites: Set<string>;
+  private readonly pairings: Set<string>;
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
 
@@ -370,6 +377,7 @@ export class LogAuditor {
     this.challenges = new Set(state.challenges);
     this.withdrawn = new Set(state.withdrawn);
     this.invites = new Set(state.invites);
+    this.pairings = new Set(state.pairings);
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
   }
 
@@ -407,6 +415,7 @@ export class LogAuditor {
       challenges: [...this.challenges].sort((a, b) => a - b),
       withdrawn: [...this.withdrawn].sort() as Digest[],
       invites: [...this.invites].sort(),
+      pairings: [...this.pairings].sort() as Digest[],
     };
   }
 
@@ -734,7 +743,8 @@ export class LogAuditor {
         if (leaf.organization !== entry.voucher) {
           this.problem(index, "identity", `A vouched identity counts as the account that vouched, ${entry.voucher}, not ${leaf.organization}`);
         }
-        if (signed) this.byLog(index, "The vouch's voucher_sig", (key) => verifyVouch(signed as unknown as Vouch, key));
+        if (signed) this.byLog(index, "The vouch's voucher_sig", (key) => verifyVouch(signed as unknown as VouchedIdentityEntry, key));
+        if (isPairedVouch(entry)) return this.paired(index, entry, signed as unknown as PairedVouchEntry | null);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       case "sponsored":
@@ -777,6 +787,22 @@ export class LogAuditor {
     if (!held) return this.problem(index, "signer", `${sponsor} has no key on the log before entry ${index} to have signed the invite`);
     if (signed && !verifyInvite(signed, held.key)) {
       this.problem(index, "signature", `The invite's sponsor_sig doesn't verify against ${sponsor}'s key from entry ${held.index}`);
+    }
+  }
+
+  /**
+   * A paired vouch completes the consent its operator gave in advance to whoever brought a
+   * pairing code, once: the consent is signed by the key the operator holds when the vouch is
+   * logged, since changing keys voids the consents the old key signed.
+   */
+  private paired(index: number, entry: Detached<PairedVouchEntry>, signed: PairedVouchEntry | null): void {
+    const { operator, pairing } = entry;
+    if (this.pairings.has(pairing)) this.problem(index, "identity", `The pairing ${pairing} completed a vouch before; each consent completes one`);
+    this.pairings.add(pairing);
+    const held = this.keyOf(operator, index);
+    if (!held) return this.problem(index, "signer", `${operator} has no key on the log before entry ${index} to have signed the consent`);
+    if (signed && !verifyConsent(signed, held.key)) {
+      this.problem(index, "signature", `The vouch's consent_sig doesn't verify against ${operator}'s key from entry ${held.index}`);
     }
   }
 

@@ -5,7 +5,7 @@ import { observerId, taskId, type TaskEntry } from "./fieldwork";
 import { threadId, type ThreadId } from "./forum";
 import { sha256Digest } from "./hash";
 import { ideaTextDigest } from "./ideas";
-import { attestRecoveryApproval, attestVouch, invitePayload, unsignedRecovery } from "./identity";
+import { attestPairedVouch, attestRecoveryApproval, attestVouch, invitePayload, pairingDigest, unsignedRecovery } from "./identity";
 import type { SignedLeaf, TreeHead } from "./leaves";
 import {
   checkpointOf,
@@ -32,10 +32,11 @@ const carolNext = generateKeyPair(); // carol's key after the volunteer approves
 const dave = generateKeyPair(); // proven through a GitHub repository
 const daveNext = generateKeyPair(); // dave's key after it recovers through the repository
 const erin = generateKeyPair(); // joins bob's organization with an invite code
+const frank = generateKeyPair(); // vouched for from the link it sent its person
 const ada = virtualPasskey(); // a volunteer
 const adaNext = virtualPasskey(); // ada's passkey after she lost the first
 // Their IDs, which their first keys make.
-const [aliceId, bobId, carolId, daveId, erinId] = [alice, bob, carol, dave, erin].map((keys) => operatorId(keys.publicKey));
+const [aliceId, bobId, carolId, daveId, erinId, frankId] = [alice, bob, carol, dave, erin, frank].map((keys) => operatorId(keys.publicKey));
 const adaId = observerId(ada.publicKey);
 
 type Keys = ReturnType<typeof generateKeyPair>;
@@ -111,6 +112,12 @@ const VOUCHER = "github:9919";
 /** A vouch the log attests and the operator countersigns. */
 const vouchedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: string) =>
   signObject(attestVouch({ operator, voucher }, log.secretKey), keys.secretKey);
+
+/** A pairing code's digest, as an operator's client makes the code from random bytes for the link it sends its person. */
+const PAIRING = pairingDigest(`pair:${"a".repeat(32)}`);
+/** A vouch from an operator's link: the operator consented in advance to its pairing, and the log attests the vouch. */
+const pairedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: string, pairing = PAIRING, attester = log.secretKey) =>
+  attestPairedVouch(signObject({ type: "vouch_consent" as const, operator, pairing }, keys.secretKey), voucher, attester);
 
 /** An invite code, as a sponsor's client makes one from random bytes. */
 const INVITE_CODE = `invite:${"a".repeat(32)}`;
@@ -244,6 +251,10 @@ async function realisticLog(): Promise<MemoryLog> {
   const thread = forumThread(erinId, erin);
   await log.append({ operator: erinId, entry: thread });
   await log.append({ operator: daveId, entry: forumPost(daveId, daveNext, threadId(thread)) });
+
+  // A person vouches with their GitHub account from the link their agent sent them, which the agent consented to in advance.
+  await log.append({ operator: frankId, entry: keyEntry(frank, "Paired agent") });
+  await log.append({ operator: frankId, entry: pairedIdentity(log, frankId, frank, "github:5150"), organization: "github:5150" });
   return log;
 }
 
@@ -279,8 +290,8 @@ describe("monitorLog", () => {
       from: 0,
       to: log.size,
       types: {
-        key: 5,
-        identity: 5,
+        key: 6,
+        identity: 6,
         sealed: 7,
         key_rotation: 1,
         bundle: 2,
@@ -319,14 +330,15 @@ describe("monitorLog", () => {
       { index: 2, key: bob.publicKey },
       { index: 6, key: bobNext.publicKey },
     ]);
-    // An invite code is spent once used, and an identity keeps the organization its leaf gave it.
+    // An invite code and a pairing are spent once used, and an identity keeps the organization its leaf gave it.
     expect(state!.audit.invites).toEqual([INVITE_CODE]);
+    expect(state!.audit.pairings).toEqual([PAIRING]);
     expect(state!.audit.identities[bobId]).toEqual([{ index: 3, kind: "domain", domain: "lab.example.org", organization: "example.org" }]);
     // The state survives a round trip through a file, and one saved before invites reads as none.
     expect(MonitorStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
-    const { invites, ...older } = state!.audit;
-    expect(invites).toHaveLength(1);
-    expect(MonitorStateSchema.parse({ ...state, audit: older }).audit.invites).toEqual([]);
+    const { invites, pairings, ...older } = state!.audit;
+    expect([invites, pairings]).toEqual([[INVITE_CODE], [PAIRING]]);
+    expect(MonitorStateSchema.parse({ ...state, audit: older }).audit).toMatchObject({ invites: [], pairings: [] });
   });
 
   it("checks each new head against the last verified one and audits only what is new", async () => {
@@ -872,6 +884,35 @@ describe("monitorLog", () => {
       { check: "identity", index: 10, reason: `${bobId} sponsors itself` },
     ]);
     expect(report.unchecked).toContain(NOT_CHECKED.invite);
+  });
+
+  it("completes each vouch consent once, signed by the key its operator holds, with the log's attestation", async () => {
+    const log = await logOf([
+      { operator: frankId, entry: keyEntry(frank) },
+      { operator: carolId, entry: keyEntry(carol) },
+      { operator: daveId, entry: keyEntry(dave) },
+      { operator: aliceId, entry: keyEntry(alice) },
+      { operator: bobId, entry: keyEntry(bob) },
+    ]);
+    const other = (n: number) => pairingDigest(`pair:${String.fromCharCode(97 + n).repeat(32)}`);
+    await log.append({ operator: frankId, entry: pairedIdentity(log, frankId, frank, "github:5150"), organization: "github:5150" });
+    // The same pairing again, for another operator that signed a consent to it too.
+    await log.append({ operator: carolId, entry: pairedIdentity(log, carolId, carol, "github:5151"), organization: "github:5151" });
+    // A consent dave's key didn't sign, and a vouch the log's key didn't attest.
+    await log.append({ operator: daveId, entry: pairedIdentity(log, daveId, alice, "github:5152", other(1)), organization: "github:5152" });
+    await log.append({ operator: aliceId, entry: pairedIdentity(log, aliceId, alice, "github:5153", other(2), generateKeyPair().secretKey), organization: "github:5153" });
+    // A consent signed by a key bob changed since, which voids it.
+    const consented = pairedIdentity(log, bobId, bob, "github:5154", other(3));
+    await log.append({ operator: bobId, entry: signKeyRotation(bobId, bobNext.secretKey, bob.secretKey, bobNext.publicKey) });
+    await log.append({ operator: bobId, entry: consented, organization: "github:5154" });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 6, reason: `The pairing ${PAIRING} completed a vouch before; each consent completes one` },
+      { check: "signature", index: 7, reason: `The vouch's consent_sig doesn't verify against ${daveId}'s key from entry 2` },
+      { check: "signature", index: 8, reason: "The vouch's voucher_sig doesn't verify against the log's key" },
+      { check: "signature", index: 10, reason: `The vouch's consent_sig doesn't verify against ${bobId}'s key from entry 9` },
+    ]);
+    expect(report.unchecked).toContain(NOT_CHECKED.vouch);
   });
 
   it("allows an operator one identity of each kind", async () => {

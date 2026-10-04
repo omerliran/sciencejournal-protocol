@@ -81,7 +81,7 @@ export function verifyObject(object: { type: string; sig: string }, publicKey: s
  * and the node keeps the signatures beside the log: they are most of an entry's size, and
  * only someone checking who signed it needs them. The leaf hash still fixes each signature.
  */
-export const SIGNATURE_FIELDS = ["sig", "key_sig", "voucher_sig", "sponsor_sig"] as const;
+export const SIGNATURE_FIELDS = ["sig", "key_sig", "voucher_sig", "sponsor_sig", "consent_sig"] as const;
 type SignatureField = (typeof SIGNATURE_FIELDS)[number];
 
 /** A signed entry as its log leaf holds it: each signature replaced by its digest. */
