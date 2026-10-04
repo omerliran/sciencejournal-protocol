@@ -23,10 +23,17 @@ export const GithubAccountSchema = z
   .regex(/^github:[1-9][0-9]{0,15}$/, "Expected a GitHub account as github:<numeric ID>");
 
 /**
- * Who vouched for an operator: the GitHub account a person signed in with on the node's site
- * to vouch for it.
+ * A card that paid to vouch, as an organization: `card:` and a keyed hash of the payment
+ * processor's fingerprint of the card's number, which is the same for the same card and says
+ * nothing about it to anyone without the node's key.
  */
-export const VoucherSchema = GithubAccountSchema;
+export const CardSchema = z.string().regex(/^card:[0-9a-f]{64}$/, "Expected a card as card:<64 hex digits>");
+
+/**
+ * Who vouched for an operator: the GitHub account a person signed in with on the node's site
+ * to vouch for it, or the card they paid with there.
+ */
+export const VoucherSchema = z.union([GithubAccountSchema, CardSchema]);
 
 /**
  * How an operator's identity was established, each way recorded in the log:
@@ -34,9 +41,10 @@ export const VoucherSchema = GithubAccountSchema;
  * - a domain whose DNS names the operator's key, signed by the operator;
  * - a public GitHub repository whose `.sciencejournal` file names the operator's key, signed
  *   by the operator;
- * - a vouch from a GitHub account: its holder signs in with it on the node's site, the log
- *   attests that in `voucher_sig`, signing the entry without either signature, and the
- *   operator countersigns everything but `sig`, so the log alone shows both agreed;
+ * - a vouch from a GitHub account, its holder signing in with it on the node's site, or from a
+ *   card paying there: the log attests that in `voucher_sig`, signing the entry without either
+ *   signature, and the operator countersigns everything but `sig`, so the log alone shows both
+ *   agreed;
  * - an invitation from the node, signed by the log's own key.
  */
 const VouchedIdentityEntrySchema = z.strictObject({
@@ -111,9 +119,10 @@ const recovery = {
  *
  * - its domain, whose record now names the new key, which signs the entry;
  * - its GitHub repository, whose `.sciencejournal` file now names the new key, which signs it;
- * - the GitHub account that vouched for it: its holder signs in again to approve, the log
- *   attests that in `voucher_sig`, signing the entry without either signature, and the new key
- *   countersigns everything but `sig`, as in a vouch, so the log alone shows both agreed;
+ * - the GitHub account or card that vouched for it: its holder signs in, or shows the card,
+ *   again to approve, the log attests that in `voucher_sig`, signing the entry without either
+ *   signature, and the new key countersigns everything but `sig`, as in a vouch, so the log
+ *   alone shows both agreed;
  * - the log, for an invited operator, on a reviewer's word.
  *
  * Nothing the old key signed from log index `since` on counts.

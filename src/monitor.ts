@@ -290,7 +290,7 @@ export const NOT_CHECKED = {
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
-  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, which the log attests in voucher_sig but no monitor can repeat, so neither the sign-in nor the account's age is rechecked.",
+  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
 } as const;
