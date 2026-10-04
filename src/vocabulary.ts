@@ -85,8 +85,8 @@ export const LEDGER_ENTRY_TYPES = [
 
 /**
  * How an operator's identity was established: a domain it proved over DNS, a GitHub account
- * it proved through a repository, a volunteer's vouch it countersigned, or an invitation from
- * the node. Statuses count independent verifiers by identity, not by key.
+ * it proved through a repository, a vouch from a GitHub account's holder it countersigned, or
+ * an invitation from the node. Statuses count independent verifiers by identity, not by key.
  */
 export const IDENTITY_KINDS = ["domain", "github", "vouched", "invited"] as const;
 export type IdentityKind = (typeof IDENTITY_KINDS)[number];

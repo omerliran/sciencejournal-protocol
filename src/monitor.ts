@@ -17,6 +17,7 @@ import {
 import { observerId, ObserverIdSchema } from "./fieldwork";
 import { DigestSchema, type Digest } from "./hash";
 import {
+  GithubAccountSchema,
   RepositorySchema,
   verifyRecoveryApproval,
   verifyVouch,
@@ -24,6 +25,7 @@ import {
   type KeyRecoveryEntry,
   type VouchedRecoveryEntry,
   type Vouch,
+  VoucherSchema,
 } from "./identity";
 import { leafBytes, LogLeafSchema, logId, TreeHeadSchema, type LogLeaf, type TreeHead } from "./leaves";
 import { extendRange, leafHash, rangeRoot, verifyConsistency } from "./merkle";
@@ -131,7 +133,7 @@ const IdentityRecordSchema = z.strictObject({
   kind: z.enum(IDENTITY_KINDS),
   domain: DomainSchema.optional(),
   repository: RepositorySchema.optional(),
-  observer: ObserverIdSchema.optional(),
+  voucher: VoucherSchema.optional(),
 });
 type IdentityRecord = z.infer<typeof IdentityRecordSchema>;
 
@@ -288,7 +290,7 @@ export const NOT_CHECKED = {
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
-  vouch: "A vouch counts only while its volunteer is approved, which the log doesn't show, so an operator with a vouch that recovered on its invitation may have been entitled to.",
+  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, which the log attests in voucher_sig but no monitor can repeat, so neither the sign-in nor the account's age is rechecked.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
 } as const;
@@ -607,11 +609,8 @@ export class LogAuditor {
     const kind = entry.kind;
     const through = held.find((identity) => identity.kind === kind);
     const firmer = held.find((identity) => IDENTITY_KINDS.indexOf(identity.kind) < IDENTITY_KINDS.indexOf(kind));
-    // Whether a vouch still stands depends on its volunteer, which the log doesn't show.
-    if (firmer && !(kind === "invited" && firmer.kind === "vouched")) {
+    if (firmer) {
       this.problem(index, "key", `The recovery goes through ${operator}'s ${kind} identity, but ${operator} counts as its ${firmer.kind} identity, from entry ${firmer.index}, and recovers through that`);
-    } else if (firmer) {
-      this.notes.add("vouch");
     }
     if (!through) {
       this.problem(index, "key", `The recovery goes through ${operator}'s ${kind} identity, but ${operator} has none on the log`);
@@ -629,15 +628,11 @@ export class LogAuditor {
         break;
       }
       case "vouched": {
-        if (through && through.observer !== entry.observer) {
-          this.problem(index, "key", `The recovery is approved by ${entry.observer}, but ${operator} was vouched for by ${through.observer}, at entry ${through.index}`);
+        this.notes.add("vouch");
+        if (through && through.voucher !== entry.voucher) {
+          this.problem(index, "key", `The recovery is approved by ${entry.voucher}, but ${operator} was vouched for by ${through.voucher}, at entry ${through.index}`);
         }
-        const voucher = latest(this.observers.get(entry.observer), index);
-        if (!voucher) {
-          this.problem(index, "signer", `${entry.observer} has no passkey on the log to approve the recovery with`);
-        } else if (signed && !verifyRecoveryApproval(signed as unknown as VouchedRecoveryEntry, voucher.key)) {
-          this.problem(index, "signature", `The recovery's voucher_sig doesn't verify against ${entry.observer}'s passkey from entry ${voucher.index}`);
-        }
+        if (signed) this.byLog(index, "The recovery's voucher_sig", (key) => verifyRecoveryApproval(signed as unknown as VouchedRecoveryEntry, key));
         this.signedByNewKey(index, entry, signed);
         break;
       }
@@ -695,7 +690,7 @@ export class LogAuditor {
           kind: entry.kind,
           ...(entry.kind === "domain" && { domain: entry.domain }),
           ...(entry.kind === "github" && { repository: entry.repository }),
-          ...(entry.kind === "vouched" && { observer: entry.observer }),
+          ...(entry.kind === "vouched" && { voucher: entry.voucher }),
         },
       ]);
     }
@@ -704,21 +699,18 @@ export class LogAuditor {
       case "github":
         // Which account a repository belongs to is GitHub's to say, but the organization's form
         // is the log's: the account's numeric ID, which a renamed login keeps.
-        if (entry.kind === "github" && !/^github:[1-9][0-9]*$/.test(leaf.organization ?? "")) {
+        if (entry.kind === "github" && !GithubAccountSchema.safeParse(leaf.organization).success) {
           this.problem(index, "identity", `A GitHub identity counts as its account's ID, github:<ID>, not ${leaf.organization}`);
         }
         this.notes.add("identity");
         return this.signedByOperator(index, entry.type, signed, operator, index);
       case "vouched": {
-        if (leaf.organization !== entry.observer) {
-          this.problem(index, "identity", `A vouched identity counts as the volunteer, ${entry.observer}, not ${leaf.organization}`);
+        // The account's holder signed in on the node's site, which only the log can attest.
+        this.notes.add("vouch");
+        if (leaf.organization !== entry.voucher) {
+          this.problem(index, "identity", `A vouched identity counts as the account that vouched, ${entry.voucher}, not ${leaf.organization}`);
         }
-        const voucher = latest(this.observers.get(entry.observer), index);
-        if (!voucher) {
-          this.problem(index, "signer", `${entry.observer} has no passkey on the log to vouch with`);
-        } else if (signed && !verifyVouch(signed as unknown as Vouch, voucher.key)) {
-          this.problem(index, "signature", `The vouch's voucher_sig doesn't verify against ${entry.observer}'s passkey from entry ${voucher.index}`);
-        }
+        if (signed) this.byLog(index, "The vouch's voucher_sig", (key) => verifyVouch(signed as unknown as Vouch, key));
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       case "invited":
@@ -787,9 +779,14 @@ export class LogAuditor {
   }
 
   private signedByLog(index: number, type: string, signed: Signed | null): void {
-    if (signed && ![this.logKey, ...this.trustedLogKeys].some((key) => verifyObject(signed, key))) {
+    if (signed) this.byLog(index, `The ${type} entry's sig`, (key) => verifyObject(signed, key));
+  }
+
+  /** What `verifies` checks must verify against the log's key or a log it trusts. */
+  private byLog(index: number, what: string, verifies: (key: string) => boolean): void {
+    if (![this.logKey, ...this.trustedLogKeys].some(verifies)) {
       const which = this.trustedLogKeys.length > 0 ? "the log's key or a log it trusts" : "the log's key";
-      this.problem(index, "signature", `The ${type} entry's sig doesn't verify against ${which}`);
+      this.problem(index, "signature", `${what} doesn't verify against ${which}`);
     }
   }
 

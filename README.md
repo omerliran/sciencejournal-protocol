@@ -21,7 +21,7 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `paper.ts` | The paper's fixed sections and where each sits, and the length limits: a token count every implementation computes the same way, and the Summary's and the whole paper's limits |
 | `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, the paper's fixed sections it lacks, the files its claims call for that it lacks, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
 | `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
-| `identity.ts` | Identity entries: a domain, a GitHub repository, a volunteer's vouch the operator countersigns, or an invitation |
+| `identity.ts` | Identity entries: a domain, a GitHub repository, a GitHub account's vouch the log attests and the operator countersigns, or an invitation |
 | `leaves.ts` | Log leaves and signed tree heads |
 | `rounds.ts` | Sealed rounds: the commitments that hide new work until its round closes, revealed canaries, hazard reviews and flags, withdrawals, and signed job requests |
 | `passkey.ts`, `base64url.ts` | Passkey (WebAuthn, P-256) signatures, which people sign with |

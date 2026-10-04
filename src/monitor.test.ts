@@ -4,7 +4,7 @@ import { detachSignatures, operatorId, signKeyRotation, signObject } from "./ent
 import { observerId, taskId, type TaskEntry } from "./fieldwork";
 import { sha256Digest } from "./hash";
 import { ideaTextDigest } from "./ideas";
-import { unsignedRecovery } from "./identity";
+import { attestRecoveryApproval, attestVouch, unsignedRecovery } from "./identity";
 import type { SignedLeaf, TreeHead } from "./leaves";
 import {
   checkpointOf,
@@ -26,7 +26,7 @@ const alice = generateKeyPair(); // a publisher
 const aliceNext = generateKeyPair(); // alice's key after its recovery
 const bob = generateKeyPair(); // a verifier
 const bobNext = generateKeyPair(); // bob's key after it rotates
-const carol = generateKeyPair(); // vouched for by a volunteer
+const carol = generateKeyPair(); // vouched for by a GitHub account
 const carolNext = generateKeyPair(); // carol's key after the volunteer approves its recovery
 const dave = generateKeyPair(); // proven through a GitHub repository
 const daveNext = generateKeyPair(); // dave's key after it recovers through the repository
@@ -103,14 +103,20 @@ const githubIdentity = (operator: string, keys: Keys, repository: string) =>
   signObject({ type: "identity" as const, kind: "github" as const, operator, repository }, keys.secretKey);
 /** The organization a GitHub identity counts as: its account's numeric ID, as GitHub's API gives it. */
 const GITHUB_ORGANIZATION = "github:58321469";
+/** The GitHub account that vouches for carol, by its numeric ID. */
+const VOUCHER = "github:9919";
+
+/** A vouch the log attests and the operator countersigns. */
+const vouchedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: string) =>
+  signObject(attestVouch({ operator, voucher }, log.secretKey), keys.secretKey);
 
 const githubRecovery = (operator: string, next: Keys, repository: string, since: number) =>
   signObject({ type: "key_recovery" as const, kind: "github" as const, operator, key: next.publicKey, repository, since }, next.secretKey);
 
-/** A vouched recovery: the volunteer's passkey approves it, then the new key signs everything but `sig`. */
-function vouchedRecovery(operator: string, next: Keys, observer: string, since: number, voucher = ada) {
-  const unsigned = unsignedRecovery({ operator, key: next.publicKey, observer, since });
-  return signObject({ ...unsigned, voucher_sig: voucher.sign(unsigned).sig }, next.secretKey);
+/** A vouched recovery: the log attests the account's approval, then the new key signs everything but `sig`. */
+function vouchedRecovery(log: MemoryLog, operator: string, next: Keys, voucher: string, since: number, attester = log.secretKey) {
+  const unsigned = unsignedRecovery({ operator, key: next.publicKey, voucher, since });
+  return signObject({ ...unsigned, voucher_sig: attestRecoveryApproval(unsigned, attester) }, next.secretKey);
 }
 
 const challengeEntry = (challenger: string, keys: Keys, evidence = "challenge evidence") =>
@@ -177,14 +183,9 @@ async function realisticLog(): Promise<MemoryLog> {
   await log.append({ observer: adaId, entry: ada.sign({ type: "observation" as const, task: taskId(posted), record: sha256Digest("record") }) });
   await log.append({ observer: adaId, entry: ada.sign({ type: "idea" as const, text: ideaTextDigest({ title: "Why do bees dance?" }) }) });
 
-  // An agent a volunteer vouches for, and its hazard flag.
+  // An agent a GitHub account vouches for, and its hazard flag.
   await log.append({ operator: carolId, entry: keyEntry(carol, "Lent agent") });
-  const { sig: voucher_sig } = ada.sign({ type: "identity" as const, kind: "vouched" as const, operator: carolId, observer: adaId });
-  await log.append({
-    operator: carolId,
-    entry: signObject({ type: "identity" as const, kind: "vouched" as const, operator: carolId, observer: adaId, voucher_sig }, carol.secretKey),
-    organization: adaId,
-  });
+  await log.append({ operator: carolId, entry: vouchedIdentity(log, carolId, carol, VOUCHER), organization: VOUCHER });
   const flag = signObject({ type: "hazard_flag" as const, operator: carolId, bundle: bundle.bundle, concern: "cyber" as const }, carol.secretKey);
   const flagSeal = await seal(log, flag);
   await log.append({ operator: carolId, entry: flag, sealed: flagSeal });
@@ -217,8 +218,8 @@ async function realisticLog(): Promise<MemoryLog> {
   const panelSeal = await seal(log, panelReview);
   await log.append({ operator: bobId, entry: panelReview, sealed: panelSeal });
 
-  // Recoveries through a vouch the volunteer approves, and through a GitHub repository.
-  await log.append({ operator: carolId, entry: vouchedRecovery(carolId, carolNext, adaId, log.size) });
+  // Recoveries through a vouch the account approves, and through a GitHub repository.
+  await log.append({ operator: carolId, entry: vouchedRecovery(log, carolId, carolNext, VOUCHER, log.size) });
   await log.append({ operator: daveId, entry: keyEntry(dave, "Lab on GitHub") });
   await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: GITHUB_ORGANIZATION });
   await log.append({ operator: daveId, entry: githubRecovery(daveId, daveNext, "example-lab/agents", log.size) });
@@ -272,7 +273,7 @@ describe("monitorLog", () => {
       },
     });
     expect(report.unchecked.sort()).toEqual(
-      [NOT_CHECKED.bundle, NOT_CHECKED.identity, NOT_CHECKED.canary, NOT_CHECKED.withdrawal, NOT_CHECKED.recovery, NOT_CHECKED.work].sort(),
+      [NOT_CHECKED.bundle, NOT_CHECKED.identity, NOT_CHECKED.canary, NOT_CHECKED.withdrawal, NOT_CHECKED.recovery, NOT_CHECKED.vouch, NOT_CHECKED.work].sort(),
     );
 
     expect(state).toMatchObject({ log: log.id, public_key: log.publicKey, head: log.head(), audit: { size: log.size, commitments: {} } });
@@ -714,32 +715,33 @@ describe("monitorLog", () => {
     const log = new MemoryLog();
     await log.append({ operator: daveId, entry: keyEntry(dave) });
     await log.append({ operator: daveId, entry: githubIdentity(daveId, dave, "example-lab/agents"), organization: GITHUB_ORGANIZATION });
-    await log.append({ observer: adaId, entry: observerKey(log, ada) });
     await log.append({ operator: carolId, entry: keyEntry(carol) });
-    const { sig: voucher_sig } = ada.sign({ type: "identity" as const, kind: "vouched" as const, operator: carolId, observer: adaId });
-    await log.append({
-      operator: carolId,
-      entry: signObject({ type: "identity" as const, kind: "vouched" as const, operator: carolId, observer: adaId, voucher_sig }, carol.secretKey),
-      organization: adaId,
-    });
+    await log.append({ operator: carolId, entry: vouchedIdentity(log, carolId, carol, VOUCHER), organization: VOUCHER });
     await log.append(invited(log, carolId));
     // A GitHub recovery names the repository the identity proved.
     await log.append({ operator: daveId, entry: githubRecovery(daveId, generateKeyPair(), "example-lab/other", log.size) });
-    // A vouched recovery is approved by the volunteer who vouched, over exactly what the new key signs.
-    await log.append({ operator: carolId, entry: vouchedRecovery(carolId, generateKeyPair(), adaId, log.size, adaNext) });
-    const forged = vouchedRecovery(carolId, generateKeyPair(), adaId, log.size);
+    // A vouched recovery is approved by the account that vouched, as the log attests, over exactly what the new key signs.
+    await log.append({ operator: carolId, entry: vouchedRecovery(log, carolId, generateKeyPair(), VOUCHER, log.size, generateKeyPair().secretKey) });
+    await log.append({ operator: carolId, entry: vouchedRecovery(log, carolId, generateKeyPair(), "github:4242", log.size) });
+    const forged = vouchedRecovery(log, carolId, generateKeyPair(), VOUCHER, log.size);
     await log.append({ operator: carolId, entry: signObject({ ...forged, since: log.size - 1 }, generateKeyPair().secretKey) });
-    // An operator whose vouch may have lapsed may recover on its invitation; the monitor says it can't tell.
+    // A vouch never lapses, so an operator with one recovers through it and not its invitation.
     await log.append({
       operator: carolId,
       entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: carolId, key: carolNext.publicKey, since: log.size }, log.secretKey),
     });
     const { report } = await monitorLog(log.source(), null);
     expect(report.problems).toEqual([
-      { check: "key", index: 6, reason: `The recovery goes through example-lab/other, but ${daveId}'s github identity, from entry 1, is example-lab/agents` },
-      { check: "signature", index: 7, reason: `The recovery's voucher_sig doesn't verify against ${adaId}'s passkey from entry 2` },
-      { check: "signature", index: 8, reason: `The recovery's voucher_sig doesn't verify against ${adaId}'s passkey from entry 2` },
+      { check: "key", index: 5, reason: `The recovery goes through example-lab/other, but ${daveId}'s github identity, from entry 1, is example-lab/agents` },
+      { check: "signature", index: 6, reason: "The recovery's voucher_sig doesn't verify against the log's key" },
+      { check: "key", index: 7, reason: `The recovery is approved by github:4242, but ${carolId} was vouched for by ${VOUCHER}, at entry 3` },
+      { check: "signature", index: 8, reason: "The recovery's voucher_sig doesn't verify against the log's key" },
       { check: "signature", index: 8, reason: "The key_recovery entry's sig doesn't verify against the new key it names" },
+      {
+        check: "key",
+        index: 9,
+        reason: `The recovery goes through ${carolId}'s invited identity, but ${carolId} counts as its vouched identity, from entry 3, and recovers through that`,
+      },
     ]);
     expect(report.unchecked).toEqual(expect.arrayContaining([NOT_CHECKED.recovery, NOT_CHECKED.vouch]));
   });
