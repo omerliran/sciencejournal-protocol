@@ -5,9 +5,13 @@ import {
   attestRecoveryApproval,
   attestVouch,
   IdentityEntrySchema,
+  InviteCodeSchema,
+  invitePayload,
+  InviteSchema,
   KeyRecoveryEntrySchema,
   recoveryApprovalPayload,
   RepositorySchema,
+  verifyInvite,
   verifyRecoveryApproval,
   verifyVouch,
   VouchedRecoveryRequestSchema,
@@ -15,7 +19,7 @@ import {
   VouchSchema,
 } from "./identity";
 import { LogLeafSchema, detachLeaf, type SignedLeaf } from "./leaves";
-import { generateKeyPair } from "./signing";
+import { generateKeyPair, sign } from "./signing";
 
 // IDs of the shape operators' and volunteers' first keys make: op: or obs: and 64 hex digits.
 const exampleId = (kind: "op" | "obs", n: number) => `${kind}:${n.toString(16).padStart(64, "0")}`;
@@ -64,6 +68,44 @@ describe("identity entries", () => {
     expect(leaf.entry).toMatchObject({ sig: signatureDigest(entry.sig), voucher_sig: signatureDigest(vouch.voucher_sig) });
     expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
     expect(LogLeafSchema.safeParse(signedLeaf).success).toBe(false);
+  });
+});
+
+describe("invites", () => {
+  const code = `invite:${"ab2c7".repeat(6)}xy`;
+
+  it("are codes of 160 random bits in base32, under a prefix that says what they are", () => {
+    expect(InviteCodeSchema.safeParse(code).success).toBe(true);
+    for (const wrong of [code.slice(0, -1), `${code}a`, code.toUpperCase(), code.replace("invite:", ""), `invite:${"a".repeat(31)}1`, `invite:${"a".repeat(31)}=`]) {
+      expect(InviteCodeSchema.safeParse(wrong).success, wrong).toBe(false);
+    }
+  });
+
+  it("are signed by the sponsor, then countersigned by the operator that uses one, sponsor_sig included", () => {
+    const sponsor = generateKeyPair();
+    const operator = generateKeyPair();
+    const invite = signObject({ type: "invite" as const, sponsor: op12, code }, sponsor.secretKey);
+    expect(InviteSchema.safeParse(invite).success).toBe(true);
+    expect(new TextDecoder().decode(invitePayload(invite))).toBe(canonicalJson({ type: "invite", sponsor: op12, code }));
+
+    const unsigned = { type: "identity" as const, kind: "sponsored" as const, operator: op13, sponsor: op12, code, sponsor_sig: invite.sig };
+    const entry = signObject(unsigned, operator.secretKey);
+    expect(IdentityEntrySchema.safeParse(entry).success).toBe(true);
+    expect(verifyInvite(entry, sponsor.publicKey)).toBe(true);
+    expect(verifyInvite({ ...entry, code: `invite:${"z".repeat(32)}` }, sponsor.publicKey)).toBe(false);
+    expect(verifyInvite({ ...entry, sponsor: op13 }, sponsor.publicKey)).toBe(false);
+    expect(verifyInvite(entry, operator.publicKey)).toBe(false);
+    // The operator's signature covers the sponsor's: swapping it breaks the countersignature.
+    const swapped = { ...entry, sponsor_sig: sign(invitePayload({ sponsor: op12, code: `invite:${"z".repeat(32)}` }), sponsor.secretKey) };
+    expect(verifyObject(swapped, operator.publicKey)).toBe(false);
+    // An invite alone isn't an identity entry.
+    expect(IdentityEntrySchema.safeParse(invite).success).toBe(false);
+
+    // The leaf holds both signatures by digest.
+    const signedLeaf = { timestamp: "2026-10-04T12:00:00.000Z", operator: op13, entry, organization: "example.org" } as SignedLeaf;
+    const leaf = detachLeaf(signedLeaf);
+    expect(leaf.entry).toMatchObject({ sig: signatureDigest(entry.sig), sponsor_sig: signatureDigest(invite.sig) });
+    expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
   });
 });
 

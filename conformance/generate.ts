@@ -298,6 +298,16 @@ claimCases.push(
     verification_inputs: INPUTS_A,
     results: { "R5.a": 1e16, "R5.b": 1e21, "R5.c": 0.30000000000000004 },
   },
+  {
+    // Past 2^53 a double's exact digits can run past the fewest that read back as it, and RFC
+    // 8785 writes the fewest: 2^60 is 1152921504606847000, never 1152921504606846976.
+    name: "whole numbers past 2^53, as Python writes them, whose exact digits RFC 8785 doesn't write",
+    claims: pythonWritten(
+      `"N4", "type": "empirical", "statement": "Counter K reaches the predicted total.", "evidence": [{"result": "R9.a", "produced_by": "code/run.py", "tolerance": 1.152921504606847e+18}, {"result": "R9.b", "produced_by": "code/run.py", "tolerance": 6.02214076e+20}], "confidence": 1.0`,
+    ),
+    verification_inputs: INPUTS_A,
+    results: { "R9.a": 2 ** 60, "R9.b": 6.02214076e20 },
+  },
 );
 
 const valid = (overrides: Record<string, unknown> = {}) =>

@@ -18,10 +18,14 @@ import { observerId, ObserverIdSchema } from "./fieldwork";
 import { DigestSchema, type Digest } from "./hash";
 import {
   GithubAccountSchema,
+  InviteCodeSchema,
   RepositorySchema,
+  SPONSORING_KINDS,
+  verifyInvite,
   verifyRecoveryApproval,
   verifyVouch,
   type IdentityEntry,
+  type SponsoredIdentityEntry,
   type KeyRecoveryEntry,
   type VouchedRecoveryEntry,
   type Vouch,
@@ -127,13 +131,18 @@ const HexHashSchema = z.string().regex(/^[0-9a-f]{64}$/, "Expected 32 bytes in h
 const KeyChangeSchema = z.strictObject({ index: z.number().int().nonnegative(), key: z.string() });
 type KeyChange = z.infer<typeof KeyChangeSchema>;
 
-/** An identity on the log: the entry that gave it, its kind, and what it rests on, which a recovery must go through. */
+/**
+ * An identity on the log: the entry that gave it, its kind, what it rests on, which a recovery
+ * must go through, and the organization its leaf counts it as, which an operator it sponsors
+ * counts as too. Audits saved before organizations were kept here have none.
+ */
 const IdentityRecordSchema = z.strictObject({
   index: z.number().int().nonnegative(),
   kind: z.enum(IDENTITY_KINDS),
   domain: DomainSchema.optional(),
   repository: RepositorySchema.optional(),
   voucher: VoucherSchema.optional(),
+  organization: z.string().optional(),
 });
 type IdentityRecord = z.infer<typeof IdentityRecordSchema>;
 
@@ -157,6 +166,8 @@ export const AuditStateSchema = z.strictObject({
   challenges: z.array(z.number().int().nonnegative()),
   /** The bundles withdrawn, each of which can be withdrawn only once. */
   withdrawn: z.array(DigestSchema),
+  /** The invite codes sponsored identities used, each of which can be used only once. */
+  invites: z.array(InviteCodeSchema).default([]),
 });
 export type AuditState = z.infer<typeof AuditStateSchema>;
 
@@ -184,6 +195,7 @@ export function emptyAuditState(): AuditState {
     commitments: {},
     challenges: [],
     withdrawn: [],
+    invites: [],
   };
 }
 
@@ -291,6 +303,7 @@ export const NOT_CHECKED = {
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
   vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing.",
+  invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
 } as const;
@@ -332,6 +345,7 @@ export class LogAuditor {
   private readonly commitments: Map<number, Digest>;
   private readonly challenges: Set<number>;
   private readonly withdrawn: Set<string>;
+  private readonly invites: Set<string>;
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
 
@@ -354,6 +368,7 @@ export class LogAuditor {
     this.commitments = new Map(Object.entries(state.commitments).map(([index, digest]) => [Number(index), digest]));
     this.challenges = new Set(state.challenges);
     this.withdrawn = new Set(state.withdrawn);
+    this.invites = new Set(state.invites);
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
   }
 
@@ -390,6 +405,7 @@ export class LogAuditor {
       commitments: Object.fromEntries([...this.commitments].sort(([a], [b]) => a - b).map(([i, d]) => [String(i), d])),
       challenges: [...this.challenges].sort((a, b) => a - b),
       withdrawn: [...this.withdrawn].sort() as Digest[],
+      invites: [...this.invites].sort(),
     };
   }
 
@@ -691,6 +707,7 @@ export class LogAuditor {
           ...(entry.kind === "domain" && { domain: entry.domain }),
           ...(entry.kind === "github" && { repository: entry.repository }),
           ...(entry.kind === "vouched" && { voucher: entry.voucher }),
+          ...(leaf.organization !== undefined && { organization: leaf.organization }),
         },
       ]);
     }
@@ -713,6 +730,10 @@ export class LogAuditor {
         if (signed) this.byLog(index, "The vouch's voucher_sig", (key) => verifyVouch(signed as unknown as Vouch, key));
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
+      case "sponsored":
+        this.notes.add("invite");
+        this.sponsored(index, leaf, entry, signed as unknown as SponsoredIdentityEntry | null);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       case "invited":
         if (leaf.organization !== operator) {
           this.problem(index, "identity", `An invited operator counts as itself, ${operator}, not ${leaf.organization}`);
@@ -723,6 +744,32 @@ export class LogAuditor {
         const unchecked: never = entry;
         this.unknownType(index, `identity (${String((unchecked as { kind: unknown }).kind)})`);
       }
+    }
+  }
+
+  /**
+   * An operator joins its sponsor's organization with an invite code the sponsor signed, once:
+   * the sponsor must have proven a domain, a GitHub account, or a vouch of its own before, so
+   * an invite never makes an organization and an invitee can't invite, and the identity counts
+   * as one of the sponsor's own organizations. The invite is signed by the key the sponsor
+   * holds when the code is used, since changing keys voids the codes the old key signed.
+   */
+  private sponsored(index: number, leaf: Leaf, entry: Detached<SponsoredIdentityEntry>, signed: SponsoredIdentityEntry | null): void {
+    const { sponsor, code } = entry;
+    if (sponsor === leaf.operator) this.problem(index, "identity", `${sponsor} sponsors itself`);
+    const own = (this.identities.get(sponsor) ?? []).filter((identity) => identity.index < index && SPONSORING_KINDS.has(identity.kind));
+    if (own.length === 0) {
+      this.problem(index, "identity", `${sponsor} proved no domain, GitHub account, or vouch of its own before entry ${index}, so it can't sponsor anyone`);
+    } else if (own.every((identity) => identity.organization !== undefined && identity.organization !== leaf.organization)) {
+      const organizations = [...new Set(own.map((identity) => identity.organization))].join(" or ");
+      this.problem(index, "identity", `A sponsored identity counts as its sponsor's organization, ${organizations}, not ${leaf.organization}`);
+    }
+    if (this.invites.has(code)) this.problem(index, "identity", `The invite code ${code} was used before; each code is used once`);
+    this.invites.add(code);
+    const held = this.keyOf(sponsor, index);
+    if (!held) return this.problem(index, "signer", `${sponsor} has no key on the log before entry ${index} to have signed the invite`);
+    if (signed && !verifyInvite(signed, held.key)) {
+      this.problem(index, "signature", `The invite's sponsor_sig doesn't verify against ${sponsor}'s key from entry ${held.index}`);
     }
   }
 

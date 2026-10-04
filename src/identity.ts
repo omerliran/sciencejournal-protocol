@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DomainSchema, OperatorIdSchema, PublicKeySchema, SignatureSchema, signingPayload } from "./entries";
 import { sign, verify, type SigningKey } from "./signing";
+import type { IdentityKind } from "./vocabulary";
 
 /**
  * A GitHub repository, as `owner/name`: the owner a user or an organization, and the name as
@@ -45,6 +46,10 @@ export const VoucherSchema = z.union([GithubAccountSchema, CardSchema]);
  *   card paying there: the log attests that in `voucher_sig`, signing the entry without either
  *   signature, and the operator countersigns everything but `sig`, so the log alone shows both
  *   agreed;
+ * - an invite code from an operator with an identity of its own, its sponsor: the sponsor
+ *   signed the invite, `{type: "invite", sponsor, code}`, which `sponsor_sig` holds, and the
+ *   operator countersigns everything but `sig`, so the log alone shows both agreed. The
+ *   operator counts as its sponsor's organization;
  * - an invitation from the node, signed by the log's own key.
  */
 const VouchedIdentityEntrySchema = z.strictObject({
@@ -53,6 +58,43 @@ const VouchedIdentityEntrySchema = z.strictObject({
   operator: OperatorIdSchema,
   voucher: VoucherSchema,
   voucher_sig: SignatureSchema,
+  sig: SignatureSchema,
+});
+
+/**
+ * An invite code: `invite:` and 32 letters of base32 (RFC 4648, lowercase), 160 random bits that
+ * its sponsor made, so no one can guess one. It is a secret until it is used, and public after.
+ */
+export const InviteCodeSchema = z
+  .string()
+  .regex(/^invite:[a-z2-7]{32}$/, "Expected an invite code: invite: and 32 random base32 letters, a-z and 2-7");
+
+/**
+ * An invite an operator makes for its person to give someone, whose agent then counts as the
+ * sponsor's organization: signed by the sponsor, and kept by the node until it is used.
+ */
+export const InviteSchema = z.strictObject({
+  type: z.literal("invite"),
+  sponsor: OperatorIdSchema,
+  code: InviteCodeSchema,
+  sig: SignatureSchema,
+});
+export type Invite = z.infer<typeof InviteSchema>;
+
+/**
+ * The identities that let an operator sponsor another: its own proofs, never an invite, so an
+ * invitee can't invite, nor an invitation from the node.
+ */
+export const SPONSORING_KINDS: ReadonlySet<IdentityKind> = new Set(["domain", "github", "vouched"]);
+
+/** An identity from an invite: the operator countersigns its sponsor's invite, `sponsor_sig` included. */
+const SponsoredIdentityEntrySchema = z.strictObject({
+  type: z.literal("identity"),
+  kind: z.literal("sponsored"),
+  operator: OperatorIdSchema,
+  sponsor: OperatorIdSchema,
+  code: InviteCodeSchema,
+  sponsor_sig: SignatureSchema,
   sig: SignatureSchema,
 });
 
@@ -72,6 +114,7 @@ export const IdentityEntrySchema = z.discriminatedUnion("kind", [
     sig: SignatureSchema,
   }),
   VouchedIdentityEntrySchema,
+  SponsoredIdentityEntrySchema,
   z.strictObject({
     type: z.literal("identity"),
     kind: z.literal("invited"),
@@ -81,6 +124,7 @@ export const IdentityEntrySchema = z.discriminatedUnion("kind", [
 ]);
 export type IdentityEntry = z.infer<typeof IdentityEntrySchema>;
 export type VouchedIdentityEntry = z.infer<typeof VouchedIdentityEntrySchema>;
+export type SponsoredIdentityEntry = z.infer<typeof SponsoredIdentityEntrySchema>;
 
 /** A vouch before the operator countersigns it: the entry without `sig`. */
 export const VouchSchema = VouchedIdentityEntrySchema.omit({ sig: true });
@@ -101,6 +145,17 @@ export function attestVouch(entry: Pick<Vouch, "operator" | "voucher">, logKey: 
 /** Whether a log key attested the vouch. */
 export function verifyVouch(entry: Vouch, logKey: string): boolean {
   return verify(entry.voucher_sig, vouchPayload(entry), logKey);
+}
+
+/** The bytes a sponsor signs to make an invite: the invite without `sig`. */
+export function invitePayload(invite: Pick<Invite, "sponsor" | "code">): Uint8Array {
+  const unsigned = { type: "invite", sponsor: invite.sponsor, code: invite.code };
+  return signingPayload(unsigned);
+}
+
+/** Whether the sponsor's key signed the invite a sponsored identity holds in `sponsor_sig`. */
+export function verifyInvite(entry: Pick<SponsoredIdentityEntry, "sponsor" | "code" | "sponsor_sig">, sponsorKey: string): boolean {
+  return verify(entry.sponsor_sig, invitePayload(entry), sponsorKey);
 }
 
 // --- Recovering a lost key ---------------------------------------------------------------

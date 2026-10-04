@@ -4,7 +4,7 @@ import { detachSignatures, operatorId, signKeyRotation, signObject } from "./ent
 import { observerId, taskId, type TaskEntry } from "./fieldwork";
 import { sha256Digest } from "./hash";
 import { ideaTextDigest } from "./ideas";
-import { attestRecoveryApproval, attestVouch, unsignedRecovery } from "./identity";
+import { attestRecoveryApproval, attestVouch, invitePayload, unsignedRecovery } from "./identity";
 import type { SignedLeaf, TreeHead } from "./leaves";
 import {
   checkpointOf,
@@ -18,7 +18,7 @@ import {
 } from "./monitor";
 import { MemoryLog } from "./monitor/memory-log";
 import { sealCommitment } from "./rounds";
-import { generateKeyPair, keyDigest } from "./signing";
+import { generateKeyPair, keyDigest, sign } from "./signing";
 import { virtualPasskey } from "./virtual-passkey";
 
 // Operators and a volunteer, made once: keys take a while to generate.
@@ -30,10 +30,11 @@ const carol = generateKeyPair(); // vouched for by a GitHub account
 const carolNext = generateKeyPair(); // carol's key after the volunteer approves its recovery
 const dave = generateKeyPair(); // proven through a GitHub repository
 const daveNext = generateKeyPair(); // dave's key after it recovers through the repository
+const erin = generateKeyPair(); // joins bob's organization with an invite code
 const ada = virtualPasskey(); // a volunteer
 const adaNext = virtualPasskey(); // ada's passkey after she lost the first
 // Their IDs, which their first keys make.
-const [aliceId, bobId, carolId, daveId] = [alice, bob, carol, dave].map((keys) => operatorId(keys.publicKey));
+const [aliceId, bobId, carolId, daveId, erinId] = [alice, bob, carol, dave, erin].map((keys) => operatorId(keys.publicKey));
 const adaId = observerId(ada.publicKey);
 
 type Keys = ReturnType<typeof generateKeyPair>;
@@ -110,6 +111,14 @@ const VOUCHER = "github:9919";
 const vouchedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: string) =>
   signObject(attestVouch({ operator, voucher }, log.secretKey), keys.secretKey);
 
+/** An invite code, as a sponsor's client makes one from random bytes. */
+const INVITE_CODE = `invite:${"a".repeat(32)}`;
+/** An identity from an invite code: the sponsor signed the invite, and the operator countersigns everything but `sig`. */
+const sponsoredIdentity = (operator: string, keys: Keys, sponsor: string, sponsorKeys: Keys, code = INVITE_CODE) =>
+  signObject(
+    { type: "identity" as const, kind: "sponsored" as const, operator, sponsor, code, sponsor_sig: sign(invitePayload({ sponsor, code }), sponsorKeys.secretKey) },
+    keys.secretKey,
+  );
 const githubRecovery = (operator: string, next: Keys, repository: string, since: number) =>
   signObject({ type: "key_recovery" as const, kind: "github" as const, operator, key: next.publicKey, repository, since }, next.secretKey);
 
@@ -226,6 +235,9 @@ async function realisticLog(): Promise<MemoryLog> {
 
   // A notice takes the published bundle down.
   await log.append({ entry: signObject({ type: "withdrawal" as const, bundle: bundle.bundle, reason: "copyright" as const }, log.secretKey) });
+  // An agent joins bob's organization with an invite code bob's current key signed.
+  await log.append({ operator: erinId, entry: keyEntry(erin, "Invited agent") });
+  await log.append({ operator: erinId, entry: sponsoredIdentity(erinId, erin, bobId, bobNext), organization: "example.org" });
   return log;
 }
 
@@ -253,8 +265,8 @@ describe("monitorLog", () => {
       from: 0,
       to: log.size,
       types: {
-        key: 4,
-        identity: 4,
+        key: 5,
+        identity: 5,
         sealed: 7,
         key_rotation: 1,
         bundle: 2,
@@ -273,7 +285,16 @@ describe("monitorLog", () => {
       },
     });
     expect(report.unchecked.sort()).toEqual(
-      [NOT_CHECKED.bundle, NOT_CHECKED.identity, NOT_CHECKED.canary, NOT_CHECKED.withdrawal, NOT_CHECKED.recovery, NOT_CHECKED.vouch, NOT_CHECKED.work].sort(),
+      [
+        NOT_CHECKED.bundle,
+        NOT_CHECKED.identity,
+        NOT_CHECKED.canary,
+        NOT_CHECKED.withdrawal,
+        NOT_CHECKED.recovery,
+        NOT_CHECKED.vouch,
+        NOT_CHECKED.invite,
+        NOT_CHECKED.work,
+      ].sort(),
     );
 
     expect(state).toMatchObject({ log: log.id, public_key: log.publicKey, head: log.head(), audit: { size: log.size, commitments: {} } });
@@ -281,8 +302,14 @@ describe("monitorLog", () => {
       { index: 2, key: bob.publicKey },
       { index: 6, key: bobNext.publicKey },
     ]);
-    // The state survives a round trip through a file.
+    // An invite code is spent once used, and an identity keeps the organization its leaf gave it.
+    expect(state!.audit.invites).toEqual([INVITE_CODE]);
+    expect(state!.audit.identities[bobId]).toEqual([{ index: 3, kind: "domain", domain: "lab.example.org", organization: "example.org" }]);
+    // The state survives a round trip through a file, and one saved before invites reads as none.
     expect(MonitorStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
+    const { invites, ...older } = state!.audit;
+    expect(invites).toHaveLength(1);
+    expect(MonitorStateSchema.parse({ ...state, audit: older }).audit.invites).toEqual([]);
   });
 
   it("checks each new head against the last verified one and audits only what is new", async () => {
@@ -784,6 +811,36 @@ describe("monitorLog", () => {
     expect(report.problems).toEqual([
       { check: "withdrawal", index: 1, reason: `${sha256Digest("bundle")} was withdrawn before; a bundle is withdrawn once` },
     ]);
+  });
+
+  it("holds an invitee to its sponsor's own organization, an invite its sponsor signed, and a code used once", async () => {
+    const domain = signObject({ type: "identity" as const, kind: "domain" as const, operator: bobId, domain: "lab.example.org" }, bob.secretKey);
+    const log = await logOf([
+      { operator: bobId, entry: keyEntry(bob) },
+      { operator: bobId, entry: domain, organization: "example.org" },
+      { operator: erinId, entry: keyEntry(erin) },
+      { operator: carolId, entry: keyEntry(carol) },
+      { operator: daveId, entry: keyEntry(dave) },
+      { operator: aliceId, entry: keyEntry(alice) },
+    ]);
+    await log.append({ operator: erinId, entry: sponsoredIdentity(erinId, erin, bobId, bob), organization: "example.org" });
+    // The same code again, counted as another organization than bob's.
+    await log.append({ operator: carolId, entry: sponsoredIdentity(carolId, carol, bobId, bob), organization: "example.net" });
+    // An invite bob's key didn't sign.
+    const forged = `invite:${"b".repeat(32)}`;
+    await log.append({ operator: daveId, entry: sponsoredIdentity(daveId, dave, bobId, alice, forged), organization: "example.org" });
+    // An invitee inviting, and an operator inviting itself.
+    await log.append({ operator: aliceId, entry: sponsoredIdentity(aliceId, alice, erinId, erin, `invite:${"c".repeat(32)}`), organization: "example.org" });
+    await log.append({ operator: bobId, entry: sponsoredIdentity(bobId, bob, bobId, bob, `invite:${"d".repeat(32)}`), organization: "example.org" });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 7, reason: "A sponsored identity counts as its sponsor's organization, example.org, not example.net" },
+      { check: "identity", index: 7, reason: `The invite code ${INVITE_CODE} was used before; each code is used once` },
+      { check: "signature", index: 8, reason: `The invite's sponsor_sig doesn't verify against ${bobId}'s key from entry 0` },
+      { check: "identity", index: 9, reason: `${erinId} proved no domain, GitHub account, or vouch of its own before entry 9, so it can't sponsor anyone` },
+      { check: "identity", index: 10, reason: `${bobId} sponsors itself` },
+    ]);
+    expect(report.unchecked).toContain(NOT_CHECKED.invite);
   });
 
   it("allows an operator one identity of each kind", async () => {

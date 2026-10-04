@@ -21,7 +21,7 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `paper.ts` | The paper's fixed sections and where each sits, and the length limits: a token count every implementation computes the same way, and the Summary's and the whole paper's limits |
 | `integrity.ts` | Deterministic checks that flag rather than reject: numbers typed into a paper's Summary, Claims, or Results instead of bound to declared results, the paper's fixed sections it lacks, the files its claims call for that it lacks, and duplicate rows and Benford's-law anomalies in the tables under `data/` |
 | `signing.ts`, `entries.ts` | Hybrid Ed25519 and ML-DSA-44 keys and signatures, and signed key, bundle, and attestation entries |
-| `identity.ts` | Identity entries: a domain, a GitHub repository, a GitHub account's vouch the log attests and the operator countersigns, or an invitation |
+| `identity.ts` | Identity entries: a domain, a GitHub repository, a vouch from a GitHub account or a card that the log attests and the operator countersigns, an invite code its sponsor signs and the operator countersigns, or an invitation; invites themselves |
 | `leaves.ts` | Log leaves and signed tree heads |
 | `rounds.ts` | Sealed rounds: the commitments that hide new work until its round closes, revealed canaries, hazard reviews and flags, withdrawals, and signed job requests |
 | `passkey.ts`, `base64url.ts` | Passkey (WebAuthn, P-256) signatures, which people sign with |
@@ -94,7 +94,7 @@ npm ci
 npm run --silent monitor -- check https://sciencejournal.ai
 ```
 
-The first run pins the log: it records the log's ID and public key, and checks that the ID is `log:` and the SHA-256 of the key. A later run refuses a node that serves another log, unless you pass `--pin` to pin the new one. Each run verifies the latest signed tree head with the pinned key and checks it against the last head it verified: the tree never shrinks, one size never has two roots, timestamps never go backwards, and a consistency proof shows the new tree extends the old. Then it audits the entries added since: the leaves hash to the signed root, each entry as signed matches its leaf, each signature verifies against the key its signer held when it signed (following key entries, rotations, and recoveries, the log's own key, and volunteers' passkeys), each signer had the identity its entry needs (a key recovery goes through the identity its operator counts as), and each entry revealed from a commitment opens it. It reports every problem with its entry index and reason, and says what it can't check, such as a bundle's claim IDs, which only the bundle's files show.
+The first run pins the log: it records the log's ID and public key, and checks that the ID is `log:` and the SHA-256 of the key. A later run refuses a node that serves another log, unless you pass `--pin` to pin the new one. Each run verifies the latest signed tree head with the pinned key and checks it against the last head it verified: the tree never shrinks, one size never has two roots, timestamps never go backwards, and a consistency proof shows the new tree extends the old. Then it audits the entries added since: the leaves hash to the signed root, each entry as signed matches its leaf, each signature verifies against the key its signer held when it signed (following key entries, rotations, and recoveries, the log's own key, and volunteers' passkeys), each signer had the identity its entry needs (a key recovery goes through the identity its operator counts as, and an invite code is used once, signed by a sponsor that proved an organization of its own, which the invitee counts as), and each entry revealed from a commitment opens it. It reports every problem with its entry index and reason, and says what it can't check, such as a bundle's claim IDs, which only the bundle's files show.
 
 State lives in `~/.config/sciencejournal/monitor/` (or under `$XDG_CONFIG_HOME`), one file per log; `--state <file>` puts it elsewhere. Nodes that serve the same log share its file, so each is checked against what the others served: a node may lag behind another, proven by a node that has the newer tree, but it may never serve less than it did before. A run that finds a problem leaves the state as it was. `--max-entries <n>` bounds how many new entries one run audits, and `--json` prints the report for machines.
 
@@ -124,7 +124,7 @@ It reads each log as `check` does and matches their entries by the digest of eac
 
 ## Conformance vectors
 
-`conformance/generate.ts` writes test vectors for claim IDs, bundle hashes, log proofs, and signatures, with invalid cases an implementation must reject:
+`conformance/generate.ts` writes test vectors for claim IDs, bundle hashes, log proofs, signatures, and operator and volunteer IDs, with invalid cases an implementation must reject:
 
 ```sh
 npm ci
