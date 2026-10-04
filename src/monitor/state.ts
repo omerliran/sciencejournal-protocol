@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { JsonError, parseJson } from "../json";
 import { MonitorError, MonitorStateSchema } from "../monitor";
+import { ComparisonStateSchema, type ComparisonState } from "../two-logs";
 
 // Where the command-line monitor keeps what it verified: one file per log, named by the
 // log's ID, which also lists the nodes it read that log from. A node that later serves a
@@ -53,11 +54,40 @@ export async function readState(path: string): Promise<StateFile | null> {
 }
 
 /** Writes a state file whole, so a crash never leaves half of one. */
-export async function writeState(path: string, state: StateFile): Promise<void> {
+export async function writeState(path: string, state: StateFile | ComparisonState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const partial = `${path}.${process.pid}.partial`;
   await writeFile(partial, `${JSON.stringify(state, null, 2)}\n`);
   await rename(partial, path);
+}
+
+/** A comparison's state file name: both logs' IDs, the first log's first. */
+export function comparisonFileName(first: string, second: string): string {
+  return `compare_${stateFileName(first).replace(/\.json$/, "")}_${stateFileName(second)}`;
+}
+
+/** Reads a comparison's state file; null if there is none. */
+export async function readComparisonState(path: string): Promise<ComparisonState | null> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new MonitorError(`Can't read the state file ${path}: ${(error as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseJson(text);
+  } catch (error) {
+    if (!(error instanceof JsonError)) throw error;
+    throw new MonitorError(`The state file ${path} isn't JSON: ${error.message}`);
+  }
+  const state = ComparisonStateSchema.safeParse(parsed);
+  if (!state.success) {
+    const issue = state.error.issues[0];
+    throw new MonitorError(`The state file ${path} isn't a comparison's state (${issue.path.join(".") || "/"}: ${issue.message})`);
+  }
+  return state.data;
 }
 
 /**

@@ -112,6 +112,12 @@ export const DOMAIN_RECORD_PREFIX = "sciencejournal-operator=";
 export const GITHUB_PROOF_FILE = ".sciencejournal";
 
 /**
+ * A log's checkpoints begin with its origin: this prefix and the hex of its log ID, which is
+ * also the name of its checkpoint key (c2sp.org/tlog-checkpoint).
+ */
+export const CHECKPOINT_ORIGIN_PREFIX = "sciencejournal.ai/log/";
+
+/**
  * A review's verdict on a claim, best first: sound, minor issues, major issues, or unsound.
  * A claim is Reviewed when the median of its three reviews is one of the first two.
  */

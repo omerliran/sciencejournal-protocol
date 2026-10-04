@@ -27,6 +27,18 @@ import {
 } from "./identity";
 import { leafBytes, LogLeafSchema, logId, TreeHeadSchema, type LogLeaf, type TreeHead } from "./leaves";
 import { extendRange, leafHash, rangeRoot, verifyConsistency } from "./merkle";
+import {
+  checkNoteSignature,
+  checkpointOrigin,
+  CheckpointKeysSchema,
+  NOTE_SIGNATURE_TYPES,
+  NoteError,
+  parseCheckpointNote,
+  parseVerifierKey,
+  verifierKey,
+  type CheckpointNote,
+  type NoteVerifier,
+} from "./notes";
 import { verifyPasskeyObject, type PasskeySignature } from "./passkey";
 import { verifyTreeGrowth } from "./receipts";
 import { sealCommitment, type SealReveal } from "./rounds";
@@ -52,6 +64,13 @@ export interface LogSource {
   signedEntry(index: number): Promise<unknown>;
   /** GET /api/v1/log/proofs/consistency?first=&second= */
   consistencyProof(first: number, second: number): Promise<unknown>;
+  /**
+   * GET /api/v1/log/checkpoint, or ?size= for the one beside that tree head: a checkpoint as
+   * text (c2sp.org/tlog-checkpoint), with the witnesses' cosignatures; null when the node has none.
+   */
+  checkpoint?(size?: number): Promise<string | null>;
+  /** GET /api/v1/log/entries/{index}: a receipt, with where other logs hold the entry. */
+  receipt?(index: number): Promise<unknown>;
 }
 
 /** The most entries a node serves in one page. */
@@ -79,6 +98,7 @@ export const PROBLEMS = {
   identity: "An identity the protocol doesn't allow, or an entry from an operator without the identity it needs",
   withdrawal: "A bundle withdrawn twice",
   challenge: "A challenge review that names no earlier challenge",
+  checkpoint: "A checkpoint isn't the log's signed tree head, its keys aren't signed by the log's key, or a signature on it doesn't verify",
 } as const;
 export type ProblemCheck = keyof typeof PROBLEMS;
 
@@ -171,7 +191,7 @@ function newState(log: string, publicKey: MonitorState["public_key"]): MonitorSt
 
 // --- Answers from the node -----------------------------------------------------------
 
-const LogInfoSchema = z.object({ log: z.string(), public_key: z.string(), tree_head: z.unknown() });
+const LogInfoSchema = z.object({ log: z.string(), public_key: z.string(), tree_head: z.unknown(), checkpoint_keys: z.unknown().optional() });
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 const EntriesSchema = z.object({
   entries: z.array(z.object({ index: z.number().int(), leaf: JsonObjectSchema, leaf_hash: z.string() })),
@@ -186,7 +206,8 @@ function answer<T>(schema: z.ZodType<T>, value: unknown, request: string): T {
   throw new MonitorError(`The node's answer to ${request} isn't what the API returns (${issues.join("; ")})`);
 }
 
-async function fetchProof(source: LogSource, first: number, second: number): Promise<string[]> {
+/** A consistency proof between two sizes of the log, from the node. */
+export async function fetchProof(source: LogSource, first: number, second: number): Promise<string[]> {
   const request = `GET /api/v1/log/proofs/consistency?first=${first}&second=${second}`;
   return answer(ConsistencySchema, await source.consistencyProof(first, second), request).proof;
 }
@@ -236,7 +257,7 @@ export async function checkGrowth(
 }
 
 /** Why a tree head isn't the pinned log's, or null if its signature and log ID check. */
-function headProblem(head: TreeHead, log: string, publicKey: string): Problem | null {
+export function headProblem(head: TreeHead, log: string, publicKey: string): Problem | null {
   if (head.log !== log) return { check: "head", reason: `The tree head names ${head.log}, not ${log}`, evidence: { head } };
   if (!verifyObject(head, publicKey)) {
     return { check: "head", reason: `The tree head for ${head.size} entries isn't signed by the log's key`, evidence: { head } };
@@ -830,6 +851,14 @@ export interface MonitorOptions {
   ahead?: LogSource;
   /** The keys of the logs whose own entries this log also holds, as a second log holds the first's. */
   trustedLogKeys?: readonly string[];
+  /** Witnesses whose cosignatures to check, each with where to read its own view of the log, if known. */
+  witnesses?: readonly WitnessView[];
+}
+
+/** A witness, by its cosignature key, and how to read the checkpoint it last cosigned for a log, by the log's origin. */
+export interface WitnessView {
+  verifier: NoteVerifier;
+  checkpoint?: (origin: string) => Promise<string | null>;
 }
 
 export interface MonitorReport {
@@ -853,8 +882,29 @@ export interface MonitorReport {
   problems: Problem[];
   /** What wasn't checked, and why. */
   unchecked: string[];
+  /** The log's checkpoints and what witnesses cosigned, once checked. */
+  witnessing: Witnessing | null;
   /** Why the run couldn't finish, if it couldn't. */
   error: string | null;
+}
+
+/** A cosignature that verified: whose, on a checkpoint of how many entries, and when the witness made it. */
+export interface Cosigned {
+  witness: string;
+  size: number;
+  /** Seconds since the epoch, as the cosignature states it. */
+  timestamp: number;
+}
+
+export interface Witnessing {
+  /** The log's origin, its checkpoints' first line. */
+  origin: string;
+  /** The keys that sign its checkpoints, as vkeys; none when the node serves none. */
+  keys: string[];
+  /** The cosignatures on the checkpoint the node serves. */
+  served: Cosigned[];
+  /** What each witness asked directly says it last cosigned for this log. */
+  witnesses: Cosigned[];
 }
 
 export interface MonitorResult {
@@ -890,6 +940,7 @@ export async function monitorLog(
     waiting: Object.keys(saved?.audit.commitments ?? {}).length,
     problems: [],
     unchecked: [],
+    witnessing: null,
     error: null,
   };
   let state: MonitorState | null = null;
@@ -901,13 +952,18 @@ export async function monitorLog(
   return { report, state: exitStatus(report) === 0 ? state : null };
 }
 
+/** GET /api/v1/log, read: the log's ID, its key, its latest tree head as served, and its checkpoint keys. */
+export async function readLogInfo(source: LogSource) {
+  return answer(LogInfoSchema, await source.log(), "GET /api/v1/log");
+}
+
 async function run(
   source: LogSource,
   saved: MonitorState | null,
   options: MonitorOptions,
   report: MonitorReport,
 ): Promise<MonitorState | null> {
-  const info = answer(LogInfoSchema, await source.log(), "GET /api/v1/log");
+  const info = await readLogInfo(source);
   report.log = info.log;
   if (info.log !== logId(info.public_key)) {
     report.problems.push({ check: "log_id", reason: `The node calls its log ${info.log}, but its key's ID is ${logId(info.public_key)}` });
@@ -968,6 +1024,7 @@ async function run(
   }
 
   const audit = await auditEntries(source, state, head, options, report);
+  if (report.problems.length === 0) await checkWitnessing(source, state, head, info.checkpoint_keys, options, report);
   return { ...state, head, audit };
 }
 
@@ -1032,6 +1089,21 @@ async function auditEntries(
 
 /** Feeds the auditor entries [from, to), a page of leaves and their signed entries at a time. */
 async function readEntries(source: LogSource, auditor: LogAuditor, from: number, to: number, concurrency: number): Promise<void> {
+  await readLogEntries(source, from, to, concurrency, (index, leaf, served, signed) => auditor.add(index, leaf, served, signed));
+}
+
+/**
+ * Reads entries [from, to) of a log in order, a page of leaves at a time, each with its entry
+ * as signed: `each` gets the index, the leaf, the hash the node serves for it, and the signed
+ * entry. Throws a MonitorError when the node answers with something else.
+ */
+export async function readLogEntries(
+  source: LogSource,
+  from: number,
+  to: number,
+  concurrency: number,
+  each: (index: number, leaf: Record<string, unknown>, leafHash: string, signed: Record<string, unknown>) => void,
+): Promise<void> {
   for (let start = from; start < to; start += ENTRIES_PER_PAGE) {
     const end = Math.min(start + ENTRIES_PER_PAGE, to);
     const request = `GET /api/v1/log/entries?start=${start}&end=${end}`;
@@ -1045,7 +1117,7 @@ async function readEntries(source: LogSource, auditor: LogAuditor, from: number,
       if (answered.index !== index) throw new MonitorError(`The node answered for entry ${answered.index} when asked for entry ${index}`);
       return answered.entry;
     });
-    entries.forEach((entry, i) => auditor.add(entry.index, entry.leaf, entry.leaf_hash, signed[i]));
+    entries.forEach((entry, i) => each(entry.index, entry.leaf, entry.leaf_hash, signed[i]));
   }
 }
 
@@ -1061,6 +1133,168 @@ async function inParallel<T, R>(items: readonly T[], limit: number, work: (item:
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
+}
+
+// --- Signed checkpoints and witnesses ------------------------------------------------
+
+/**
+ * Checks the log's checkpoints in the format witnesses read (c2sp.org/tlog-checkpoint), once its
+ * head verified: the keys that sign them are signed by the log's key and named for its origin;
+ * the checkpoint beside the verified head is that head, signed by every one of them; and the
+ * checkpoint the node serves, the newest witnessed, extends or is extended by the verified head,
+ * with any cosignatures from `options.witnesses` valid. Then it asks each witness that says
+ * where for the checkpoint it last cosigned, and holds the log to it: a witness shown another
+ * history than this monitor was is a fork the log tried to hide.
+ */
+async function checkWitnessing(
+  source: LogSource,
+  state: MonitorState,
+  head: TreeHead,
+  served: unknown,
+  options: MonitorOptions,
+  report: MonitorReport,
+): Promise<void> {
+  const origin = checkpointOrigin(state.log);
+  const witnessing: Witnessing = { origin, keys: [], served: [], witnesses: [] };
+  report.witnessing = witnessing;
+  const problem = (reason: string, evidence?: unknown) => report.problems.push({ check: "checkpoint", reason, ...(evidence !== undefined && { evidence }) });
+  const verifiers = logCheckpointKeys(served, state, origin, problem);
+  witnessing.keys = verifiers.map(verifierKey);
+  if (served === undefined) report.unchecked.push("The node serves no checkpoint keys, so its checkpoints weren't checked.");
+  else if (verifiers.length > 0 && !source.checkpoint) report.unchecked.push("This monitor can't read the node's checkpoints, so they weren't checked.");
+  else if (verifiers.length > 0 && source.checkpoint) {
+    const beside = await readCheckpoint(() => source.checkpoint!(head.size), `the checkpoint for ${head.size} entries`, problem);
+    if (beside === null) problem(`The node serves no checkpoint for the tree head of ${head.size} entries it signed`);
+    else if (beside !== undefined) {
+      if (beside.origin !== origin || beside.size !== head.size || beside.root !== head.root) {
+        problem(`The checkpoint for ${head.size} entries says ${beside.origin}, ${beside.size} entries, root ${beside.root}; the tree head says ${origin}, ${head.size}, ${head.root}`, { head, checkpoint: beside.text });
+      }
+      signedByLog(beside, verifiers, problem);
+    }
+    const newest = await readCheckpoint(() => source.checkpoint!(), "the checkpoint it serves", problem);
+    if (newest) {
+      signedByLog(newest, verifiers, problem);
+      if (newest.origin !== origin) problem(`The checkpoint the node serves names ${newest.origin}, not ${origin}`);
+      else report.problems.push(...(await againstHead(source, head, newest, "The checkpoint the node serves")));
+      for (const witness of options.witnesses ?? []) {
+        const check = checkNoteSignature(newest, witness.verifier);
+        if (check.verified) witnessing.served.push({ witness: witness.verifier.name, size: newest.size, timestamp: Number(check.timestamp) });
+        else if (check.reason !== "absent") problem(`The cosignature from ${witness.verifier.name} on the checkpoint the node serves doesn't verify`, { checkpoint: newest.text });
+      }
+    }
+  }
+  for (const witness of options.witnesses ?? []) {
+    if (!witness.checkpoint) continue;
+    const name = witness.verifier.name;
+    let text: string | null;
+    try {
+      text = await witness.checkpoint(origin);
+    } catch (error) {
+      report.unchecked.push(`${name} couldn't be asked for its checkpoint of this log: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    if (text === null) {
+      report.unchecked.push(`${name} has cosigned no checkpoint of this log.`);
+      continue;
+    }
+    let theirs: CheckpointNote;
+    try {
+      theirs = parseCheckpointNote(text);
+    } catch (error) {
+      report.unchecked.push(`${name} answered with something other than a checkpoint: ${(error as Error).message}`);
+      continue;
+    }
+    const cosigned = checkNoteSignature(theirs, witness.verifier);
+    // A checkpoint the witness didn't cosign says nothing about what it was shown.
+    if (!cosigned.verified || theirs.origin !== origin) {
+      report.unchecked.push(`${name} served a checkpoint of this log without a valid cosignature of its own, so it says nothing about the log.`);
+      continue;
+    }
+    witnessing.witnesses.push({ witness: name, size: theirs.size, timestamp: Number(cosigned.timestamp) });
+    const unsigned = verifiers.filter((verifier) => !checkNoteSignature(theirs, verifier).verified);
+    if (verifiers.length > 0 && unsigned.length === verifiers.length) {
+      report.unchecked.push(`${name} cosigned a checkpoint of this log that the log's checkpoint key didn't sign, which a witness shouldn't.`);
+    }
+    report.problems.push(...(await againstHead(source, head, theirs, `The checkpoint ${name} cosigned`)));
+  }
+}
+
+/** The log's checkpoint keys, from what the node serves, once signed by the log's key and named for its origin. */
+function logCheckpointKeys(served: unknown, state: MonitorState, origin: string, problem: (reason: string, evidence?: unknown) => void): NoteVerifier[] {
+  if (served === undefined) return [];
+  const keys = CheckpointKeysSchema.safeParse(served);
+  if (!keys.success) {
+    problem("The checkpoint keys the node serves don't fit the protocol", { checkpoint_keys: served });
+    return [];
+  }
+  if (keys.data.log !== state.log || !verifyObject(keys.data, state.public_key)) {
+    problem("The checkpoint keys the node serves aren't signed by the log's key", { checkpoint_keys: served });
+    return [];
+  }
+  if (keys.data.origin !== origin) {
+    problem(`The checkpoint keys name the origin ${keys.data.origin}, not ${origin}, the one the log's ID makes`, { checkpoint_keys: served });
+    return [];
+  }
+  const verifiers: NoteVerifier[] = [];
+  for (const vkey of keys.data.keys) {
+    try {
+      const verifier = parseVerifierKey(vkey);
+      if (verifier.name !== origin || verifier.type !== NOTE_SIGNATURE_TYPES.ed25519) throw new NoteError(`${vkey} isn't an Ed25519 key named ${origin}`);
+      verifiers.push(verifier);
+    } catch (error) {
+      if (!(error instanceof NoteError)) throw error;
+      problem(`A checkpoint key the log signed isn't one a checkpoint can be checked with: ${error.message}`, { checkpoint_keys: served });
+    }
+  }
+  return verifiers;
+}
+
+/** Reads a checkpoint: null when there is none, undefined when what came back isn't one, which is a problem. */
+async function readCheckpoint(
+  read: () => Promise<string | null>,
+  what: string,
+  problem: (reason: string, evidence?: unknown) => void,
+): Promise<CheckpointNote | null | undefined> {
+  const text = await read();
+  if (text === null) return null;
+  try {
+    return parseCheckpointNote(text);
+  } catch (error) {
+    if (!(error instanceof NoteError)) throw error;
+    problem(`The node's answer for ${what} isn't a checkpoint: ${error.message}`, { checkpoint: text });
+    return undefined;
+  }
+}
+
+/** Every one of the log's checkpoint keys must have signed a checkpoint it serves. */
+function signedByLog(checkpoint: CheckpointNote, verifiers: readonly NoteVerifier[], problem: (reason: string, evidence?: unknown) => void) {
+  for (const verifier of verifiers) {
+    const check = checkNoteSignature(checkpoint, verifier);
+    if (!check.verified) {
+      const why = check.reason === "absent" ? "has no signature from" : check.reason === "repeated" ? "has two signatures from" : "has a signature that doesn't verify from";
+      problem(`The checkpoint of ${checkpoint.size} entries ${why} the log's checkpoint key ${verifierKey(verifier)}`, { checkpoint: checkpoint.text });
+    }
+  }
+}
+
+/** Whether a checkpoint is a head of the history whose head this run verified: the same root at the same size, or a consistency proof between them. */
+async function againstHead(source: LogSource, head: TreeHead, checkpoint: CheckpointNote, who: string): Promise<Problem[]> {
+  const evidence = { head, checkpoint: checkpoint.text };
+  if (checkpoint.size === head.size) {
+    return checkpoint.root === head.root
+      ? []
+      : [{ check: "fork", reason: `${who} has ${head.size} entries and root ${checkpoint.root}, but the log signed root ${head.root} for that size`, evidence }];
+  }
+  const [smaller, larger] = checkpoint.size < head.size ? [checkpoint, head] : [head, checkpoint];
+  const proof = await fetchProof(source, smaller.size, larger.size);
+  if (verifyConsistency(smaller.size, larger.size, hexToBytes(smaller.root), hexToBytes(larger.root), proof.map(hexToBytes))) return [];
+  return [
+    {
+      check: "consistency",
+      reason: `${who} has ${checkpoint.size} entries and root ${checkpoint.root}, which isn't consistent with the log's tree head of ${head.size}: the log showed it another history`,
+      evidence: { ...evidence, proof },
+    },
+  ];
 }
 
 // --- Checkpoints ---------------------------------------------------------------------

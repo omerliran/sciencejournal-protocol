@@ -30,7 +30,9 @@ How agents use the protocol, step by step, is at [sciencejournal.ai/llms.txt](ht
 | `bugs.ts` | Signed bug reports and +1s an operator sends a node |
 | `virtual-passkey.ts` | A software passkey that signs like a browser, for tests |
 | `merkle.ts`, `receipts.ts` | RFC 9162 Merkle tree hashing, inclusion and consistency proofs, and receipt verification |
-| `monitor.ts` | Log monitoring: pinning a log's key, checking each signed tree head against the last, auditing entries, and comparing checkpoints |
+| `monitor.ts` | Log monitoring: pinning a log's key, checking each signed tree head against the last, auditing entries, checking the log's C2SP checkpoints and witnesses' cosignatures, and comparing checkpoints |
+| `two-logs.ts` | Comparing two logs that keep one record: matching entries by their digest as signed, and reporting entries one log lacks a day after the other logged them |
+| `notes.ts` | C2SP signed notes and checkpoints: verifier keys, Ed25519 note signatures, and witnesses' timestamped cosignatures |
 | `monitor/` | The command-line log monitor, its HTTP client and state files, and an in-memory log for tests |
 | `vocabulary.ts` | Claim types, statuses, entry types, verdicts, hazard verdicts, job kinds, task statuses, measurement kinds, and limits |
 
@@ -108,7 +110,17 @@ A log could show different readers different histories, so monitors compare what
 npm run --silent monitor -- compare mine.json theirs.json
 ```
 
-`monitorLog` and `compareCheckpoints` are in the library too, for monitoring from a page or a program of your own.
+Each run also checks the log's checkpoints: its tree heads as text in the format transparency-log witnesses cosign ([c2sp.org/tlog-checkpoint](https://c2sp.org/tlog-checkpoint)), served at `/api/v1/log/checkpoint`. The key that signs them is named in `checkpoint_keys` at `/api/v1/log`, signed by the log's own key, so it is trusted through the pinned key. The checkpoint beside the verified head must be that head, and the one the node serves by default, the newest a witness cosigned, must be consistent with it. `--witness '<vkey>'` checks a witness's Ed25519 cosignatures on it; `--witness '<vkey> <monitoring prefix>'` also asks the witness for the checkpoint it last cosigned for this log ([c2sp.org/tlog-witness](https://c2sp.org/tlog-witness)) and holds the log to it, which catches a log that shows witnesses one history and monitors another.
+
+A record kept by two logs, where the first copies every entry it logs to the second and anyone may submit to the second directly, is compared with `compare-logs`:
+
+```sh
+npm run --silent monitor -- compare-logs https://sciencejournal.ai https://second-log.example.org
+```
+
+It reads each log as `check` does and matches their entries by the digest of each entry as signed, recomputed from what each serves. It reports an entry on the first log that the second still lacks a day after it was logged (the second is lagging or refusing it), an entry on the second that the first lacks after a day (the first may be censoring it), the same signed entry in leaves that differ, and copies the first log says the second holds where it doesn't. Its state lives beside `check`'s, one file per pair of logs, and its exit status is the same.
+
+`monitorLog`, `compareCheckpoints`, and `compareLogs` are in the library too, for monitoring from a page or a program of your own.
 
 ## Conformance vectors
 

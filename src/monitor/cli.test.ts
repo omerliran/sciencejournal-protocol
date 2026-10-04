@@ -4,11 +4,16 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { operatorId, signObject } from "../entries";
 import { generateKeyPair } from "../signing";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256Hex } from "../hash";
+import { cosignNote, NOTE_SIGNATURE_TYPES, noteVerifier, parseNote, verifierKey } from "../notes";
 import { main, type Io } from "./cli";
 import { httpSource, nodeUrl } from "./http";
 import { MemoryLog } from "./memory-log";
 
 const NODE = "https://node.example";
+// An hour after a memory log stamps its first entry.
+const NOW = Date.parse("2026-10-03T13:00:00.000Z");
 const MIRROR = "https://mirror.example";
 // Signed once: hybrid signing is randomized, so signing again would make a different entry.
 const keyEntries = [generateKeyPair(), generateKeyPair(), generateKeyPair()].map((keys, i) =>
@@ -45,6 +50,7 @@ function run(args: string[], nodes: Record<string, MemoryLog | typeof fetch>): P
     err: (text) => (err += text),
     env: {},
     home,
+    now: () => NOW,
   };
   return main(args, io);
 }
@@ -220,5 +226,85 @@ describe("monitor compare", () => {
     expect(out).toContain(`FAILED: The checkpoints are of different logs, ${one.id} and ${other.id}`);
     expect(await run(["compare", a, join(home, "missing.json")], {})).toBe(2);
     expect(await run(["compare", a, b, "--pin"], {})).toBe(2);
+  });
+});
+
+describe("monitor check --witness", () => {
+  const WITNESS = "https://witness.example";
+  const seed = new Uint8Array(32).fill(3);
+  const witness = noteVerifier("witness.example/w1", NOTE_SIGNATURE_TYPES.cosignature, ed25519.getPublicKey(seed));
+
+  it("checks a witness's cosignatures, and asks it for its own view of the log", async () => {
+    const log = await logOf([0, 1]);
+    const text = parseNote(log.checkpoint(1)!).text;
+    const cosigned = `${log.checkpoint(1)}${cosignNote(text, "witness.example/w1", seed, BigInt(1_790_000_000))}`;
+    const asked: string[] = [];
+    const witnessNode: typeof fetch = async (input) => {
+      asked.push(new URL(String(input)).pathname);
+      return new Response(cosigned);
+    };
+    log.cosignatures.set(1, [cosigned.slice(log.checkpoint(1)!.length)]);
+    expect(await run(["check", NODE, "--witness", `${verifierKey(witness)} ${WITNESS}/prefix/`], { [NODE]: log, [WITNESS]: witnessNode })).toBe(0);
+    expect(asked).toEqual([`/prefix/${sha256Hex(log.origin)}/checkpoint`]);
+    expect(out).toContain(`  Checkpoints: origin ${log.origin}, signed by ${log.checkpointKey}.`);
+    expect(out).toContain("  Witnessed: the checkpoint the node serves is cosigned by witness.example/w1 at 1 entry, 2026-09-21T");
+    expect(out).toContain("  Witness: witness.example/w1 at 1 entry, 2026-09-21T");
+  });
+
+  it("refuses a witness option that isn't a cosignature key", async () => {
+    const log = await logOf([0]);
+    expect(await run(["check", NODE, "--witness", "not-a-vkey"], { [NODE]: log })).toBe(2);
+    expect(err).toContain("--witness:");
+    const plain = noteVerifier("witness.example/w1", NOTE_SIGNATURE_TYPES.ed25519, ed25519.getPublicKey(seed));
+    err = "";
+    expect(await run(["check", NODE, "--witness", verifierKey(plain)], { [NODE]: log })).toBe(2);
+    expect(err).toContain("cosignature key, of type 4");
+  });
+});
+
+describe("monitor compare-logs", () => {
+  const SECOND = "https://second.example";
+
+  it("compares two logs, keeping a state file for the pair, and exits 1 once an entry is a day late", async () => {
+    const first = await logOf([0, 1, 2]);
+    const second = await logOf([0, 1]);
+    expect(await run(["compare-logs", NODE, SECOND], { [NODE]: first, [SECOND]: second })).toBe(0);
+    expect(out).toContain(`Comparing ${first.id} at ${NODE} with ${second.id} at ${SECOND}`);
+    expect(out).toContain("Matched: 2 entries this run. Waiting, within a day of being logged: 1 on the first, 0 on the second.");
+    const path = join(directory(), `compare_${first.id.replace(":", "_")}_${second.id.replace(":", "_")}.json`);
+    expect(await readJson(path)).toMatchObject({ logs: [{ log: first.id, size: 3 }, { log: second.id, size: 2 }] });
+
+    // The second copies the third entry, and the next run reads only what's new.
+    await logOf([2], second);
+    out = "";
+    expect(await run(["compare-logs", NODE, SECOND], { [NODE]: first, [SECOND]: second })).toBe(0);
+    expect(out).toContain("First: 3 entries");
+    expect(out).toContain("nothing new read this run");
+    expect(out).toContain("Matched: 1 entry this run. Waiting, within a day of being logged: 0 on the first, 0 on the second.");
+  });
+
+  it("names the problem and the log it is on, and says the state moved on", async () => {
+    const first = await logOf([0, 1]);
+    const second = await logOf([0, 2]);
+    const late = Date.parse("2026-10-05T00:00:00.000Z");
+    const code = await main(["compare-logs", NODE, SECOND, "--json"], {
+      fetch: async (input, init) => (new URL(String(input)).origin === NODE ? first : second).fetch()(input, init),
+      out: (text) => (out += text),
+      err: (text) => (err += text),
+      env: {},
+      home,
+      now: () => late,
+    });
+    expect(code).toBe(1);
+    const report = JSON.parse(out);
+    expect(report).toMatchObject({ result: "misbehaved", problems: [{ check: "not_on_second", log: first.id, index: 1 }, { check: "not_on_first", log: second.id, index: 1 }] });
+    expect(report.state_file).toMatch(/compare_.*\.json$/);
+  });
+
+  it("exits 2 when it can't read a log", async () => {
+    const first = await logOf([0]);
+    expect(await run(["compare-logs", NODE, SECOND], { [NODE]: first })).toBe(2);
+    expect(await run(["compare-logs", NODE, SECOND, "--pin"], { [NODE]: first })).toBe(2);
+    expect(err).toContain("--pin is for check");
   });
 });

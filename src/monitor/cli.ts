@@ -14,14 +14,20 @@ import {
   exitStatus,
   MonitorError,
   monitorLog,
+  readLogInfo,
   type Checkpoint,
   type Comparison,
   type LogSource,
   type MonitorReport,
+  type Cosigned,
   type Problem,
+  type WitnessView,
+  type Witnessing,
 } from "../monitor";
-import { httpSource, nodeUrl } from "./http";
-import { findState, readState, stateDirectory, stateFileName, writeState, type StateFile } from "./state";
+import { NOTE_SIGNATURE_TYPES, parseVerifierKey, type NoteVerifier } from "../notes";
+import { httpSource, nodeUrl, witnessCheckpoint } from "./http";
+import { compareLogs, comparisonStatus, type LogsComparison } from "../two-logs";
+import { comparisonFileName, findState, readComparisonState, readState, stateDirectory, stateFileName, writeState, type StateFile } from "./state";
 
 // The reference log monitor, for anyone to run on a schedule against any node. It reads only
 // the public API. Exit status 0 means every check passed, 1 that the log misbehaved, and 2
@@ -30,6 +36,10 @@ import { findState, readState, stateDirectory, stateFileName, writeState, type S
 const USAGE = `Usage:
   monitor check <node> [options]     Check a node's log: its key, its tree heads, and its entries
   monitor compare <a> <b> [options]  Check that two checkpoints are heads of one history
+  monitor compare-logs <first> <second> [options]
+                                     Check that two logs keep one record: what the first logs
+                                     reaches the second, and what the second takes directly
+                                     reaches the first, within a day
 
 Options for check:
   --state <file>        Where to keep the pinned log and the last verified head
@@ -40,11 +50,22 @@ Options for check:
                         keys) when signed by this public key, as a second log holds the first's;
                         give it once for each log
   --checkpoint <file>   After a run that passes, write the verified head to <file> (- for stdout)
+  --witness '<vkey> [<monitoring prefix>]'
+                        Check this witness's cosignatures (an Ed25519 cosignature key, as a
+                        vkey) on the checkpoints the node serves; with its monitoring prefix,
+                        also ask it for the checkpoint it last cosigned for this log and check
+                        the log showed it the same history. Give it once for each witness
   --json                Print the report as JSON
 
 Options for compare:
   --node <url>          Where to fetch the consistency proof (default: the node the larger checkpoint names)
   --json                Print the comparison as JSON
+
+Options for compare-logs:
+  --state <file>        Where to keep how far each log was read and what waits on each (default: a
+                        file per pair of logs in ~/.config/sciencejournal/monitor)
+  --max-entries <n>     Read at most n new entries from each log this run (default: all)
+  --json                Print the report as JSON
 
 Exit status: 0 when every check passed, 1 when the log misbehaved, 2 when the monitor
 couldn't finish (an unreachable node, an unreadable file, or a usage error).
@@ -57,6 +78,8 @@ export interface Io {
   err: (text: string) => void;
   env: Record<string, string | undefined>;
   home: string;
+  /** The time now, in milliseconds since the epoch. */
+  now: () => number;
 }
 
 const processIo = (): Io => ({
@@ -65,6 +88,7 @@ const processIo = (): Io => ({
   err: (text) => process.stderr.write(text),
   env: process.env,
   home: homedir(),
+  now: Date.now,
 });
 
 /** Runs the monitor with command-line arguments and returns its exit status. */
@@ -80,6 +104,7 @@ export async function main(args: string[], io: Io = processIo()): Promise<number
         "max-entries": { type: "string" },
         checkpoint: { type: "string" },
         trust: { type: "string", multiple: true },
+        witness: { type: "string", multiple: true },
         node: { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -103,10 +128,25 @@ export async function main(args: string[], io: Io = processIo()): Promise<number
       }
       const untrustworthy = (values.trust ?? []).find((key) => !PublicKeySchema.safeParse(key).success);
       if (untrustworthy !== undefined) return usage(io, "--trust takes a log's public key, as its GET /api/v1/log gives it");
-      return await check(io, operands[0], { ...values, maxEntries });
+      const witnesses: WitnessView[] = [];
+      for (const option of values.witness ?? []) {
+        const witness = witnessOption(option, io);
+        if (typeof witness === "string") return usage(io, witness);
+        witnesses.push(witness);
+      }
+      return await check(io, operands[0], { ...values, maxEntries, witnesses });
+    }
+    if (command === "compare-logs" && operands.length === 2) {
+      const misplaced = (["pin", "checkpoint", "trust", "witness", "node"] as const).find((name) => values[name] !== undefined);
+      if (misplaced) return usage(io, `--${misplaced} is for ${misplaced === "node" ? "compare" : "check"}`);
+      const maxEntries = values["max-entries"] === undefined ? undefined : Number(values["max-entries"]);
+      if (maxEntries !== undefined && !(Number.isSafeInteger(maxEntries) && maxEntries >= 0)) {
+        return usage(io, "--max-entries takes a whole number, 0 or more");
+      }
+      return await compareLogsCommand(io, operands[0], operands[1], { state: values.state, maxEntries, json: values.json });
     }
     if (command === "compare" && operands.length === 2) {
-      const misplaced = (["state", "pin", "max-entries", "checkpoint", "trust"] as const).find((name) => values[name] !== undefined);
+      const misplaced = (["state", "pin", "max-entries", "checkpoint", "trust", "witness"] as const).find((name) => values[name] !== undefined);
       if (misplaced) return usage(io, `--${misplaced} is for check`);
       return await compare(io, operands[0], operands[1], values);
     }
@@ -116,12 +156,31 @@ export async function main(args: string[], io: Io = processIo()): Promise<number
     io.err(`FAILED: ${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
   }
-  return usage(io, command ? "Expected check <node> or compare <a> <b>" : "Name a command");
+  return usage(io, command ? "Expected check <node>, compare <a> <b>, or compare-logs <first> <second>" : "Name a command");
 }
 
 function usage(io: Io, problem: string): number {
   io.err(`${problem}\n\n${USAGE}`);
   return 2;
+}
+
+/** A --witness option: a cosignature key as a vkey, then optionally the witness's monitoring prefix. */
+function witnessOption(option: string, io: Io): WitnessView | string {
+  const [vkey, prefix, ...rest] = option.trim().split(/\s+/);
+  if (rest.length > 0) return "--witness takes a vkey and, optionally, a monitoring prefix";
+  let verifier: NoteVerifier;
+  try {
+    verifier = parseVerifierKey(vkey);
+  } catch (error) {
+    return `--witness: ${(error as Error).message}`;
+  }
+  if (verifier.type !== NOTE_SIGNATURE_TYPES.cosignature) return `--witness takes a witness's Ed25519 cosignature key, of type ${NOTE_SIGNATURE_TYPES.cosignature}`;
+  if (prefix === undefined) return { verifier };
+  try {
+    return { verifier, checkpoint: witnessCheckpoint(nodeUrl(prefix), { fetch: io.fetch }) };
+  } catch (error) {
+    return `--witness: ${(error as Error).message}`;
+  }
 }
 
 // --- check ---------------------------------------------------------------------------
@@ -132,6 +191,7 @@ interface CheckOptions {
   maxEntries?: number;
   checkpoint?: string;
   trust?: string[];
+  witnesses?: WitnessView[];
   json?: boolean;
 }
 
@@ -146,7 +206,7 @@ async function check(io: Io, address: string, options: CheckOptions): Promise<nu
   const servedBefore = saved ? (Object.hasOwn(saved.nodes, node) ? saved.nodes[node] : 0) : undefined;
   const leader = Object.entries(saved?.nodes ?? {}).find(([url, size]) => url !== node && size === saved?.head?.size)?.[0];
   const ahead = leader ? httpSource(leader, { fetch: io.fetch }) : undefined;
-  const run = { pin: options.pin, maxEntries: options.maxEntries, servedBefore, ahead, trustedLogKeys: options.trust };
+  const run = { pin: options.pin, maxEntries: options.maxEntries, servedBefore, ahead, trustedLogKeys: options.trust, witnesses: options.witnesses };
   const { report, state } = await monitorLog(source, saved, run);
 
   let path: string | null = null;
@@ -229,6 +289,7 @@ function summary(node: string, report: MonitorReport, path: string | null): stri
   } else if (!report.head && exitStatus(report) === 0) {
     lines.push("  Tree head: none yet, as the log is empty.");
   }
+  if (report.witnessing) lines.push(...witnessingSummary(report.witnessing));
   for (const note of report.unchecked) lines.push(`  Not checked: ${note}`);
   for (const problem of report.problems) lines.push(`  ${describeProblem(problem)}`);
   const status = exitStatus(report);
@@ -285,7 +346,68 @@ function comparisonSummary(comparison: Comparison): string {
   return `${lines.join("\n")}\n`;
 }
 
+// --- compare-logs --------------------------------------------------------------------
+
+async function compareLogsCommand(io: Io, first: string, second: string, options: { state?: string; maxEntries?: number; json?: boolean }): Promise<number> {
+  const nodes = [nodeUrl(first), nodeUrl(second)] as const;
+  const sources = nodes.map((node) => rememberingLog(httpSource(node, { fetch: io.fetch }))) as [LogSource, LogSource];
+  let path = options.state;
+  if (!path) {
+    // A file per pair of logs, named for both, so their IDs come first.
+    const [a, b] = await Promise.all(sources.map(async (source) => (await readLogInfo(source)).log));
+    path = join(stateDirectory(io.env, io.home), comparisonFileName(a, b));
+  }
+  const saved = await readComparisonState(path);
+  const { report, state } = await compareLogs(sources[0], sources[1], saved, { maxEntries: options.maxEntries, now: io.now() });
+  if (state) await writeState(path, state);
+  const status = comparisonStatus(report);
+  io.out(
+    options.json
+      ? `${JSON.stringify({ nodes, state_file: state ? path : null, ...report, result: (["ok", "misbehaved", "failed"] as const)[status] }, null, 2)}\n`
+      : logsSummary(nodes, report, state ? path : null),
+  );
+  return status;
+}
+
+/** A short account of a comparison, for a person. */
+function logsSummary(nodes: readonly [string, string], report: LogsComparison, path: string | null): string {
+  const lines = [`Comparing ${report.logs[0] ?? "the first log"} at ${nodes[0]} with ${report.logs[1] ?? "the second log"} at ${nodes[1]}`];
+  (["First", "Second"] as const).forEach((name, side) => {
+    const head = report.heads[side];
+    const { from, to } = report.read[side];
+    if (head) lines.push(`  ${name}: ${describe(head)}; ${to > from ? `entries ${from} to ${to - 1} read this run` : "nothing new read this run"}.`);
+  });
+  if (report.error === null || report.matched > 0) {
+    const [one, two] = report.waiting;
+    lines.push(`  Matched: ${report.matched} ${report.matched === 1 ? "entry" : "entries"} this run. Waiting, within a day of being logged: ${one} on the first, ${two} on the second.`);
+  }
+  for (const note of report.unchecked) lines.push(`  Not checked: ${note}`);
+  for (const problem of report.problems) lines.push(`  ${describeProblem(problem as Problem)}${problem.log ? ` on ${problem.log}` : ""}`);
+  const status = comparisonStatus(report);
+  if (status === 0) lines.push(`OK: the logs keep one record, as far as they were read. State saved in ${path}.`);
+  if (status === 1) {
+    const count = report.problems.length;
+    lines.push(
+      path
+        ? `MISBEHAVED: ${count} problem${count === 1 ? "" : "s"}. Both logs read soundly, so the state was saved in ${path}; lasting problems are reported on every run. --json shows the evidence.`
+        : `MISBEHAVED: ${count} problem${count === 1 ? "" : "s"} reading a log. The state file was left as it was; --json shows the evidence.`,
+    );
+  }
+  if (status === 2) lines.push(`FAILED, so the state file was left as it was: ${report.error}`);
+  return `${lines.join("\n")}\n`;
+}
+
 // --- Wording -------------------------------------------------------------------------
+
+/** What the run found about the log's checkpoints and its witnesses. */
+function witnessingSummary(witnessing: Witnessing): string[] {
+  const lines: string[] = [];
+  if (witnessing.keys.length > 0) lines.push(`  Checkpoints: origin ${witnessing.origin}, signed by ${witnessing.keys.join(" and ")}.`);
+  const cosigned = (c: Cosigned) => `${c.witness} at ${c.size} ${c.size === 1 ? "entry" : "entries"}, ${new Date(c.timestamp * 1000).toISOString()}`;
+  if (witnessing.served.length > 0) lines.push(`  Witnessed: the checkpoint the node serves is cosigned by ${witnessing.served.map(cosigned).join("; ")}.`);
+  for (const witness of witnessing.witnesses) lines.push(`  Witness: ${cosigned(witness)} is the checkpoint it last cosigned.`);
+  return lines;
+}
 
 function describe(head: TreeHead): string {
   return `${head.size} ${head.size === 1 ? "entry" : "entries"}, root ${head.root}, signed ${head.timestamp}`;

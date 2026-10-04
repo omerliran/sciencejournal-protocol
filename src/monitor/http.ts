@@ -1,3 +1,4 @@
+import { sha256Hex } from "../hash";
 import { JsonError, parseJson } from "../json";
 import { MonitorError, type LogSource } from "../monitor";
 
@@ -28,39 +29,47 @@ export function nodeUrl(input: string): string {
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-/** A node's public log API over HTTP. Answers are read as strict I-JSON. */
-export function httpSource(node: string, options: HttpOptions = {}): LogSource {
-  const base = nodeUrl(node);
+/**
+ * GETs `url`, trying again a request that failed in a way that may pass, and returns the
+ * answer's text; null for a 404 when `missing` allows one.
+ */
+export async function getText(url: string, accept: string, options: HttpOptions = {}, missing = false): Promise<string | null> {
   const { fetch: get = fetch, timeoutMs = 30_000, attempts = 3, retryMs = 1000 } = options;
-
-  async function read(path: string): Promise<unknown> {
-    const url = `${base}${path}`;
-    for (let attempt = 1; ; attempt++) {
-      const retry = attempt < attempts;
-      let response: Response;
-      try {
-        response = await get(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
-      } catch (error) {
-        if (retry) {
-          await pause(retryMs * attempt);
-          continue;
-        }
-        throw new MonitorError(`GET ${url} failed: ${reason(error)}`);
-      }
-      const text = await response.text();
-      if (response.ok) {
-        try {
-          return parseJson(text);
-        } catch (error) {
-          if (!(error instanceof JsonError)) throw error;
-          throw new MonitorError(`GET ${url} answered with something other than I-JSON: ${error.message}`);
-        }
-      }
-      if (retry && (response.status === 429 || response.status >= 500)) {
+  for (let attempt = 1; ; attempt++) {
+    const retry = attempt < attempts;
+    let response: Response;
+    try {
+      response = await get(url, { headers: { accept }, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      if (retry) {
         await pause(retryMs * attempt);
         continue;
       }
-      throw new MonitorError(`GET ${url} answered ${response.status}${errorMessage(text)}`);
+      throw new MonitorError(`GET ${url} failed: ${reason(error)}`);
+    }
+    const text = await response.text();
+    if (response.ok) return text;
+    if (missing && response.status === 404) return null;
+    if (retry && (response.status === 429 || response.status >= 500)) {
+      await pause(retryMs * attempt);
+      continue;
+    }
+    throw new MonitorError(`GET ${url} answered ${response.status}${errorMessage(text)}`);
+  }
+}
+
+/** A node's public log API over HTTP. Answers are read as strict I-JSON, and checkpoints as text. */
+export function httpSource(node: string, options: HttpOptions = {}): LogSource {
+  const base = nodeUrl(node);
+
+  async function read(path: string): Promise<unknown> {
+    const url = `${base}${path}`;
+    const text = (await getText(url, "application/json", options))!;
+    try {
+      return parseJson(text);
+    } catch (error) {
+      if (!(error instanceof JsonError)) throw error;
+      throw new MonitorError(`GET ${url} answered with something other than I-JSON: ${error.message}`);
     }
   }
 
@@ -69,7 +78,18 @@ export function httpSource(node: string, options: HttpOptions = {}): LogSource {
     entries: (start, end) => read(`/api/v1/log/entries?start=${start}&end=${end}`),
     signedEntry: (index) => read(`/api/v1/log/entries/${index}/signed`),
     consistencyProof: (first, second) => read(`/api/v1/log/proofs/consistency?first=${first}&second=${second}`),
+    checkpoint: (size) => getText(`${base}/api/v1/log/checkpoint${size === undefined ? "" : `?size=${size}`}`, "text/plain", options, true),
+    receipt: (index) => read(`/api/v1/log/entries/${index}`),
   };
+}
+
+/**
+ * Where a witness serves the checkpoint it last cosigned for a log (c2sp.org/tlog-witness):
+ * under its monitoring prefix, by the SHA-256 of the log's origin in hex.
+ */
+export function witnessCheckpoint(prefix: string, options: HttpOptions = {}): (origin: string) => Promise<string | null> {
+  const base = nodeUrl(prefix);
+  return (origin) => getText(`${base}/${sha256Hex(origin)}/checkpoint`, "text/plain", options, true);
 }
 
 /** The `error` a node puts in a failed answer, if it gave one. */
