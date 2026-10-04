@@ -2,6 +2,7 @@ import { bytesToHex, randomBytes } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
 import { detachSignatures, operatorId, signKeyRotation, signObject } from "./entries";
 import { observerId, taskId, type TaskEntry } from "./fieldwork";
+import { threadId, type ThreadId } from "./forum";
 import { sha256Digest } from "./hash";
 import { ideaTextDigest } from "./ideas";
 import { attestRecoveryApproval, attestVouch, invitePayload, unsignedRecovery } from "./identity";
@@ -238,8 +239,21 @@ async function realisticLog(): Promise<MemoryLog> {
   // An agent joins bob's organization with an invite code bob's current key signed.
   await log.append({ operator: erinId, entry: keyEntry(erin, "Invited agent") });
   await log.append({ operator: erinId, entry: sponsoredIdentity(erinId, erin, bobId, bobNext), organization: "example.org" });
+
+  // Agents working together in the forum: erin opens a problem about the claim, and dave posts a finding in it.
+  const thread = forumThread(erinId, erin);
+  await log.append({ operator: erinId, entry: thread });
+  await log.append({ operator: daveId, entry: forumPost(daveId, daveNext, threadId(thread)) });
   return log;
 }
+
+const forumThread = (operator: string, keys: { secretKey: Uint8Array }) =>
+  signObject(
+    { type: "thread" as const, operator, kind: "problem" as const, fields: ["mathematics"], about: CLAIM, text: sha256Digest("thread words") },
+    keys.secretKey,
+  );
+const forumPost = (operator: string, keys: { secretKey: Uint8Array }, thread: ThreadId) =>
+  signObject({ type: "post" as const, operator, thread, kind: "finding" as const, refs: [CLAIM], text: sha256Digest("post words") }, keys.secretKey);
 
 /** A log of `entries`, each appended in order. */
 async function logOf(entries: Unstamped[], log = new MemoryLog()): Promise<MemoryLog> {
@@ -282,6 +296,8 @@ describe("monitorLog", () => {
         key_recovery: 3,
         challenge: 1,
         challenge_review: 1,
+        thread: 1,
+        post: 1,
       },
     });
     expect(report.unchecked.sort()).toEqual(
@@ -294,6 +310,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.vouch,
         NOT_CHECKED.invite,
         NOT_CHECKED.work,
+        NOT_CHECKED.forum,
       ].sort(),
     );
 
@@ -535,6 +552,20 @@ describe("monitorLog", () => {
       { check: "signature", index: 2, reason: `The identity entry's sig doesn't verify against ${bobId}'s key from entry 1` },
       { check: "signature", index: 3, reason: "The identity entry's sig doesn't verify against the log's key" },
       { check: "signature", index: 4, reason: `The bundle entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
+    ]);
+  });
+
+  it("needs an identity, and the poster's own signature, on every forum thread and post", async () => {
+    const log = await logOf([{ operator: aliceId, entry: keyEntry(alice) }, { operator: bobId, entry: keyEntry(bob) }]);
+    await log.append(invited(log, aliceId));
+    const thread = forumThread(aliceId, alice);
+    await log.append({ operator: aliceId, entry: thread });
+    await log.append({ operator: bobId, entry: forumPost(bobId, bob, threadId(thread)) });
+    await log.append({ operator: aliceId, entry: forumPost(aliceId, bob, threadId(thread)) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 4, reason: `${bobId} has no identity on the log before entry 4, and post entries need one` },
+      { check: "signature", index: 5, reason: `The post entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
     ]);
   });
 

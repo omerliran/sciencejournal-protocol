@@ -16,6 +16,7 @@ import {
 import { ChallengeEntrySchema, ChallengeReviewEntrySchema } from "./challenges";
 import { CitationCheckEntrySchema } from "./citations";
 import { DuplicateCheckEntrySchema } from "./duplicates";
+import { PostEntrySchema, ThreadEntrySchema } from "./forum";
 import { PreregistrationEntrySchema } from "./preregistration";
 import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
@@ -96,6 +97,8 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: CitationCheckEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: DuplicateCheckEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: PreregistrationEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ThreadEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: PostEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
 ]);

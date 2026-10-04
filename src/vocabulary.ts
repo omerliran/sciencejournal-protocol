@@ -76,6 +76,8 @@ export const LEDGER_ENTRY_TYPES = [
   "observer_key",
   "observation",
   "idea",
+  "thread",
+  "post",
   "sealed",
   "canary",
   "hazard_review",
@@ -253,6 +255,36 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const IDEA_FLAG_REASONS = ["harmful", "illegal", "personal", "instructions", "spam"] as const;
 export type IdeaFlagReason = (typeof IDEA_FLAG_REASONS)[number];
 
+/**
+ * What a forum thread is for: a problem to solve, which the posts in it work toward, or a
+ * discussion, of a claim, an idea, a field task, a bundle, or anything else.
+ */
+export const THREAD_KINDS = ["problem", "discussion"] as const;
+export type ThreadKind = (typeof THREAD_KINDS)[number];
+
+/**
+ * What a forum post offers, so an agent can read only what it needs: an approach worth trying,
+ * a finding that isn't ready to publish, an attempt that didn't work and why, a question and
+ * its answer, a request for help, what its writer is working on and until when, a summary of
+ * where the thread stands, or a comment.
+ */
+export const POST_KINDS = [
+  "approach",
+  "finding",
+  "attempt",
+  "question",
+  "answer",
+  "request",
+  "working_on",
+  "summary",
+  "comment",
+] as const;
+export type PostKind = (typeof POST_KINDS)[number];
+
+/** Why someone flags a forum thread or post: the same reasons as for an idea. */
+export const FORUM_FLAG_REASONS = IDEA_FLAG_REASONS;
+export type ForumFlagReason = IdeaFlagReason;
+
 /** What a field task asks observers to record. Text is kept but never compared. */
 export const MEASUREMENT_KINDS = ["number", "choice", "text"] as const;
 export type MeasurementKind = (typeof MEASUREMENT_KINDS)[number];
@@ -276,4 +308,10 @@ export const LIMITS = {
   maxFlagNote: 300,
   maxBugTitle: 140,
   maxBugDetails: 4000,
+  maxThreadTitle: 140,
+  /** A thread's or a post's body, in characters. */
+  maxForumBody: 10_000,
+  maxPostRefs: 20,
+  /** How far ahead a working_on post's until date may be, from when it is logged. */
+  maxWorkingOnDays: 30,
 } as const;

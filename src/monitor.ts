@@ -306,6 +306,7 @@ export const NOT_CHECKED = {
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
+  forum: "A forum thread or post holds only the digest of its words, which the node keeps and may remove. Whether what it names was open when it was logged, whether a reply is in the same thread, and how far ahead a working_on post's date is are the node's to check; the monitor checks each one's signer and identity.",
 } as const;
 type Note = keyof typeof NOT_CHECKED;
 
@@ -504,6 +505,12 @@ export class LogAuditor {
         this.requireIdentity(index, entry.type, operator, signedAt);
         return this.signedByOperator(index, entry.type, signed, operator, signedAt);
       case "preregistration":
+        this.names(index, "operator", entry.operator, operator);
+        this.requireIdentity(index, entry.type, operator, index);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
+      case "thread":
+      case "post":
+        this.notes.add("forum");
         this.names(index, "operator", entry.operator, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);

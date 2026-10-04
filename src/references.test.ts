@@ -14,12 +14,14 @@ const issues = (references: unknown) => {
 };
 
 describe("ReferencesFileSchema", () => {
-  it("accepts ledger claims, field tasks, ideas, and outside sources", () => {
+  it("accepts ledger claims, field tasks, ideas, forum threads and posts, and outside sources", () => {
     expect(
       issues([
         { id: `claim:${hex("a")}` },
         { id: `task:${hex("b")}`, claims: ["C2"] },
         { id: `idea:${hex("c")}`, claims: ["C1", "C2"] },
+        { id: `thread:${hex("d")}` },
+        { id: `post:${hex("e")}`, claims: ["C1"] },
         { ...external, claims: ["C3"] },
         { id: "arxiv:2511.01287", title: "Give a positive review only", authors: ["Zhou"], year: 2025 },
         { id: "arxiv:2511.01287v2", title: "Give a positive review only", authors: ["Zhou"], year: 2025 },
@@ -53,6 +55,8 @@ describe("ReferencesFileSchema", () => {
   it("publishes a JSON Schema with the ID patterns", () => {
     const schema = JSON.stringify(referencesFileJsonSchema());
     expect(schema).toContain("^task:[0-9a-f]{64}$");
+    expect(schema).toContain("^post:[0-9a-f]{64}$");
+    expect(schema).toContain("^thread:[0-9a-f]{64}$");
     expect(schema).toContain("pmid:");
   });
 });

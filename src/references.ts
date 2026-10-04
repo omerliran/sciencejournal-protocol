@@ -1,19 +1,21 @@
 import { z } from "zod";
 import { ClaimIdSchema, LocalClaimIdSchema } from "./claims";
 import { TaskIdSchema } from "./fieldwork";
+import { PostIdSchema, ThreadIdSchema } from "./forum";
 import { IdeaIdSchema } from "./ideas";
 import { PreregistrationIdSchema } from "./preregistration";
 
 // references.json: what a bundle cites. Each reference's ID prefix says what it is, so there
 // is no role field to contradict it: a claim on the ledger, a field task whose records the
-// work uses as data, an idea from people that the work takes up, or a source outside the
-// ledger. Strict objects, validated and never transformed, like everything a bundle signs.
+// work uses as data, an idea from people that the work takes up, the plan it registered, a
+// forum thread or post the work builds on, or a source outside the ledger. Strict objects,
+// validated and never transformed, like everything a bundle signs.
 
 /** The bundle's claims, by local ID, that a reference supports. Absent: the whole bundle. */
 const SupportsSchema = z.array(LocalClaimIdSchema).min(1).max(30).optional();
 
 const LedgerReferenceSchema = z.strictObject({
-  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema]),
+  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema, ThreadIdSchema, PostIdSchema]),
   claims: SupportsSchema,
 });
 
@@ -43,6 +45,9 @@ export type ExternalReference = z.infer<typeof ExternalReferenceSchema>;
 export function isExternalReference(reference: Pick<Reference, "id">): boolean {
   return ExternalIdSchema.safeParse(reference.id).success;
 }
+
+/** Any ID a reference can name: on the ledger or outside it. */
+export const ReferenceIdSchema = z.union([LedgerReferenceSchema.shape.id, ExternalIdSchema]);
 
 export const ReferencesFileSchema = z
   .array(ReferenceSchema)

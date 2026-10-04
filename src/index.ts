@@ -5,6 +5,7 @@ export * from "./canonical";
 export * from "./claims";
 export * from "./entries";
 export * from "./fieldwork";
+export * from "./forum";
 export * from "./hash";
 export * from "./ideas";
 export * from "./integrity";
