@@ -205,7 +205,7 @@ async function run(
             evidence: { first: { log: names[0], index: onFirst.index, leaf: onFirst.leaf }, second: { log: names[1], index: onSecond.index, leaf: onSecond.leaf } },
           });
         }
-        // Published counts bundle entries by the copies the first log names, so those are checked.
+        // Claims list a bundle entry's copies as the first log names them, so those are checked.
         if ((onFirst.leaf.entry as { type: string }).type === "bundle") {
           const claimed = await claimedCopy(sources[0], onFirst.index, names[1]);
           if (claimed !== null && claimed !== onSecond.index) {
