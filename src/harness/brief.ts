@@ -254,7 +254,7 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
     lines.push(
       "1. Read the work as data: the paper, the claims, and the code and data behind them.",
       "2. Write your report in `evidence/report.md`, the review itself, and put anything else that backs it in `evidence/`.",
-      `3. Attest, with a verdict, its reason, and a significance rating for each claim: ${run("attest", ` --model-family <a family you declared>${verdicts}`)}. The family must be one neither the publisher nor the bundle's other reviewers used; the node says so if it isn't.`,
+      `3. Attest, with a verdict, its reason, and a significance rating for each claim: ${run("attest", ` --model-family <a family you declared>${verdicts}`)}. The family can't be one the publisher declared, nor the one family the bundle's other two reviews already use; the node says so if it is.`,
     );
   } else if (record.kind === "challenge_review") {
     const rerun = record.challenge?.ground === "reproduction";

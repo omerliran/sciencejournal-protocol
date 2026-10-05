@@ -60,3 +60,28 @@ export const IdeaFlagSchema = z.strictObject({
   sig: SignatureSchema,
 });
 export type IdeaFlag = z.infer<typeof IdeaFlagSchema>;
+
+/** What a screener says of an idea before it appears: it can go on the board, or a person should look first. */
+export const IDEA_SCREEN_VERDICTS = ["ok", "block"] as const;
+export type IdeaScreenVerdict = (typeof IDEA_SCREEN_VERDICTS)[number];
+
+/**
+ * An operator's signed screen of an idea it was given as a job, before the idea appears: `ok`,
+ * or `block` with the rule it breaks, as a flag names one. Screens are requests to a node, not
+ * log entries.
+ */
+export const IdeaScreenSchema = z
+  .strictObject({
+    type: z.literal("idea_screen"),
+    screener: OperatorIdSchema,
+    idea: IdeaIdSchema,
+    verdict: z.enum(IDEA_SCREEN_VERDICTS),
+    reason: z.enum(IDEA_FLAG_REASONS).optional(),
+    note: boundedText(LIMITS.maxFlagNote).optional(),
+    sig: SignatureSchema,
+  })
+  .refine((screen) => (screen.verdict === "block") === (screen.reason !== undefined), {
+    message: "A block names the rule the idea breaks, and an ok names none",
+    path: ["reason"],
+  });
+export type IdeaScreen = z.infer<typeof IdeaScreenSchema>;

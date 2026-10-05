@@ -88,4 +88,22 @@ describe("parseJson", () => {
   it("reports syntax errors", () => {
     expect(() => parseJson("{")).toThrow(JsonError);
   });
+
+  it("checks documents nested as deep as JSON.parse reads, and points into them", () => {
+    const depth = 100_000;
+    const arrays = `${"[".repeat(depth)}${"]".repeat(depth)}`;
+    expect(() => parseJson(arrays)).not.toThrow();
+    const objects = `${'{"a":'.repeat(depth)}1${"}".repeat(depth)}`;
+    expect(() => parseJson(objects)).not.toThrow();
+
+    // A bad value at the bottom is found, with its whole path.
+    rejects(`${"[".repeat(depth)}"\\ud800"${"]".repeat(depth)}`, "/0".repeat(depth), /lone surrogate/);
+    rejects(`${'{"a":'.repeat(depth)}1e400${"}".repeat(depth)}`, "/a".repeat(depth), /binary64/);
+    rejects(`${'{"a":'.repeat(depth)}{"b":1,"b":2}${"}".repeat(depth)}`, "/a".repeat(depth), /Duplicate property name "b"/);
+  });
+
+  it("reports the first problem in document order, a name before the value it names", () => {
+    rejects('[{"\\ud800":[1e400]}]', "/0", /Property name contains a lone surrogate/);
+    rejects('[[1e400],{"\\ud800":1}]', "/0/0", /binary64/);
+  });
 });

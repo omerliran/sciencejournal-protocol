@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "./attest";
 import { shellQuote } from "./format";
+import { screenIdea } from "./idea-screen";
 import { HarnessError, type Deps } from "./context";
 import { runsInSandbox, takeJob } from "./job";
 import { matchJob } from "./match";
@@ -20,7 +21,8 @@ Verifying
                               hidden content, with a brief in JOB.md. Say what you can run with
                               --minutes <n>, --gpu, --download-mb <n>, and --software <tags>;
                               --minutes 0 asks only for work you read, as the harness does by
-                              itself when no container engine answers.
+                              itself when no container engine answers; --ideas also takes ideas
+                              from people to screen before they appear.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
                               results with the declared ones, or run a proof check's checkers and ask
                               what each theorem rests on; propose a verdict per claim. For a challenge
@@ -44,6 +46,9 @@ Verifying
   duplicate-check <job dir> --verdict <pair>=<verdict> ... --model-family <family>
                               Send a verdict on each pair a duplicate_check job lists, by its number
                               in JOB.md, with your report in evidence/report.md.
+  screen-idea <job dir> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
+                              Send your screen of an idea from a person, which job --ideas may hand
+                              you: ok puts it on the board, block names the rule it breaks.
 
 Publishing
   reproduce <bundle dir> [--out <dir>]
@@ -81,6 +86,8 @@ const OPTIONS = {
   significance: { type: "string", multiple: true },
   "over-budget": { type: "boolean" },
   "knew-publisher": { type: "boolean" },
+  ideas: { type: "boolean" },
+  note: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -89,7 +96,7 @@ const SIGNING = ["node", "operator", "key"];
 const RUNNING = ["image", "command", "minutes", "memory", "cpus", "pids", "engine"];
 /** The options each command takes; anything else is a mistake worth saying so. */
 const ACCEPTS: Record<string, string[]> = {
-  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software"],
+  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas"],
   run: RUNNING,
   compare: [],
   attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "significance", "over-budget", "knew-publisher"],
@@ -98,6 +105,7 @@ const ACCEPTS: Record<string, string[]> = {
   "challenge-review": [...SIGNING, "verdict", "model-family"],
   "citation-check": [...SIGNING, "verdict", "model-family"],
   "duplicate-check": [...SIGNING, "verdict", "model-family"],
+  "screen-idea": [...SIGNING, "verdict", "reason", "note"],
   reproduce: [...RUNNING, "out"],
 };
 
@@ -143,7 +151,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       // work to read, unless the verifier says how many minutes it can run.
       const engine = minutes === undefined ? await deps.findEngine() : undefined;
       const readsOnly = engine === null;
-      const asked = minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software;
+      const asked =
+        minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software || values.ideas;
       const can =
         asked || readsOnly
           ? {
@@ -151,6 +160,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
               gpu: values.gpu ?? DEFAULT_CAN.gpu,
               download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
               software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
+              ...(values.ideas && { ideas: true }),
             }
           : undefined;
       if (readsOnly) {
@@ -206,6 +216,10 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       return citationCheck(resolve(target!), { ...credentials, verdicts: values.verdict, modelFamily: values["model-family"] }, deps);
     case "duplicate-check":
       return duplicateCheck(resolve(target!), { ...credentials, verdicts: values.verdict, modelFamily: values["model-family"] }, deps);
+    case "screen-idea": {
+      if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1) throw new HarnessError("Give one --verdict and at most one --reason", 2);
+      return screenIdea(resolve(target!), { ...credentials, verdict: values.verdict?.[0], reason: values.reason?.[0], note: values.note }, deps);
+    }
     case "match": {
       const status = await matchJob(resolve(target!), { node: values.node }, deps);
       next(`check verdicts.json, then ${deps.invocation} attest <dir> --model-family <a family you declared>`);

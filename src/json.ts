@@ -15,7 +15,11 @@ export class JsonError extends Error {
   }
 }
 
-/** JSON.parse, but rejecting anything outside I-JSON. */
+/**
+ * JSON.parse, but rejecting anything outside I-JSON. Whatever the text, it returns a value or
+ * throws a JsonError: the checks keep one entry per value on the heap, not one call per level
+ * on the stack, so any depth JSON.parse accepts is checked.
+ */
 export function parseJson(text: string): unknown {
   let value: unknown;
   try {
@@ -23,37 +27,69 @@ export function parseJson(text: string): unknown {
   } catch (error) {
     throw new JsonError(`Not valid JSON: ${(error as Error).message}`);
   }
-  checkDuplicateNames(text);
-  checkValues(value, "");
+  try {
+    checkDuplicateNames(text);
+    checkValues(value);
+  } catch (error) {
+    // With no recursion left, a RangeError can only mean the document is too large to check.
+    if (error instanceof RangeError) throw new JsonError(`Too large to check: ${error.message}`);
+    throw error;
+  }
   return value;
 }
 
-const pointer = (path: string, segment: string | number) =>
-  `${path}/${String(segment).replaceAll("~", "~0").replaceAll("/", "~1")}`;
+/**
+ * Where a value sits in the document: its parent's place and its own name or index. The JSON
+ * Pointer is built only for a value that fails, so deep documents never hold long paths.
+ */
+interface Place {
+  parent: Place | null;
+  segment: string | number;
+}
 
-function checkValues(value: unknown, path: string): void {
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    throw new JsonError("Number is outside the range of a binary64 double", path);
-  }
-  if (typeof value === "string") checkString(value, "String", path);
-  if (Array.isArray(value)) {
-    value.forEach((item, i) => checkValues(item, pointer(path, i)));
-  } else if (value !== null && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) {
-      checkString(key, "Property name", path);
-      checkValues(item, pointer(path, key));
+const pointer = (place: Place | null): string => {
+  const segments: string[] = [];
+  for (let at = place; at; at = at.parent) segments.push(String(at.segment).replaceAll("~", "~0").replaceAll("/", "~1"));
+  return segments.reverse().map((segment) => `/${segment}`).join("");
+};
+
+/** What is left to check, in document order: a value, or a property name within an object. */
+type Pending = { value: unknown; place: Place | null } | { name: string; place: Place | null };
+
+function checkValues(root: unknown): void {
+  const pending: Pending[] = [{ value: root, place: null }];
+  while (pending.length > 0) {
+    const next = pending.pop()!;
+    if ("name" in next) {
+      checkString(next.name, "Property name", next.place);
+      continue;
+    }
+    const { value, place } = next;
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      throw new JsonError("Number is outside the range of a binary64 double", pointer(place));
+    }
+    if (typeof value === "string") checkString(value, "String", place);
+    // Pushed last to first, so they come off in document order, each name before its value.
+    if (Array.isArray(value)) {
+      for (let i = value.length - 1; i >= 0; i--) pending.push({ value: value[i], place: { parent: place, segment: i } });
+    } else if (value !== null && typeof value === "object") {
+      const entries = Object.entries(value);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [key, item] = entries[i];
+        pending.push({ value: item, place: { parent: place, segment: key } }, { name: key, place });
+      }
     }
   }
 }
 
 /** RFC 7493 section 2.1: no surrogates or noncharacters in names or string values. */
-function checkString(text: string, what: string, path: string): void {
-  if (!text.isWellFormed()) throw new JsonError(`${what} contains a lone surrogate`, path);
+function checkString(text: string, what: string, place: Place | null): void {
+  if (!text.isWellFormed()) throw new JsonError(`${what} contains a lone surrogate`, pointer(place));
   for (const char of text) {
     const code = char.codePointAt(0)!;
     if (isNoncharacter(code)) {
       const hex = code.toString(16).toUpperCase().padStart(4, "0");
-      throw new JsonError(`${what} contains the Unicode noncharacter U+${hex}`, path);
+      throw new JsonError(`${what} contains the Unicode noncharacter U+${hex}`, pointer(place));
     }
   }
 }
@@ -64,8 +100,8 @@ function isNoncharacter(code: number): boolean {
 }
 
 type Frame =
-  | { kind: "object"; path: string; names: Set<string>; expectName: boolean; name?: string }
-  | { kind: "array"; path: string; index: number };
+  | { kind: "object"; place: Place | null; names: Set<string>; expectName: boolean; name?: string }
+  | { kind: "array"; place: Place | null; index: number };
 
 /**
  * Scans already-valid JSON text for an object that repeats a property name. JSON.parse
@@ -73,10 +109,10 @@ type Frame =
  */
 function checkDuplicateNames(text: string): void {
   const stack: Frame[] = [];
-  const childPath = () => {
+  const childPlace = (): Place | null => {
     const top = stack.at(-1);
-    if (!top) return "";
-    return top.kind === "object" ? pointer(top.path, top.name ?? "") : pointer(top.path, top.index);
+    if (!top) return null;
+    return { parent: top.place, segment: top.kind === "object" ? (top.name ?? "") : top.index };
   };
 
   for (let i = 0; i < text.length; i++) {
@@ -88,7 +124,7 @@ function checkDuplicateNames(text: string): void {
       if (top?.kind === "object" && top.expectName) {
         const name = JSON.parse(text.slice(i, end + 1)) as string;
         if (top.names.has(name)) {
-          throw new JsonError(`Duplicate property name "${name}"`, top.path);
+          throw new JsonError(`Duplicate property name "${name}"`, pointer(top.place));
         }
         top.names.add(name);
         top.name = name;
@@ -96,9 +132,9 @@ function checkDuplicateNames(text: string): void {
       }
       i = end;
     } else if (char === "{") {
-      stack.push({ kind: "object", path: childPath(), names: new Set(), expectName: true });
+      stack.push({ kind: "object", place: childPlace(), names: new Set(), expectName: true });
     } else if (char === "[") {
-      stack.push({ kind: "array", path: childPath(), index: 0 });
+      stack.push({ kind: "array", place: childPlace(), index: 0 });
     } else if (char === "}" || char === "]") {
       stack.pop();
     } else if (char === ",") {

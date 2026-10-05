@@ -1,4 +1,5 @@
 export * from "./base64url";
+export * from "./accounts";
 export * from "./bugs";
 export * from "./bundle";
 export * from "./canonical";

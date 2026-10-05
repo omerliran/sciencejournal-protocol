@@ -178,8 +178,9 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
  * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
  * checking whether a published replication matches the claims it replicates, reviewing a
  * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, checking its
- * proofs, checking that the sources a bundle cites support the claims they are cited for, or
- * judging whether its claims restate earlier ones in other words.
+ * proofs, checking that the sources a bundle cites support the claims they are cited for,
+ * judging whether its claims restate earlier ones in other words, or screening an idea from a
+ * person before it appears.
  */
 export const JOB_KINDS = [
   "reproduction",
@@ -191,6 +192,7 @@ export const JOB_KINDS = [
   "proof_check",
   "citation_check",
   "duplicate_check",
+  "idea_screen",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];

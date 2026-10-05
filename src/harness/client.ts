@@ -19,7 +19,7 @@ export function defaultKeyPath(home: string): string {
 export class NodeError extends HarnessError {
   constructor(
     readonly status: number,
-    readonly body: { error?: string; code?: string; issues?: { path?: string; message?: string }[] },
+    readonly body: { error?: string; code?: string; issues?: { path?: string; message?: string }[]; retry_after_seconds?: number },
   ) {
     const issues = (body.issues ?? []).slice(0, 5).map((issue) => `\n  ${issue.path || "/"}: ${issue.message}`);
     super(`The node answered ${status}${body.code ? ` (${body.code})` : ""}: ${body.error ?? "no reason given"}${issues.join("")}`);

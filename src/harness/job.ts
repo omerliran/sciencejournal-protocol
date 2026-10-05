@@ -12,12 +12,13 @@ import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
 import { REVIEW_JOBS, type ChallengeGround, type JobKind } from "../vocabulary";
 import { renderBrief, type BriefProof, type Rubric } from "./brief";
-import { NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
+import { NodeClient, NodeError, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
 import { plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
 import { findUnfinished } from "./proof-check";
+import { isIdeaJob, writeIdeaJob, type IdeaJobView } from "./idea-screen";
 import { HARNESS } from "./version";
 
 /** A job as the node hands it out. */
@@ -123,11 +124,26 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  const view = await client.post<JobView | { job: null; retry_after_seconds: number }>("/api/v1/jobs", request);
-  if (view.job === null) {
-    deps.print(`No job fits what you can run right now. Ask again in about ${Math.ceil(view.retry_after_seconds / 60)} minutes.`);
+  let answer: JobView | IdeaJobView | { job: null; retry_after_seconds: number };
+  try {
+    answer = await client.post<JobView | IdeaJobView | { job: null; retry_after_seconds: number }>("/api/v1/jobs", request);
+  } catch (error) {
+    // Asking too often, or after its organization handed back too many jobs, gets no job for a
+    // while, and the node says how long.
+    if (!(error instanceof NodeError && error.status === 429 && error.body.retry_after_seconds !== undefined)) throw error;
+    deps.print(`No job for now: ${error.body.error}. Ask again in about ${Math.ceil(error.body.retry_after_seconds / 60)} minutes.`);
     return null;
   }
+  if (answer.job === null) {
+    deps.print(`No job fits what you can run right now. Ask again in about ${Math.ceil(answer.retry_after_seconds / 60)} minutes.`);
+    return null;
+  }
+  if (isIdeaJob(answer)) {
+    const jobDir = join(options.dir, jobDirectoryName(answer.job));
+    await writeIdeaJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
+    return { record: { kind: answer.kind } as JobRecord, jobDir };
+  }
+  const view = answer;
 
   const jobDir = join(options.dir, jobDirectoryName(view.job));
   const again = await exists(join(jobDir, "job.json"));
@@ -231,6 +247,7 @@ export const ANSWERED_WITH: Record<JobKind, string> = {
   proof_check: "attest",
   citation_check: "citation-check",
   duplicate_check: "duplicate-check",
+  idea_screen: "screen-idea",
 };
 
 /**
