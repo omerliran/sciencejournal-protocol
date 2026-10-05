@@ -15,7 +15,9 @@ import { revealHidden } from "./scan";
 // with the declared results. A number typed into one of those sections is flagged, in digits
 // or spelled out in words, though prose may spell out the counts zero to nine, as in "two
 // methods". Methods and the other sections are where parameters live, such as a learning rate
-// or a sample size, so their numbers aren't.
+// or a sample size, so their numbers aren't. Nor is the number in a label the paper gives one of
+// its tables, figures, or equations, such as "Table 1" or "(1)", in the caption or tag that
+// gives it or anywhere the text names the part by it: it names the part, not a value.
 //
 // Citations: the paper cites a source where it uses it, as a link to the source's reference
 // ID, such as [Klebanoff (2001)](doi:10.1142/S0218348X01000828), and references.json lists
@@ -252,8 +254,9 @@ const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
  * Numbers typed into the sections that state results, outside the placeholders that bind
  * them, in digits or spelled out in English words. Skipped: code, math, raw HTML, images, link
  * targets, headings, numbers that are part of a name (C1, R3, GPT-4, ResNet-50), years from
- * 1900 to 2099, which date things rather than measure them, and the single words for zero to
- * nine and first to ninth, which prose spells out to count things.
+ * 1900 to 2099, which date things rather than measure them, the single words for zero to nine
+ * and first to ninth, which prose spells out to count things, and the numbers in the labels
+ * the paper gives its tables, figures, and equations (see partLabels).
  */
 export function orphanNumbers(markdown: string): OrphanNumber[] {
   return orphanNumbersIn(markdown, parseMarkdown(markdown));
@@ -263,6 +266,7 @@ function orphanNumbersIn(markdown: string, tree: MarkdownNode): OrphanNumber[] {
   const depth = sectionDepth(tree);
   const claimBearing = new Set(CLAIM_BEARING_SECTIONS.map((name) => name.toLowerCase()));
   const lines = lineStarts(markdown);
+  const labels = partLabels(tree);
   const found: OrphanNumber[] = [];
   let section: string | null = null;
 
@@ -271,7 +275,7 @@ function orphanNumbersIn(markdown: string, tree: MarkdownNode): OrphanNumber[] {
     // A bare web or mail address shows as itself; its digits are part of the address.
     if (node.type === "link" && node.url !== undefined && bareAddress(node.url) === bareAddress(plainText(node))) return;
     if (node.type === "text" && node.position?.start.offset !== undefined && node.position.end.offset !== undefined) {
-      found.push(...numbersIn(markdown, lines, node.position.start.offset, node.position.end.offset, section!));
+      found.push(...numbersIn(markdown, lines, node.position.start.offset, node.position.end.offset, section!, labels));
     }
     node.children?.forEach(visit);
   };
@@ -286,14 +290,20 @@ function orphanNumbersIn(markdown: string, tree: MarkdownNode): OrphanNumber[] {
   return found;
 }
 
-function numbersIn(text: string, lines: number[], start: number, end: number, section: string): OrphanNumber[] {
+function numbersIn(text: string, lines: number[], start: number, end: number, section: string, labels: PartLabels): OrphanNumber[] {
   const source = text.slice(start, end);
   // Numbers inside a placeholder are its result's name, not a value.
   const bound = [...source.matchAll(RESULT_PLACEHOLDER)].map((m) => [m.index, m.index + m[0].length] as const);
   const unbound = (at: number) => !bound.some(([from, to]) => at >= from && at < to);
   const numbers: { at: number; number: string }[] = [
     ...[...source.matchAll(NUMBER)]
-      .filter((match) => unbound(match.index) && !partOfName(source, match.index, text, start) && !isYear(match[0]))
+      .filter(
+        (match) =>
+          unbound(match.index) &&
+          !partOfName(source, match.index, text, start) &&
+          !isYear(match[0]) &&
+          !inLabel(text, start + match.index, match[0], labels),
+      )
       .map((match) => ({ at: match.index, number: match[0] })),
     ...spelledNumbers(source)
       .filter((spelled) => !spelled.small && unbound(spelled.start))
@@ -321,6 +331,84 @@ function partOfName(source: string, at: number, text: string, start: number): bo
   const sign = source[at];
   if (sign === "-" || sign === "+" || sign === "−") return WORD_CHARACTER.test(previous);
   return (previous === "-" || previous === "_") && WORD_CHARACTER.test(before(at - 2));
+}
+
+/** A label the paper gives one of its parts, such as "Table 1" or "(1)": its whole number and the text either side of it. */
+interface PartLabel {
+  before: string;
+  number: string;
+  after: string;
+}
+/** The paper's labels by their numbers. */
+type PartLabels = ReadonlyMap<string, PartLabel[]>;
+
+/** A word in a label, such as Table or Fig.: a run of letters and marks, maybe ending in a period. */
+const LABEL_WORD = /^[\p{L}\p{M}]+\.?$/u;
+const EQUATION_TAG = /\\tag\{\s*(\d+)\s*\}/g;
+
+/**
+ * The labels the paper gives its tables, figures, and displayed equations, wherever they are.
+ * A table's opens the bold words that start the paragraph right above it, as in **Table 1.**,
+ * and a figure's opens its image's alt text, as in ![Figure 1. Loss by epoch.](…): one to three
+ * words, then a whole number, then nothing, a period, or a colon. An equation's is its \tag{1},
+ * which the text names as (1), in math between $$ lines or on one line, as in $$x = 1 \tag{1}$$.
+ */
+function partLabels(tree: MarkdownNode): PartLabels {
+  const labels = new Map<string, PartLabel[]>();
+  const add = (label: PartLabel | null) => {
+    if (label) labels.set(label.number, [...(labels.get(label.number) ?? []), label]);
+  };
+  const visit = (node: MarkdownNode) => {
+    node.children?.forEach((child, i) => {
+      const caption = node.children![i - 1];
+      if (child.type === "table" && caption?.type === "paragraph" && caption.children?.[0]?.type === "strong") {
+        add(captionLabel(plainText(caption.children[0])));
+      }
+      visit(child);
+    });
+    if ((node.type === "image" || node.type === "imageReference") && node.alt) add(captionLabel(node.alt));
+    if ((node.type === "math" || node.type === "inlineMath") && node.value !== undefined) {
+      for (const tag of node.value.matchAll(EQUATION_TAG)) add({ before: "(", number: tag[1], after: ")" });
+    }
+  };
+  visit(tree);
+  return labels;
+}
+
+/** The label a caption opens with, with its white space collapsed, or null if it opens with none. */
+function captionLabel(caption: string): PartLabel | null {
+  const text = caption.replace(/\s+/gu, " ").trim();
+  const [first] = text.matchAll(NUMBER);
+  if (!first || !/^\d+$/.test(first[0])) return null;
+  const before = text.slice(0, first.index);
+  const words = before.slice(0, -1).split(" ");
+  const rest = text.slice(first.index + first[0].length);
+  const labelled = before.endsWith(" ") && words.length <= 3 && words.every((word) => LABEL_WORD.test(word));
+  return labelled && (rest === "" || rest.startsWith(".") || rest.startsWith(":")) ? { before, number: first[0], after: "" } : null;
+}
+
+/**
+ * Whether a number is a part's number where the text reads as that part's label, as in
+ * "Table 1 shows" or "Eq. (1)", with any run of white space where the label has a space.
+ */
+function inLabel(text: string, at: number, number: string, labels: PartLabels): boolean {
+  return (labels.get(number) ?? []).some((label) => {
+    if (!text.startsWith(label.after, at + number.length)) return false;
+    const from = startOf(text, at, label.before);
+    return from !== null && !WORD_CHARACTER.test(text[from - 1] ?? "");
+  });
+}
+
+/** Where `part` starts if it ends at `end` in `text`, a space in it matching any run of white space; null if it doesn't end there. */
+function startOf(text: string, end: number, part: string): number | null {
+  let i = end;
+  for (let j = part.length - 1; j >= 0; j--) {
+    if (part[j] === " ") {
+      if (!/\s/u.test(text[i - 1] ?? "")) return null;
+      while (/\s/u.test(text[i - 1] ?? "")) i--;
+    } else if (text[--i] !== part[j]) return null;
+  }
+  return i;
 }
 
 /** An address without the scheme a link adds to it, so www.example.org and its link compare equal. */

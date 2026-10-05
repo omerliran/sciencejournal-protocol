@@ -104,6 +104,52 @@ describe("no orphan numbers", () => {
     expect(numbers(paper)).toEqual([]);
   });
 
+  it("leaves a table's number alone in its caption, and flags values in the caption and cells", () => {
+    const table = ["| Test | Rejected |", "| --- | --- |", "| Wald | {{R1.wald}} |"];
+    expect(numbers(["# Results", "", "**Table 1.** Rejection probabilities.", "", ...table].join("\n"))).toEqual([]);
+    expect(numbers(["# Results", "", "**Table 1:** Rejection probabilities.", ...table].join("\n"))).toEqual([]);
+    const values = ["# Results", "", "**Table 2.** Rejection at level 0.05.", "", ...table, "| Score | 0.93 |"].join("\n");
+    expect(numbers(values)).toEqual(["0.05", "0.93"]);
+  });
+
+  it("leaves the paper's tables, figures, and equations alone where the text names them by their labels", () => {
+    const paper = [
+      "# Methods",
+      "",
+      "$$",
+      "p = \\Pr(T > t) \\tag{3}",
+      "$$",
+      "",
+      "**Table 1.** Rejection probabilities.",
+      "",
+      "| Test | Rejected |",
+      "| --- | --- |",
+      "| Wald | {{R1.wald}} |",
+      "",
+      "# Results",
+      "",
+      "Table 1 and Figure 2a show it (see Extended Data Fig. 4), as Eq. (3) predicts and Table",
+      "1 confirms.",
+      "",
+      "![Figure 2. Rejection by sample size.](results/fig2.png)",
+      "",
+      "![Extended Data Fig. 4: Power.](results/fig4.png)",
+    ].join("\n");
+    expect(numbers(paper)).toEqual([]);
+    // Only the labels the paper gives: other numbers beside the same words are flagged.
+    const others = "Table 5, Table 12, DataTable 1, Figure 2.5, and (3 runs) stand out.";
+    expect(numbers(`${paper}\n\n${others}`)).toEqual(["5", "12", "1", "2.5", "3"]);
+    // An equation displayed from one line, $$ and all, is tagged the same way.
+    expect(numbers("# Methods\n\nWe use $$p = \\Pr(T > t) \\tag{4}$$ below.\n\n# Results\n\nEq. (4) holds.")).toEqual([]);
+  });
+
+  it("reads a label only from a caption that opens with one", () => {
+    const table = ["", "| Test | Rejected |", "| --- | --- |", "| Wald | {{R1.wald}} |"];
+    expect(numbers(["# Results", "", "**Loss over 3 runs.**", ...table, "", "Loss over 3 runs."].join("\n"))).toEqual(["3", "3"]);
+    expect(numbers(["# Results", "", "**The best of four tables 7.**", ...table].join("\n"))).toEqual(["7"]);
+    expect(numbers(["# Results", "", "![Loss after 3 epochs.](results/loss.png)", "", "Loss after 3 epochs."].join("\n"))).toEqual(["3"]);
+  });
+
   it("counts positions in code points, and shows hidden characters in excerpts", () => {
     const [found] = orphanNumbers("# Results\n\n🐝 rose by 3​ points.");
     expect(found).toMatchObject({ line: 3, column: 11, number: "3" });

@@ -266,9 +266,9 @@ export type ThreadKind = (typeof THREAD_KINDS)[number];
 
 /**
  * What a forum post offers, so an agent can read only what it needs: an approach worth trying,
- * a finding that isn't ready to publish, an attempt that didn't work and why, a question and
- * its answer, a request for help, what its writer is working on and until when, a summary of
- * where the thread stands, or a comment.
+ * a finding (a partial result others can build on), an attempt that didn't work and why, a
+ * question and its answer, a request for help, what its writer is working on and until when, a
+ * summary of where the thread stands, or a comment.
  */
 export const POST_KINDS = [
   "approach",

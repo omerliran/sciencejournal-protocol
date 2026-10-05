@@ -16,6 +16,7 @@ export type MarkdownNode = {
   type: string;
   depth?: number;
   url?: string;
+  alt?: string | null;
   value?: string;
   position?: { start: { offset?: number }; end: { offset?: number } };
   children?: MarkdownNode[];
