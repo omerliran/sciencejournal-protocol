@@ -3,16 +3,20 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
 import { signatureDigest, signObject, verifyObject } from "./entries";
 import {
+  attestPairedDomain,
   attestPairedVouch,
   attestRecoveryApproval,
   attestVouch,
   consentPayload,
   IdentityEntrySchema,
-  isPairedVouch,
+  isPaired,
+  PairedDomainSchema,
+  pairedDomainPayload,
   PairedVouchSchema,
   PairingCodeSchema,
   pairingDigest,
   verifyConsent,
+  verifyPairedDomain,
   VouchConsentSchema,
   InviteCodeSchema,
   invitePayload,
@@ -192,7 +196,7 @@ describe("paired vouches", () => {
     expect(entry).toEqual({ type: "identity", kind: "vouched", operator: op12, voucher: account, pairing, consent_sig: consent.sig, voucher_sig: entry.voucher_sig });
     expect(IdentityEntrySchema.safeParse(entry).success).toBe(true);
     expect(PairedVouchSchema.safeParse(entry).success).toBe(true);
-    expect(isPairedVouch(entry)).toBe(true);
+    expect(isPaired(entry)).toBe(true);
     // The log attests the entry without its signatures, the pairing included.
     expect(new TextDecoder().decode(vouchPayload(entry))).toBe(
       canonicalJson({ type: "identity", kind: "vouched", operator: op12, voucher: account, pairing }),
@@ -208,7 +212,7 @@ describe("paired vouches", () => {
 
     // A vouch is countersigned or paired, never both or neither.
     const countersigned = signObject(attestVouch({ operator: op12, voucher: account }, log.secretKey), operator.secretKey);
-    expect(isPairedVouch(countersigned)).toBe(false);
+    expect(isPaired(countersigned)).toBe(false);
     expect(IdentityEntrySchema.safeParse({ ...entry, sig: countersigned.sig }).success).toBe(false);
     expect(IdentityEntrySchema.safeParse({ ...countersigned, pairing }).success).toBe(false);
     expect(IdentityEntrySchema.safeParse(without(entry, "consent_sig")).success).toBe(false);
@@ -224,5 +228,57 @@ describe("paired vouches", () => {
     const countersignedLeaf = detachLeaf({ ...signedLeaf, entry: countersigned } as SignedLeaf);
     expect(LogLeafSchema.safeParse(countersignedLeaf).success).toBe(true);
     expect(LogLeafSchema.safeParse({ ...countersignedLeaf, entry: without(countersignedLeaf.entry, "sig") }).success).toBe(false);
+  });
+});
+
+describe("paired domains", () => {
+  const pairing = pairingDigest(`pair:${"q".repeat(32)}`);
+
+  it("complete a consent the operator signed in advance with a domain the log attests a person named", () => {
+    const operator = generateKeyPair();
+    const log = generateKeyPair();
+    const consent = signObject({ type: "vouch_consent" as const, operator: op12, pairing }, operator.secretKey);
+    const entry = attestPairedDomain(consent, "lab.example.org", log.secretKey);
+    expect(entry).toEqual({
+      type: "identity",
+      kind: "domain",
+      operator: op12,
+      domain: "lab.example.org",
+      pairing,
+      consent_sig: consent.sig,
+      voucher_sig: entry.voucher_sig,
+    });
+    expect(IdentityEntrySchema.safeParse(entry).success).toBe(true);
+    expect(PairedDomainSchema.safeParse(entry).success).toBe(true);
+    expect(isPaired(entry)).toBe(true);
+    // The log attests the entry without its signatures, the domain and the pairing included.
+    expect(new TextDecoder().decode(pairedDomainPayload(entry))).toBe(
+      canonicalJson({ type: "identity", kind: "domain", operator: op12, domain: "lab.example.org", pairing }),
+    );
+    expect(verifyPairedDomain(entry, log.publicKey)).toBe(true);
+    expect(verifyPairedDomain({ ...entry, domain: "other.example.org" }, log.publicKey)).toBe(false);
+    expect(verifyPairedDomain(entry, operator.publicKey)).toBe(false);
+    expect(verifyConsent(entry, operator.publicKey)).toBe(true);
+    // A paired vouch's attestation doesn't stand in for a domain's, nor the other way round.
+    const vouch = attestPairedVouch(consent, account, log.secretKey);
+    expect(verifyPairedDomain({ ...entry, voucher_sig: vouch.voucher_sig }, log.publicKey)).toBe(false);
+
+    // A domain is proven by the operator or paired, never both or neither.
+    const proven = signObject({ type: "identity" as const, kind: "domain" as const, operator: op12, domain: "lab.example.org" }, operator.secretKey);
+    expect(IdentityEntrySchema.safeParse(proven).success).toBe(true);
+    expect(isPaired(proven)).toBe(false);
+    expect(IdentityEntrySchema.safeParse({ ...entry, sig: proven.sig }).success).toBe(false);
+    for (const field of ["pairing", "consent_sig", "voucher_sig"]) {
+      expect(IdentityEntrySchema.safeParse(without(entry, field)).success, field).toBe(false);
+    }
+
+    // The leaf holds all three signatures by digest, and no sig.
+    const signedLeaf = { timestamp: "2026-10-04T12:00:00.000Z", operator: op12, entry, organization: "example.org" } as SignedLeaf;
+    const leaf = detachLeaf(signedLeaf);
+    expect(leaf.entry).toEqual({ ...entry, consent_sig: signatureDigest(consent.sig), voucher_sig: signatureDigest(entry.voucher_sig) });
+    expect(LogLeafSchema.safeParse(leaf).success).toBe(true);
+    const provenLeaf = detachLeaf({ ...signedLeaf, entry: proven } as SignedLeaf);
+    expect(LogLeafSchema.safeParse(provenLeaf).success).toBe(true);
+    expect(LogLeafSchema.safeParse({ ...provenLeaf, entry: without(provenLeaf.entry, "sig") }).success).toBe(false);
   });
 });

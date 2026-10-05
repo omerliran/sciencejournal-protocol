@@ -21,12 +21,14 @@ import {
   InviteCodeSchema,
   RepositorySchema,
   SPONSORING_KINDS,
-  isPairedVouch,
+  isPaired,
   verifyConsent,
+  verifyPairedDomain,
   verifyInvite,
   verifyRecoveryApproval,
   verifyVouch,
   type IdentityEntry,
+  type PairedDomainEntry,
   type PairedVouchEntry,
   type SponsoredIdentityEntry,
   type KeyRecoveryEntry,
@@ -308,7 +310,7 @@ export const NOT_CHECKED = {
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
-  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired vouch's consent is the operator's to sign, which the monitor checks, along with each pairing completing one vouch; that the person who vouched brought the pairing code is the log's word.",
+  vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired identity's consent is the operator's to sign, which the monitor checks, along with each pairing completing one identity; that the person who vouched, or named a domain, brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
@@ -729,10 +731,18 @@ export class LogAuditor {
     }
     switch (entry.kind) {
       case "domain":
+        this.notes.add("identity");
+        if (isPaired(entry)) {
+          // Whoever brought the pairing code named the domain, which only the log can attest.
+          this.notes.add("vouch");
+          if (signed) this.byLog(index, "The domain's voucher_sig", (key) => verifyPairedDomain(signed as unknown as PairedDomainEntry, key));
+          return this.paired(index, entry, signed as unknown as PairedDomainEntry | null);
+        }
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       case "github":
         // Which account a repository belongs to is GitHub's to say, but the organization's form
         // is the log's: the account's numeric ID, which a renamed login keeps.
-        if (entry.kind === "github" && !GithubAccountSchema.safeParse(leaf.organization).success) {
+        if (!GithubAccountSchema.safeParse(leaf.organization).success) {
           this.problem(index, "identity", `A GitHub identity counts as its account's ID, github:<ID>, not ${leaf.organization}`);
         }
         this.notes.add("identity");
@@ -744,7 +754,7 @@ export class LogAuditor {
           this.problem(index, "identity", `A vouched identity counts as the account that vouched, ${entry.voucher}, not ${leaf.organization}`);
         }
         if (signed) this.byLog(index, "The vouch's voucher_sig", (key) => verifyVouch(signed as unknown as VouchedIdentityEntry, key));
-        if (isPairedVouch(entry)) return this.paired(index, entry, signed as unknown as PairedVouchEntry | null);
+        if (isPaired(entry)) return this.paired(index, entry, signed as unknown as PairedVouchEntry | null);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       case "sponsored":
@@ -791,18 +801,25 @@ export class LogAuditor {
   }
 
   /**
-   * A paired vouch completes the consent its operator gave in advance to whoever brought a
-   * pairing code, once: the consent is signed by the key the operator holds when the vouch is
-   * logged, since changing keys voids the consents the old key signed.
+   * A paired identity, a vouch or a domain, completes the consent its operator gave in advance
+   * to whoever brought a pairing code, once: the consent is signed by the key the operator
+   * holds when the identity is logged, since changing keys voids the consents the old key signed.
    */
-  private paired(index: number, entry: Detached<PairedVouchEntry>, signed: PairedVouchEntry | null): void {
+  private paired(
+    index: number,
+    entry: Detached<PairedVouchEntry> | Detached<PairedDomainEntry>,
+    signed: PairedVouchEntry | PairedDomainEntry | null,
+  ): void {
     const { operator, pairing } = entry;
-    if (this.pairings.has(pairing)) this.problem(index, "identity", `The pairing ${pairing} completed a vouch before; each consent completes one`);
+    const what = entry.kind === "vouched" ? "vouch" : "domain";
+    if (this.pairings.has(pairing)) {
+      this.problem(index, "identity", `The pairing ${pairing} completed an identity before; each consent completes one`);
+    }
     this.pairings.add(pairing);
     const held = this.keyOf(operator, index);
     if (!held) return this.problem(index, "signer", `${operator} has no key on the log before entry ${index} to have signed the consent`);
     if (signed && !verifyConsent(signed, held.key)) {
-      this.problem(index, "signature", `The vouch's consent_sig doesn't verify against ${operator}'s key from entry ${held.index}`);
+      this.problem(index, "signature", `The ${what}'s consent_sig doesn't verify against ${operator}'s key from entry ${held.index}`);
     }
   }
 

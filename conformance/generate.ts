@@ -43,6 +43,7 @@ import {
   ObserverIdSchema,
   operatorId,
   OperatorIdSchema,
+  pairedDomainPayload,
   pairingDigest,
   parseJson,
   publicKeyOf,
@@ -747,14 +748,35 @@ const paired = {
   consent_sig: sign(consentPayload(pairedFields), testKey(5).secretKey),
   voucher_sig: sign(vouchPayload(pairedFields), logKey.secretKey),
 };
-for (const entry of [vouch, paired, sponsored]) IdentityEntrySchema.parse(entry);
-/** Whether an identity's attestations verify: the log's of a vouch, the operator's consent to a paired one, or a sponsor's invite. */
+// From a second link, its person proves a domain for it: the operator consented to that code's
+// digest too, and the log attests that whoever brought the code named the domain.
+const pairedDomainFields = {
+  operator: pairedFields.operator,
+  domain: "lab.example.org",
+  pairing: pairingDigest(pairingCode("a second code for the fifth operator")),
+};
+const pairedDomain = {
+  type: "identity" as const,
+  kind: "domain" as const,
+  ...pairedDomainFields,
+  consent_sig: sign(consentPayload(pairedDomainFields), testKey(5).secretKey),
+  voucher_sig: sign(pairedDomainPayload(pairedDomainFields), logKey.secretKey),
+};
+for (const entry of [vouch, paired, pairedDomain, sponsored]) IdentityEntrySchema.parse(entry);
+/**
+ * Whether an identity's attestations verify: the log's of a vouch or of a paired domain, the
+ * operator's consent to a paired identity, or a sponsor's invite.
+ */
 const attested = (entry: Record<string, unknown> & { kind: string }) =>
   entry.kind === "sponsored"
     ? verify(entry.sponsor_sig as Signature, invitePayload(entry as unknown as typeof sponsored), testKey(3).public_key)
-    : verify(entry.voucher_sig as Signature, vouchPayload(entry as unknown as typeof paired), logKey.public_key) &&
+    : verify(
+        entry.voucher_sig as Signature,
+        entry.kind === "domain" ? pairedDomainPayload(entry as unknown as typeof pairedDomain) : vouchPayload(entry as unknown as typeof paired),
+        logKey.public_key,
+      ) &&
       (!("pairing" in entry) || verify(entry.consent_sig as Signature, consentPayload(entry as unknown as typeof paired), testKey(5).public_key));
-if (![vouch, paired, sponsored].every(attested)) throw new Error("The reference implementation rejects a valid attestation");
+if (![vouch, paired, pairedDomain, sponsored].every(attested)) throw new Error("The reference implementation rejects a valid attestation");
 
 const entryCases = [
   { name: "a key entry", entry: exampleLeaves[0].entry },
@@ -762,6 +784,7 @@ const entryCases = [
   { name: "a key rotation, which keeps the operator's ID", entry: rotation },
   { name: "a vouched identity: the log's voucher_sig, countersigned by the operator", entry: vouch },
   { name: "a vouched identity from its operator's pairing link: the operator's consent_sig, given in advance, and the log's voucher_sig", entry: paired },
+  { name: "a domain its operator's person proved from its pairing link: the operator's consent_sig and the log's voucher_sig", entry: pairedDomain },
   { name: "an identity from an invite code: its sponsor's sponsor_sig, countersigned by the operator", entry: sponsored },
 ].map(({ name, entry }) => ({ name, entry, entry_digest: entryDigest(entry), leaf_entry: detachSignatures(entry) }));
 
@@ -794,6 +817,10 @@ const invalidEntries = [
     name: "a paired vouch whose operator consented to the pairing code itself rather than its digest",
     entry: { ...paired, consent_sig: sign(signingPayload(consentToCode), testKey(5).secretKey) },
   },
+  {
+    name: "a paired domain the log attested for another domain than the one it names",
+    entry: { ...pairedDomain, voucher_sig: sign(pairedDomainPayload({ ...pairedDomainFields, domain: "other.example.org" }), logKey.secretKey) },
+  },
 ];
 for (const { name, entry } of invalidEntries) mustReject(name, () => attested(entry));
 
@@ -813,7 +840,7 @@ for (const c of observerCases) if (!ObserverIdSchema.safeParse(c.observer_id).su
 
 write("id-vectors.json", {
   description:
-    "Operator and volunteer IDs, which no log assigns, and entries' digests as signed, by which two logs are compared. An operator's ID is \"op:\" and the lowercase hex SHA-256 of the first public key it registered, as written (the hex of its key_digest); rotating or recovering the key keeps it. A volunteer's ID is \"obs:\" and the lowercase hex SHA-256 of the first passkey they joined with, as written. An entry's digest as signed is the SHA-256 of its canonical JSON with its signatures, the same on every log that holds it; leaf_entry is the entry as a log leaf holds it, each signature (sig, key_sig, voucher_sig, sponsor_sig, and consent_sig) replaced by its digest. Every signature in an entry verifies against its signer: sig is the operator's key's over the entry without sig (for these entries, the key of the operator the entry names); a key rotation's key_sig is the new key's over the entry without sig and key_sig; a vouch's voucher_sig is the log's key's (log_public_key) over the entry without its signatures, {\"type\": \"identity\", \"kind\": \"vouched\", \"operator\", \"voucher\"} and, for a vouch from a pairing link, \"pairing\"; such a vouch has no sig, and its consent_sig is the operator's key's over {\"type\": \"vouch_consent\", \"operator\", \"pairing\"}, where pairing is the SHA-256 of a pairing code as written; and an invite code's sponsor_sig is its sponsor's key's over {\"type\": \"invite\", \"sponsor\", \"code\"}. Every case under invalid must not be the ID its public_key makes, and every entry under invalid_entries has an attestation that must fail.",
+    "Operator and volunteer IDs, which no log assigns, and entries' digests as signed, by which two logs are compared. An operator's ID is \"op:\" and the lowercase hex SHA-256 of the first public key it registered, as written (the hex of its key_digest); rotating or recovering the key keeps it. A volunteer's ID is \"obs:\" and the lowercase hex SHA-256 of the first passkey they joined with, as written. An entry's digest as signed is the SHA-256 of its canonical JSON with its signatures, the same on every log that holds it; leaf_entry is the entry as a log leaf holds it, each signature (sig, key_sig, voucher_sig, sponsor_sig, and consent_sig) replaced by its digest. Every signature in an entry verifies against its signer: sig is the operator's key's over the entry without sig (for these entries, the key of the operator the entry names); a key rotation's key_sig is the new key's over the entry without sig and key_sig; a vouch's voucher_sig is the log's key's (log_public_key) over the entry without its signatures, {\"type\": \"identity\", \"kind\": \"vouched\", \"operator\", \"voucher\"} and, for a vouch from a pairing link, \"pairing\", and so is that of a domain proven from a pairing link, over {\"type\": \"identity\", \"kind\": \"domain\", \"operator\", \"domain\", \"pairing\"}; an identity from a pairing link has no sig, and its consent_sig is the operator's key's over {\"type\": \"vouch_consent\", \"operator\", \"pairing\"}, where pairing is the SHA-256 of a pairing code as written; and an invite code's sponsor_sig is its sponsor's key's over {\"type\": \"invite\", \"sponsor\", \"code\"}. Every case under invalid must not be the ID its public_key makes, and every entry under invalid_entries has an attestation that must fail.",
   log_public_key: logKey.public_key,
   operators: operatorCases,
   observers: observerCases,

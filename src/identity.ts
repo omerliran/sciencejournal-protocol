@@ -40,7 +40,11 @@ export const VoucherSchema = z.union([GithubAccountSchema, CardSchema]);
 /**
  * How an operator's identity was established, each way recorded in the log:
  *
- * - a domain whose DNS names the operator's key, signed by the operator;
+ * - a domain whose DNS names the operator's key. Either the operator signs the entry, or its
+ *   person adds the record from the operator's pairing link: the operator consented to that
+ *   in advance (`pairing` and `consent_sig`, as for a vouch below), and the log attests in
+ *   `voucher_sig`, signing the entry without its signatures, that whoever brought the code
+ *   named the domain;
  * - a public GitHub repository whose `.sciencejournal` file names the operator's key, signed
  *   by the operator;
  * - a vouch from a GitHub account, its holder signing in with it on the node's site, or from a
@@ -129,14 +133,42 @@ const SponsoredIdentityEntrySchema = z.strictObject({
   sig: SignatureSchema,
 });
 
+const domain = {
+  type: z.literal("identity"),
+  kind: z.literal("domain"),
+  operator: OperatorIdSchema,
+  domain: DomainSchema,
+};
+
+/** A domain the operator proved itself: `sig` covers everything else. */
+export const ProvenDomainSchema = z.strictObject({ ...domain, sig: SignatureSchema });
+
+/**
+ * A domain the operator's person proved from its pairing link: the operator's consent to the
+ * pairing in `consent_sig`, and the log's attestation that whoever brought the code named the
+ * domain, in `voucher_sig`. The DNS record still names the operator's key, as for any domain.
+ */
+export const PairedDomainSchema = z.strictObject({ ...domain, pairing: DigestSchema, consent_sig: SignatureSchema, voucher_sig: SignatureSchema });
+
+/** Either form of a domain identity as one object, as the union of identity kinds needs it. */
+const DomainIdentityEntrySchema = z
+  .strictObject({
+    ...domain,
+    sig: SignatureSchema.optional(),
+    pairing: DigestSchema.optional(),
+    consent_sig: SignatureSchema.optional(),
+    voucher_sig: SignatureSchema.optional(),
+  })
+  .refine(
+    (entry) =>
+      entry.sig === undefined
+        ? entry.pairing !== undefined && entry.consent_sig !== undefined && entry.voucher_sig !== undefined
+        : entry.pairing === undefined && entry.consent_sig === undefined && entry.voucher_sig === undefined,
+    "A domain identity holds either sig, the operator proving it, or pairing, consent_sig, and voucher_sig, its person proving it from the operator's pairing link",
+  );
+
 const IdentityKindsSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    type: z.literal("identity"),
-    kind: z.literal("domain"),
-    operator: OperatorIdSchema,
-    domain: DomainSchema,
-    sig: SignatureSchema,
-  }),
+  DomainIdentityEntrySchema,
   z.strictObject({
     type: z.literal("identity"),
     kind: z.literal("github"),
@@ -156,18 +188,27 @@ const IdentityKindsSchema = z.discriminatedUnion("kind", [
 export type CountersignedVouchEntry = z.infer<typeof CountersignedVouchSchema>;
 export type PairedVouchEntry = z.infer<typeof PairedVouchSchema>;
 export type VouchedIdentityEntry = CountersignedVouchEntry | PairedVouchEntry;
+export type ProvenDomainEntry = z.infer<typeof ProvenDomainSchema>;
+export type PairedDomainEntry = z.infer<typeof PairedDomainSchema>;
+export type DomainIdentityEntry = ProvenDomainEntry | PairedDomainEntry;
 export type SponsoredIdentityEntry = z.infer<typeof SponsoredIdentityEntrySchema>;
-export type IdentityEntry = Exclude<z.infer<typeof IdentityKindsSchema>, { kind: "vouched" }> | VouchedIdentityEntry;
+export type IdentityEntry =
+  | Exclude<z.infer<typeof IdentityKindsSchema>, { kind: "vouched" | "domain" }>
+  | VouchedIdentityEntry
+  | DomainIdentityEntry;
 
 /**
  * Every identity entry, told apart by kind so a malformed one is reported against its own
- * kind's fields. Its type names each form of a vouch, which the refinement on
- * `VouchedIdentityEntrySchema` tells apart at runtime, so code reading one can too.
+ * kind's fields. Its type names each form of a vouch and of a domain, which the refinements
+ * on their schemas tell apart at runtime, so code reading one can too.
  */
 export const IdentityEntrySchema = IdentityKindsSchema as unknown as z.ZodType<IdentityEntry>;
 
-/** Whether the operator consented to a vouch in advance, rather than countersigning it; as signed or as its leaf holds it. */
-export function isPairedVouch<T extends { kind: "vouched" }>(entry: T): entry is Extract<T, { pairing: string }> {
+/**
+ * Whether the operator consented to the identity in advance, from its pairing link, rather
+ * than signing or countersigning it; as signed or as its leaf holds it.
+ */
+export function isPaired<T extends { kind: string }>(entry: T): entry is Extract<T, { pairing: string }> {
   return "pairing" in entry;
 }
 
@@ -234,6 +275,30 @@ export function consentPayload(consent: Pick<VouchConsent, "operator" | "pairing
 }
 
 /**
+ * The bytes the log signs to attest a paired domain, in `voucher_sig`: the entry without its
+ * signatures.
+ */
+export function pairedDomainPayload(entry: Pick<PairedDomainEntry, "operator" | "domain" | "pairing">): Uint8Array {
+  const unsigned = { type: "identity", kind: "domain", operator: entry.operator, domain: entry.domain, pairing: entry.pairing };
+  return signingPayload(unsigned);
+}
+
+/**
+ * The domain identity the log logs when a person proves a domain from the operator's pairing
+ * link: the log attests it in `voucher_sig`, and the consent's signature completes it.
+ */
+export function attestPairedDomain(consent: Pick<VouchConsent, "operator" | "pairing" | "sig">, domain: string, logKey: SigningKey): PairedDomainEntry {
+  const { operator, pairing } = consent;
+  const voucher_sig = sign(pairedDomainPayload({ operator, domain, pairing }), logKey);
+  return { type: "identity", kind: "domain", operator, domain, pairing, consent_sig: consent.sig, voucher_sig };
+}
+
+/** Whether a log key attested the paired domain. */
+export function verifyPairedDomain(entry: Pick<PairedDomainEntry, "operator" | "domain" | "pairing" | "voucher_sig">, logKey: string): boolean {
+  return verify(entry.voucher_sig, pairedDomainPayload(entry), logKey);
+}
+
+/**
  * The vouch the log logs when a person vouches with the pairing code of a consent: the log
  * attests it in `voucher_sig`, and the consent's signature completes it.
  */
@@ -243,7 +308,7 @@ export function attestPairedVouch(consent: Pick<VouchConsent, "operator" | "pair
   return { type: "identity", kind: "vouched", operator, voucher, pairing, consent_sig: consent.sig, voucher_sig };
 }
 
-/** Whether the operator's key signed the consent a paired vouch holds in `consent_sig`. */
+/** Whether the operator's key signed the consent a paired identity holds in `consent_sig`. */
 export function verifyConsent(entry: Pick<PairedVouchEntry, "operator" | "pairing" | "consent_sig">, operatorKey: string): boolean {
   return verify(entry.consent_sig, consentPayload(entry), operatorKey);
 }

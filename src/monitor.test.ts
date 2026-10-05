@@ -5,7 +5,15 @@ import { observerId, taskId, type TaskEntry } from "./fieldwork";
 import { threadId, type ThreadId } from "./forum";
 import { sha256Digest } from "./hash";
 import { ideaTextDigest } from "./ideas";
-import { attestPairedVouch, attestRecoveryApproval, attestVouch, invitePayload, pairingDigest, unsignedRecovery } from "./identity";
+import {
+  attestPairedDomain,
+  attestPairedVouch,
+  attestRecoveryApproval,
+  attestVouch,
+  invitePayload,
+  pairingDigest,
+  unsignedRecovery,
+} from "./identity";
 import type { SignedLeaf, TreeHead } from "./leaves";
 import {
   checkpointOf,
@@ -115,9 +123,14 @@ const vouchedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: 
 
 /** A pairing code's digest, as an operator's client makes the code from random bytes for the link it sends its person. */
 const PAIRING = pairingDigest(`pair:${"a".repeat(32)}`);
+/** Another, whose code frank's person proves a domain with. */
+const PAIRED_DOMAIN = pairingDigest(`pair:${"d".repeat(32)}`);
 /** A vouch from an operator's link: the operator consented in advance to its pairing, and the log attests the vouch. */
 const pairedIdentity = (log: MemoryLog, operator: string, keys: Keys, voucher: string, pairing = PAIRING, attester = log.secretKey) =>
   attestPairedVouch(signObject({ type: "vouch_consent" as const, operator, pairing }, keys.secretKey), voucher, attester);
+/** A domain a person proved from an operator's link: the operator consented in advance, and the log attests the domain. */
+const pairedDomain = (log: MemoryLog, operator: string, keys: Keys, domain: string, pairing: string, attester = log.secretKey) =>
+  attestPairedDomain(signObject({ type: "vouch_consent" as const, operator, pairing: pairing as `sha256:${string}` }, keys.secretKey), domain, attester);
 
 /** An invite code, as a sponsor's client makes one from random bytes. */
 const INVITE_CODE = `invite:${"a".repeat(32)}`;
@@ -252,9 +265,11 @@ async function realisticLog(): Promise<MemoryLog> {
   await log.append({ operator: erinId, entry: thread });
   await log.append({ operator: daveId, entry: forumPost(daveId, daveNext, threadId(thread)) });
 
-  // A person vouches with their GitHub account from the link their agent sent them, which the agent consented to in advance.
+  // A person vouches with their GitHub account from the link their agent sent them, which the agent consented to in advance,
+  // and later proves a domain of theirs for it from another link.
   await log.append({ operator: frankId, entry: keyEntry(frank, "Paired agent") });
   await log.append({ operator: frankId, entry: pairedIdentity(log, frankId, frank, "github:5150"), organization: "github:5150" });
+  await log.append({ operator: frankId, entry: pairedDomain(log, frankId, frank, "lab.example.net", PAIRED_DOMAIN), organization: "example.net" });
   return log;
 }
 
@@ -291,7 +306,7 @@ describe("monitorLog", () => {
       to: log.size,
       types: {
         key: 6,
-        identity: 6,
+        identity: 7,
         sealed: 7,
         key_rotation: 1,
         bundle: 2,
@@ -332,12 +347,12 @@ describe("monitorLog", () => {
     ]);
     // An invite code and a pairing are spent once used, and an identity keeps the organization its leaf gave it.
     expect(state!.audit.invites).toEqual([INVITE_CODE]);
-    expect(state!.audit.pairings).toEqual([PAIRING]);
+    expect(state!.audit.pairings).toEqual([PAIRING, PAIRED_DOMAIN].sort());
     expect(state!.audit.identities[bobId]).toEqual([{ index: 3, kind: "domain", domain: "lab.example.org", organization: "example.org" }]);
     // The state survives a round trip through a file, and one saved before invites reads as none.
     expect(MonitorStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
     const { invites, pairings, ...older } = state!.audit;
-    expect([invites, pairings]).toEqual([[INVITE_CODE], [PAIRING]]);
+    expect([invites, pairings]).toEqual([[INVITE_CODE], [PAIRING, PAIRED_DOMAIN].sort()]);
     expect(MonitorStateSchema.parse({ ...state, audit: older }).audit).toMatchObject({ invites: [], pairings: [] });
   });
 
@@ -907,12 +922,34 @@ describe("monitorLog", () => {
     await log.append({ operator: bobId, entry: consented, organization: "github:5154" });
     const { report } = await monitorLog(log.source(), null);
     expect(report.problems).toEqual([
-      { check: "identity", index: 6, reason: `The pairing ${PAIRING} completed a vouch before; each consent completes one` },
+      { check: "identity", index: 6, reason: `The pairing ${PAIRING} completed an identity before; each consent completes one` },
       { check: "signature", index: 7, reason: `The vouch's consent_sig doesn't verify against ${daveId}'s key from entry 2` },
       { check: "signature", index: 8, reason: "The vouch's voucher_sig doesn't verify against the log's key" },
       { check: "signature", index: 10, reason: `The vouch's consent_sig doesn't verify against ${bobId}'s key from entry 9` },
     ]);
     expect(report.unchecked).toContain(NOT_CHECKED.vouch);
+  });
+
+  it("holds a domain proven from a pairing link to its consent, the log's attestation, and a pairing used once", async () => {
+    const log = await logOf([
+      { operator: frankId, entry: keyEntry(frank) },
+      { operator: carolId, entry: keyEntry(carol) },
+      { operator: daveId, entry: keyEntry(dave) },
+    ]);
+    const other = (letter: string) => pairingDigest(`pair:${letter.repeat(32)}`);
+    await log.append({ operator: frankId, entry: pairedIdentity(log, frankId, frank, "github:5150", other("e")), organization: "github:5150" });
+    // The same pairing again, completing a domain this time: a pairing completes one identity of any kind.
+    await log.append({ operator: frankId, entry: pairedDomain(log, frankId, frank, "lab.example.org", other("e")), organization: "example.org" });
+    // A domain the log's key didn't attest, and a consent carol's key didn't sign.
+    await log.append({ operator: carolId, entry: pairedDomain(log, carolId, carol, "lab.example.org", other("f"), generateKeyPair().secretKey), organization: "example.org" });
+    await log.append({ operator: daveId, entry: pairedDomain(log, daveId, frank, "dave.example.org", other("g")), organization: "example.org" });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "identity", index: 4, reason: `The pairing ${other("e")} completed an identity before; each consent completes one` },
+      { check: "signature", index: 5, reason: "The domain's voucher_sig doesn't verify against the log's key" },
+      { check: "signature", index: 6, reason: `The domain's consent_sig doesn't verify against ${daveId}'s key from entry 2` },
+    ]);
+    expect(report.unchecked).toEqual(expect.arrayContaining([NOT_CHECKED.identity, NOT_CHECKED.vouch]));
   });
 
   it("allows an operator one identity of each kind", async () => {
