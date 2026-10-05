@@ -63,7 +63,7 @@ async function writeBundle(declared: number, overrides: Record<string, string> =
 
 function deps(): Deps & { lines: string[] } {
   const lines: string[] = [];
-  return { fetch, now: () => new Date(), print: (line) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness", lines };
+  return { fetch, now: () => new Date(), print: (line) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness", findEngine, lines };
 }
 
 const read = async <T>(path: string) => JSON.parse(await readFile(path, "utf8")) as T;

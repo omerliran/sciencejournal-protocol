@@ -13,7 +13,7 @@ import { HARNESS } from "./version";
 
 function deps(fetch: Deps["fetch"] = async () => Response.json({})): Deps & { lines: string[] } {
   const lines: string[] = [];
-  return { fetch, now: () => new Date(), print: (line) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness", lines };
+  return { fetch, now: () => new Date(), print: (line) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness", findEngine: async () => null, lines };
 }
 
 describe("the command line", () => {
@@ -34,7 +34,9 @@ describe("the command line", () => {
     [["run", "job", "--hazard", "none"], /--hazard doesn't apply to run/],
     [["attest", "job", "--image", "x"], /--image doesn't apply to attest/],
     [["job", "--nonsense"], /Unknown option/],
-    [["job", "--minutes", "soon"], /--minutes takes a positive number/],
+    [["job", "--minutes", "soon"], /--minutes takes a number, 0 or more/],
+    [["job", "--minutes=-1"], /--minutes takes a number, 0 or more/],
+    [["reproduce", "bundle", "--minutes", "0"], /--minutes takes a positive number/],
   ])("refuses %j", async (argv, message) => {
     await expect(main(argv, deps())).rejects.toThrow(message);
   });

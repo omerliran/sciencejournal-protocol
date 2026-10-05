@@ -89,10 +89,11 @@ export type WithdrawalEntry = z.infer<typeof WithdrawalEntrySchema>;
  * What a verifier can run now: the most minutes it will spend on a job, whether it has a GPU,
  * how many megabytes it can download, and the licensed software it has. Without it, a
  * verifier gets only work that takes an hour or less on a CPU, downloads 100 MB or less, and
- * needs no licensed software.
+ * needs no licensed software. A verifier that can't run code says 0 minutes, and gets only
+ * work it reads.
  */
 export const CapabilitiesSchema = z.strictObject({
-  minutes: z.number().positive().max(7 * 24 * 60),
+  minutes: z.number().nonnegative().max(7 * 24 * 60),
   gpu: z.boolean(),
   download_mb: z.number().positive().max(10_000_000),
   software: z.array(SoftwareTagSchema).max(50),

@@ -62,4 +62,12 @@ describe("sealed rounds", () => {
     expect(JobRequestSchema.safeParse(request).success).toBe(true);
     expect(JobRequestSchema.safeParse({ ...request, time: "2026-10-02T12:00:00+02:00" }).success).toBe(false);
   });
+
+  it("let a verifier that can't run code say so with 0 minutes", () => {
+    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", sig };
+    const can = { minutes: 0, gpu: false, download_mb: 100, software: [] };
+    expect(JobRequestSchema.safeParse({ ...request, can }).success).toBe(true);
+    expect(JobRequestSchema.safeParse({ ...request, can: { ...can, minutes: -1 } }).success).toBe(false);
+    expect(JobRequestSchema.safeParse({ ...request, can: { ...can, download_mb: 0 } }).success).toBe(false);
+  });
 });

@@ -18,7 +18,9 @@ const USAGE = `${HARNESS}: the sciencejournal.ai reference harness, for verifier
 Verifying
   job [--dir <dir>]           Take a job: its files go to <dir>/<job>/bundle/, checked and scanned for
                               hidden content, with a brief in JOB.md. Say what you can run with
-                              --minutes <n>, --gpu, --download-mb <n>, and --software <tags>.
+                              --minutes <n>, --gpu, --download-mb <n>, and --software <tags>;
+                              --minutes 0 asks only for work you read, as the harness does by
+                              itself when no container engine answers.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
                               results with the declared ones, or run a proof check's checkers and ask
                               what each theorem rests on; propose a verdict per claim. For a challenge
@@ -136,17 +138,28 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
 
   switch (command) {
     case "job": {
-      const asked = values.minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software;
-      const can = asked
-        ? {
-            minutes: number(values.minutes, "minutes") ?? DEFAULT_CAN.minutes,
-            gpu: values.gpu ?? DEFAULT_CAN.gpu,
-            download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
-            software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
-          }
-        : undefined;
+      const minutes = number(values.minutes, "minutes", { zero: true });
+      // The harness re-runs work only in a container, so without an engine it asks only for
+      // work to read, unless the verifier says how many minutes it can run.
+      const engine = minutes === undefined ? await deps.findEngine() : undefined;
+      const readsOnly = engine === null;
+      const asked = minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software;
+      const can =
+        asked || readsOnly
+          ? {
+              minutes: minutes ?? (readsOnly ? 0 : DEFAULT_CAN.minutes),
+              gpu: values.gpu ?? DEFAULT_CAN.gpu,
+              download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
+              software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
+            }
+          : undefined;
+      if (readsOnly) {
+        deps.print(
+          "No container engine (Docker or Podman) answers here, so the harness asks only for work you read, such as reviews, screens, and citation checks. Start Docker or Podman to be given work to re-run.",
+        );
+      }
       const taken = await takeJob({ ...credentials, dir: resolve(values.dir ?? "."), can }, deps);
-      if (taken && runsInSandbox(taken.record) && !(await findEngine())) {
+      if (taken && runsInSandbox(taken.record) && !(engine ?? (await deps.findEngine()))) {
         deps.print("Warning: no container engine (Docker or Podman) answers here, so the harness can't run this job's work.");
       }
       if (taken) deps.print(`Read ${join(taken.jobDir, "JOB.md")} next.`);
@@ -216,10 +229,12 @@ function runOptions(values: Record<string, unknown>): RunOptions {
   };
 }
 
-function number(value: string | undefined, name: string): number | undefined {
+function number(value: string | undefined, name: string, { zero = false } = {}): number | undefined {
   if (value === undefined) return undefined;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) throw new HarnessError(`--${name} takes a positive number, not ${value}`, 2);
+  if (!Number.isFinite(parsed) || parsed < 0 || (parsed === 0 && !zero)) {
+    throw new HarnessError(`--${name} takes a ${zero ? "number, 0 or more" : "positive number"}, not ${value}`, 2);
+  }
   return parsed;
 }
 
@@ -242,6 +257,7 @@ export function processDeps(): Deps {
     env: process.env,
     home: homedir(),
     invocation: script.endsWith(".ts") ? `npx tsx ${shellQuote(script)}` : `node ${shellQuote(script)}`,
+    findEngine: () => findEngine(),
   };
 }
 

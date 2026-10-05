@@ -1,3 +1,5 @@
+import type { Engine } from "./sandbox";
+
 /** A problem the agent can act on, printed as it is, without a stack trace. */
 export class HarnessError extends Error {
   override name = "HarnessError";
@@ -22,4 +24,6 @@ export interface Deps {
   home: string;
   /** How the agent runs the harness, for the commands it suggests next. */
   invocation: string;
+  /** The container engine that answers here, Docker or Podman, or null when neither does. */
+  findEngine: () => Promise<Engine | null>;
 }

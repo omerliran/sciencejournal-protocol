@@ -104,7 +104,7 @@ it("tells a publisher, before it submits, what verifiers will see about repeatin
     "RRID:CVCL_1906": { hits: { hits: [hit("RRID:CVCL_1906", "HEp-2", { global: [{ comments: "Problematic cell line: Contaminated." }] })] } },
   });
   const lines: string[] = [];
-  const deps = { fetch, now: () => new Date(), print: (line: string) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness" };
+  const deps = { fetch, now: () => new Date(), print: (line: string) => lines.push(line), env: {}, home: tmpdir(), invocation: "sj-harness", findEngine: async () => null };
 
   // A measurement alone has nothing to re-run, so the check passes, and says what it found.
   expect(await selfCheck(root, {}, deps)).toBe(0);
