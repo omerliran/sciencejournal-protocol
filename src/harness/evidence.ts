@@ -1,9 +1,11 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { digestEvidence } from "../bundle";
 import { HIDDEN_KINDS, revealHidden } from "../scan";
+import { HarnessError } from "./context";
 import { code, plural, seconds, shown, size } from "./format";
-import { listOutputs, readOutput, removeTree, sha256Output, under, writeJsonFile, writeUnder, type LogTail } from "./files";
+import { exists, listOutputs, readOutput, removeTree, sha256File, sha256Output, under, writeJsonFile, writeUnder, type LogTail } from "./files";
 import type { ScanRecord } from "./job";
 import { describePlan, type CommandPlan, type ImageInfo, type Limits, type RunResult } from "./sandbox";
 import type { CheckedTheorem } from "./proof-check";
@@ -95,15 +97,37 @@ export async function logBytes(evidenceDir: string): Promise<number> {
   return total;
 }
 
-/** Writes evidence/report.md and evidence/environment.json. */
-export async function writeReport(evidence: string, run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): Promise<void> {
+/**
+ * Writes evidence/report.md and evidence/environment.json. The report is the harness's, written
+ * again whenever the verdicts change, up to the moment they are sent, so it never writes over a
+ * report the verifier changed: what they added would be lost from the evidence without a word.
+ * What it wrote last is remembered by digest in `outDir`, beside the evidence and never in it.
+ */
+export async function writeReport(
+  dirs: { outDir: string; evidenceDir: string },
+  run: RunRecord | null,
+  verdicts: VerdictsRecord,
+  scan: ScanRecord | null,
+): Promise<void> {
+  const { outDir, evidenceDir: evidence } = dirs;
+  const path = join(evidence, "report.md");
+  const remembered = join(outDir, "report.sha256");
+  if ((await exists(path)) && (await sha256File(path)) !== (await readFile(remembered, "utf8").catch(() => "")).trim()) {
+    throw new HarnessError(
+      `${path} isn't the report the harness last wrote there. The harness writes that report again with the verdicts you send, so anything you added to it would be lost. Move what you added to a file of its own under ${evidence}, such as notes.md, which the harness sends as you wrote it, then delete report.md and run this again.`,
+    );
+  }
   await mkdir(evidence, { recursive: true });
   if (run) {
     const environment: Partial<RunRecord> = { ...run };
     delete environment.subject;
     await writeJsonFile(join(evidence, "environment.json"), environment);
   }
-  await writeFile(join(evidence, "report.md"), renderReport(run, verdicts, scan));
+  const logs = new Set<string>();
+  for (const name of ["run.log", "build.log"]) if (await exists(join(evidence, name))) logs.add(name);
+  const report = renderReport(run, verdicts, scan, logs);
+  await writeFile(path, report);
+  await writeFile(remembered, `${createHash("sha256").update(report).digest("hex")}\n`);
 }
 
 const TITLES: Partial<Record<VerdictsRecord["kind"], string>> = {
@@ -114,7 +138,8 @@ const TITLES: Partial<Record<VerdictsRecord["kind"], string>> = {
   challenge_rerun: "Re-run of the challenged claim",
 };
 
-export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null): string {
+/** The report; `logs` names the logs in the evidence beside it. */
+export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, scan: ScanRecord | null, logs: ReadonlySet<string>): string {
   const title = TITLES[verdicts.kind] ?? "Report";
   const lines = [
     `# ${title}`,
@@ -171,7 +196,7 @@ export function renderReport(run: RunRecord | null, verdicts: VerdictsRecord, sc
   }
 
   if (scan) lines.push("", "## Hidden content", "", ...hiddenContent(scan));
-  lines.push("", "## Files", "", ...files(run, verdicts));
+  lines.push("", "## Files", "", ...files(run, verdicts, logs));
   return `${lines.join("\n")}\n`;
 }
 
@@ -259,10 +284,11 @@ function hiddenContent(scan: ScanRecord): string[] {
   ];
 }
 
-function files(run: RunRecord | null, verdicts: VerdictsRecord): string[] {
+function files(run: RunRecord | null, verdicts: VerdictsRecord, logs: ReadonlySet<string>): string[] {
   const lines: string[] = [];
-  if (run?.result) lines.push("- `run.log`: everything the run printed, or its start and end when it was long.");
-  if (run?.image && !run.image.reused && run.image.plan.from !== "given") lines.push("- `build.log`: building the image.");
+  if (logs.has("run.log")) lines.push("- `run.log`: everything the run printed, or its start and end when it was long.");
+  else if (run?.result) lines.push("- No `run.log`: the run printed nothing.");
+  if (logs.has("build.log")) lines.push("- `build.log`: what preparing the image printed.");
   if (run) lines.push("- `environment.json`: the machine, engine, image, command, limits, and outcome.");
   for (const original of verdicts.originals ?? []) {
     const fetched = Object.entries(original.files).map(([path, digest]) => `${code(path)} (\`${digest}\`)`);

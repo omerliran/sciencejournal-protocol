@@ -201,7 +201,7 @@ export async function runSubject(
     const what = proving ? "the proof checks" : command.command;
     deps.print(`Running ${what} in ${box.engine.name}, with no network, for at most ${Math.round(limits.minutes * 100) / 100} minutes.`);
     run.result = await box.run({ image: run.image, workspace: fresh, command: command.command, limits }, sink);
-    const failure = failureOf(run.result, limits, subject.declaredMinutes, proving);
+    const failure = failureOf(run.result, limits, subject.declaredMinutes, proving, log.total > 0);
     if (failure) run.failure = failure;
     return await finish(subject, run, { build, run: log }, deps, { workspace: fresh, probe, output });
   } finally {
@@ -266,7 +266,7 @@ async function finish(
   if (run) await writeJsonFile(join(subject.outDir, "run.json"), run);
   await writeJsonFile(join(subject.outDir, "verdicts.json"), verdicts);
   const scan = await readJsonFile<ScanRecord>(join(subject.outDir, "scan.json")).catch(() => null);
-  await writeReport(subject.evidenceDir, run, verdicts, scan);
+  await writeReport(subject, run, verdicts, scan);
   printOutcome(subject, run, verdicts, logs.run, deps);
   return { run, verdicts };
 }
@@ -339,7 +339,7 @@ function recordOf(subject: Subject, now: Date): VerdictsRecord {
  * proof exits nonzero without the run failing, so a proof check fails only when the run itself
  * did: past its time, out of memory, or a command the engine couldn't start.
  */
-function failureOf(result: RunResult, limits: Limits, declaredMinutes: number, proving: boolean): string | undefined {
+function failureOf(result: RunResult, limits: Limits, declaredMinutes: number, proving: boolean, printed: boolean): string | undefined {
   if (result.timedOut) {
     const share = limits.minutes === declaredMinutes * 1.5 ? `, 1.5 times the ${declaredMinutes} the bundle declares,` : "";
     return `The run passed its time limit of ${Math.round(limits.minutes * 100) / 100} minutes${share} and was stopped.`;
@@ -353,7 +353,7 @@ function failureOf(result: RunResult, limits: Limits, declaredMinutes: number, p
   };
   const started = result.exitCode !== null && !(result.exitCode in meaning);
   if (result.exitCode !== 0 && !(proving && started)) {
-    return `The run exited with code ${result.exitCode}${meaning[result.exitCode ?? -1] ?? ""}; see run.log.`;
+    return `The run exited with code ${result.exitCode}${meaning[result.exitCode ?? -1] ?? ""}${printed ? "; see run.log." : " and printed nothing."}`;
   }
   return undefined;
 }

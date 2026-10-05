@@ -94,7 +94,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} a verifier's harness will flag (see ${join(outDir, "scan.json")}):`);
     for (const finding of scan.findings.slice(0, 8)) deps.print(`  ${finding.path}:${finding.line}:${finding.column} ${finding.kind}`);
   }
-  await checkRepeatable(files, paths, deps);
+  await checkFlagged(files, paths, deps);
   if (reproducible.length === 0 && provable.length === 0) {
     deps.print("No claim's evidence has a computation or a proof, so there is nothing to re-run or check.");
     return 0;
@@ -154,14 +154,32 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
 }
 
 /**
- * What verifiers will see about whether the work can be repeated: the paper's sections and the
- * files its claims call for, which the node flags, and what each RRID in materials.json resolves
- * to, which reviewers' harnesses look up.
+ * What the node will flag for verifiers in the paper and its references: numbers not bound to
+ * declared results, missing sections, uncited or unlisted sources, and missing files, so the
+ * publisher can fix them first. Then what each RRID in materials.json resolves to, which
+ * reviewers' harnesses look up.
  */
-async function checkRepeatable(files: ReadonlyMap<string, Uint8Array>, paths: string[], deps: Deps): Promise<void> {
+async function checkFlagged(files: ReadonlyMap<string, Uint8Array>, paths: string[], deps: Deps): Promise<void> {
   const flags = integrityFlags(files, paths);
+  if (flags.orphan_numbers.length > 0) {
+    deps.print(
+      `paper.md writes ${plural(flags.orphan_numbers.length, "number")} into its Summary, Claims, or Results that no declared result binds, in digits or in words; verifiers will see each flagged. Give a result as a placeholder such as {{R1.key}}, and a parameter in Methods:`,
+    );
+    for (const found of flags.orphan_numbers.slice(0, 20)) deps.print(`  line ${found.line}, column ${found.column}, in ${found.section}: ${found.number}`);
+    if (flags.orphan_numbers.length > 20) deps.print(`  and ${flags.orphan_numbers.length - 20} more`);
+  }
   if (flags.missing_sections.length > 0) {
     deps.print(`paper.md has no ${flags.missing_sections.join(", ")} ${flags.missing_sections.length === 1 ? "section" : "sections"}; verifiers will see that flagged.`);
+  }
+  if (flags.uncited_references.length > 0) {
+    deps.print(
+      `references.json lists ${plural(flags.uncited_references.length, "source")} that paper.md never cites: ${flags.uncited_references.join(", ")}. Cite each where you use it, as a link to its ID, such as [Klebanoff (2001)](doi:10.1142/S0218348X01000828); verifiers will see that flagged.`,
+    );
+  }
+  if (flags.unlisted_citations.length > 0) {
+    deps.print(
+      `paper.md cites ${plural(flags.unlisted_citations.length, "source")} that references.json doesn't list: ${flags.unlisted_citations.join(", ")}. List each there; verifiers will see that flagged.`,
+    );
   }
   for (const path of flags.missing_files) deps.print(`The bundle has no ${path}, though ${MISSING_FILE_REASONS[path]}; verifiers will see that flagged.`);
   if (!files.has("materials.json")) return;

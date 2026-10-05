@@ -35,6 +35,8 @@ it("lists what the node's integrity checks flagged, as things to look at", () =>
     orphan_numbers: [{ section: "Results", line: 9, column: 14, number: "0.412", excerpt: "Loss fell to 0.412." }],
     missing_sections: ["Methods"],
     missing_files: ["materials.json"],
+    uncited_references: ["pmid:12345"],
+    unlisted_citations: ["arxiv:2401.12345", "doi:10.1/x"],
     data: [
       { kind: "duplicate_rows", path: "data/runs.csv", rows: 40, duplicates: 2, examples: [{ row: 7, repeats: 3 }] },
       { kind: "benford", path: "data/sales.csv", column: "amount", values: 900, mad: 0.031, observed: [] },
@@ -49,10 +51,15 @@ it("lists what the node's integrity checks flagged, as things to look at", () =>
   expect(text).toContain("not a finding");
   expect(text).toContain("The paper has no Methods section");
   expect(text).toContain("The bundle has no `materials.json`, though a claim rests on a measurement");
+  expect(text).toContain("`references.json` lists 1 source the paper never cites, so nothing says what it supports: `pmid:12345`.");
+  expect(text).toContain("The paper cites 2 sources that `references.json` doesn't list, so no citation check judges them: `arxiv:2401.12345`, `doi:10.1/x`.");
+  expect(text).toContain("in digits or in words");
 });
 
 it("says when the checks flagged nothing, and leaves the section out for a node that doesn't run them", () => {
-  expect(brief({ orphan_numbers: [], missing_sections: [], missing_files: [], data: [], skipped: [] })).toContain("The node's checks flagged nothing");
+  expect(
+    brief({ orphan_numbers: [], missing_sections: [], missing_files: [], uncited_references: [], unlisted_citations: [], data: [], skipped: [] }),
+  ).toContain("The node's checks flagged nothing");
   // A node from before the paper and file checks doesn't send them.
   expect(brief({ orphan_numbers: [], data: [], skipped: [] } as unknown as IntegrityFlags)).toContain("The node's checks flagged nothing");
   expect(brief()).not.toContain("## Integrity flags");

@@ -2,7 +2,8 @@ import { ClaimsFileSchema, needsReplication } from "./claims";
 import { followed } from "./deviations";
 import { parseJson } from "./json";
 import { missingSections, parseMarkdown, plainText, sectionDepth, type MarkdownNode } from "./paper";
-import { ReferencesFileSchema } from "./references";
+import { spelledNumbers } from "./number-words";
+import { ReferenceIdSchema, ReferencesFileSchema } from "./references";
 import { RESULT_PLACEHOLDER } from "./results";
 import { revealHidden } from "./scan";
 
@@ -11,9 +12,15 @@ import { revealHidden } from "./scan";
 //
 // No orphan numbers: the sections of paper.md that state results (Summary, Claims, and
 // Results) give each result as a placeholder, {{R3.loss_delta}}, so the prose can't disagree
-// with the declared results. A number typed into one of those sections is flagged. Methods
-// and the other sections are where parameters live, such as a learning rate or a sample size,
-// so their numbers aren't.
+// with the declared results. A number typed into one of those sections is flagged, in digits
+// or spelled out in words, though prose may spell out the counts zero to nine, as in "two
+// methods". Methods and the other sections are where parameters live, such as a learning rate
+// or a sample size, so their numbers aren't.
+//
+// Citations: the paper cites a source where it uses it, as a link to the source's reference
+// ID, such as [Klebanoff (2001)](doi:10.1142/S0218348X01000828), and references.json lists
+// every source it cites. A reference the paper never cites, or a citation of an ID that
+// references.json doesn't list, is flagged, since a reader can't tell what supports what.
 //
 // What someone needs to repeat the work: paper.md's fixed sections, Methods among them, and the
 // files its claims call for: materials.json when a claim rests on a measurement, which only
@@ -41,7 +48,7 @@ export interface OrphanNumber {
   /** Where it starts: the line, from 1, and the column, from 1, counted in code points. */
   line: number;
   column: number;
-  /** The number as written. */
+  /** The number as written, in digits or in words. */
   number: string;
   /** The text around it on its line, with any hidden characters made visible. */
   excerpt: string;
@@ -83,6 +90,10 @@ export interface IntegrityFlags {
   missing_sections: string[];
   /** Files the bundle's claims call for that it doesn't have. */
   missing_files: CalledForFile[];
+  /** IDs references.json lists that paper.md never cites, in references.json's order. */
+  uncited_references: string[];
+  /** Reference IDs paper.md cites that references.json doesn't list, in the paper's order. */
+  unlisted_citations: string[];
   data: DataFlag[];
   /** Files too large to check, which a verifier checks itself if it matters. */
   skipped: { path: string; bytes: number }[];
@@ -127,7 +138,15 @@ export function isCheckedTable(path: string): boolean {
  */
 export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, paths?: Iterable<string>): IntegrityFlags {
   const read = [...files];
-  const flags: IntegrityFlags = { orphan_numbers: [], missing_sections: [], missing_files: [], data: [], skipped: [] };
+  const flags: IntegrityFlags = {
+    orphan_numbers: [],
+    missing_sections: [],
+    missing_files: [],
+    uncited_references: [],
+    unlisted_citations: [],
+    data: [],
+    skipped: [],
+  };
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const texts = new Map<string, string>();
   for (const [path, bytes] of read) {
@@ -150,6 +169,13 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, p
     const tree = parseMarkdown(paper);
     flags.orphan_numbers.push(...orphanNumbersIn(paper, tree).slice(0, INTEGRITY_LIMITS.orphanNumbersShown));
     flags.missing_sections.push(...missingSections(paper, tree));
+    const listed = listedReferences(texts.get("references.json"));
+    if (listed) {
+      const cited = citations(tree);
+      const known = new Set(listed);
+      flags.uncited_references.push(...listed.filter((id) => !cited.includes(id)));
+      flags.unlisted_citations.push(...cited.filter((id) => !known.has(id)));
+    }
   }
   flags.missing_files.push(
     ...missingFiles(texts.get("claims.json"), texts.get("references.json"), new Set(paths ?? read.map(([path]) => path))),
@@ -170,6 +196,35 @@ function missingFiles(claimsText: string | undefined, referencesText: string | u
   if (claims.data.some(needsReplication)) calledFor.push("materials.json");
   if (followed(claims.data, references?.success ? references.data : []).size > 0) calledFor.push("deviations.json");
   return calledFor.filter((path) => !paths.has(path));
+}
+
+/**
+ * The IDs references.json lists, in its order: none when there is no references.json, and null
+ * when it doesn't parse, which the bundle check rejects before anything is flagged.
+ */
+function listedReferences(text: string | undefined): string[] | null {
+  if (text === undefined) return [];
+  const references = ReferencesFileSchema.safeParse(parsed(text));
+  return references.success ? references.data.map((reference) => reference.id) : null;
+}
+
+// --- Citations ---------------------------------------------------------------------------
+
+/**
+ * The reference IDs a paper cites, once each, in the order it first cites them: every link
+ * whose target is a reference ID, inline (`[text](doi:…)`), automatic (`<claim:…>`), or by
+ * reference (`[text][label]` with `[label]: arxiv:…`).
+ */
+export function citations(tree: MarkdownNode): string[] {
+  const cited = new Set<string>();
+  const visit = (node: MarkdownNode) => {
+    if ((node.type === "link" || node.type === "definition") && node.url !== undefined && ReferenceIdSchema.safeParse(node.url).success) {
+      cited.add(node.url);
+    }
+    node.children?.forEach(visit);
+  };
+  visit(tree);
+  return [...cited];
 }
 
 function parsed(text: string): unknown {
@@ -195,9 +250,10 @@ const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 
 /**
  * Numbers typed into the sections that state results, outside the placeholders that bind
- * them. Skipped: code, math, raw HTML, images, link targets, headings, numbers that are part
- * of a name (C1, R3, GPT-4, ResNet-50), and years from 1900 to 2099, which date things rather
- * than measure them.
+ * them, in digits or spelled out in English words. Skipped: code, math, raw HTML, images, link
+ * targets, headings, numbers that are part of a name (C1, R3, GPT-4, ResNet-50), years from
+ * 1900 to 2099, which date things rather than measure them, and the single words for zero to
+ * nine and first to ninth, which prose spells out to count things.
  */
 export function orphanNumbers(markdown: string): OrphanNumber[] {
   return orphanNumbersIn(markdown, parseMarkdown(markdown));
@@ -234,23 +290,26 @@ function numbersIn(text: string, lines: number[], start: number, end: number, se
   const source = text.slice(start, end);
   // Numbers inside a placeholder are its result's name, not a value.
   const bound = [...source.matchAll(RESULT_PLACEHOLDER)].map((m) => [m.index, m.index + m[0].length] as const);
-  const found: OrphanNumber[] = [];
-  for (const match of source.matchAll(NUMBER)) {
-    const at = match.index;
-    if (bound.some(([from, to]) => at >= from && at < to)) continue;
-    if (partOfName(source, at, text, start)) continue;
-    if (isYear(match[0])) continue;
+  const unbound = (at: number) => !bound.some(([from, to]) => at >= from && at < to);
+  const numbers: { at: number; number: string }[] = [
+    ...[...source.matchAll(NUMBER)]
+      .filter((match) => unbound(match.index) && !partOfName(source, match.index, text, start) && !isYear(match[0]))
+      .map((match) => ({ at: match.index, number: match[0] })),
+    ...spelledNumbers(source)
+      .filter((spelled) => !spelled.small && unbound(spelled.start))
+      .map((spelled) => ({ at: spelled.start, number: spelled.text })),
+  ].sort((a, b) => a.at - b.at);
+  return numbers.map(({ at, number }) => {
     const offset = start + at;
     const line = lineIndex(lines, offset);
-    found.push({
+    return {
       section,
       line: line + 1,
       column: [...text.slice(lines[line], offset)].length + 1,
-      number: match[0],
+      number,
       excerpt: lineExcerpt(text, lines, line, offset),
-    });
-  }
-  return found;
+    };
+  });
 }
 
 /** Whether a number continues a word, as in C1 or R3, or follows one with a hyphen, as in GPT-4. */

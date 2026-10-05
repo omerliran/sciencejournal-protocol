@@ -68,6 +68,42 @@ describe("no orphan numbers", () => {
     expect(numbers("## Results\n\nUp 5.\n\n# Appendix\n\nTable 6.")).toEqual(["5"]);
   });
 
+  it("flags numbers spelled out in words, though prose may count to nine in words", () => {
+    const paper = [
+      "# Summary",
+      "",
+      "Two methods give {{R1.n_records}} records, covering the first ten million integers.",
+      "",
+      "# Methods",
+      "",
+      "We search the first ten million integers with one hundred threads.",
+      "",
+      "# Results",
+      "",
+      "Anchors: n equals twenty-seven with delay one hundred eleven; n equals eight hundred thirty-seven thousand seven hundred ninety-nine with delay five hundred twenty-four.",
+      "",
+      "It rose 4 points, then forty, in three of the runs, or two thirds of them.",
+    ].join("\n");
+    expect(numbers(paper)).toEqual([
+      "ten million",
+      "twenty-seven",
+      "one hundred eleven",
+      "eight hundred thirty-seven thousand seven hundred ninety-nine",
+      "five hundred twenty-four",
+      "4",
+      "forty",
+      "two thirds",
+    ]);
+    const found = orphanNumbers(paper).find((orphan) => orphan.number === "twenty-seven")!;
+    expect(found).toMatchObject({ section: "Results", line: 11 });
+    expect(paper.split("\n")[found.line - 1].slice(found.column - 1)).toMatch(/^twenty-seven with delay/);
+  });
+
+  it("leaves spelled-out numbers alone in placeholders, code, math, and headings", () => {
+    const paper = "# Results\n\n## Twenty-one runs\n\n{{R1.twenty_one}} and `ninety` and $\\text{forty}$.";
+    expect(numbers(paper)).toEqual([]);
+  });
+
   it("counts positions in code points, and shows hidden characters in excerpts", () => {
     const [found] = orphanNumbers("# Results\n\n🐝 rose by 3​ points.");
     expect(found).toMatchObject({ line: 3, column: 11, number: "3" });
@@ -169,6 +205,43 @@ describe("a bundle's integrity flags", () => {
     expect(flagged([claim("theoretical", [])], [["references.json", JSON.stringify([{ id: prereg }])]])).toEqual(["deviations.json"]);
     // A claims file that doesn't parse is the bundle check's to reject, not a flag's.
     expect(integrityFlags([["claims.json", encode("[{")]]).missing_files).toEqual([]);
+  });
+
+  it("flag sources references.json lists that the paper never cites, and citations it doesn't list", () => {
+    const claim = `claim:${"a".repeat(64)}`;
+    const paper = [
+      "# Methods",
+      "",
+      "We follow [Leavens and Vermeulen (1992)](doi:10.1016/0898-1221(92)90034-F) and <" + claim + ">,",
+      "and extend [an earlier bound][bound].",
+      "",
+      "[bound]: arxiv:2401.12345",
+      "",
+      "See also [the code](code/run.py), [a page](https://example.org), and [a mistyped ID](claim:abc).",
+    ].join("\n");
+    const references = [
+      { id: "doi:10.1016/0898-1221(92)90034-F", title: "3x+1 search programs", authors: ["Leavens, G. T."], year: 1992 },
+      { id: claim },
+      { id: "pmid:12345", title: "A source", authors: ["A. Author"], year: 2001 },
+    ];
+    const flags = integrityFlags([
+      ["paper.md", encode(paper)],
+      ["references.json", encode(JSON.stringify(references))],
+    ]);
+    expect(flags.uncited_references).toEqual(["pmid:12345"]);
+    expect(flags.unlisted_citations).toEqual(["arxiv:2401.12345"]);
+
+    // Without references.json, every citation is unlisted; with one that doesn't parse, the bundle check rejects it first.
+    expect(integrityFlags([["paper.md", encode(paper)]]).unlisted_citations).toEqual([
+      "doi:10.1016/0898-1221(92)90034-F",
+      claim,
+      "arxiv:2401.12345",
+    ]);
+    const broken = integrityFlags([
+      ["paper.md", encode(paper)],
+      ["references.json", encode("[{")],
+    ]);
+    expect([broken.uncited_references, broken.unlisted_citations]).toEqual([[], []]);
   });
 
   it("skip tables too large to check, and say so", () => {

@@ -24,6 +24,7 @@ export * from "./merkle";
 export * from "./paper";
 export * from "./monitor";
 export * from "./notes";
+export * from "./number-words";
 export * from "./passkey";
 export * from "./proofs";
 export * from "./receipts";

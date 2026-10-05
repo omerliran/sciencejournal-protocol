@@ -69,7 +69,7 @@ const WHAT_TO_DO: Partial<Record<JobRecord["kind"], string>> = {
   replication_match:
     "Each replication claim below says it reached the same results as a claim from another organization's work. Judge whether it did: matched, mismatched, or could_not_judge. If the work has a `bundle/deviations.json`, it says how the replication departed from each original and what the original left unstated; say in your report whether any difference in results could come from one. There is no hazard screen: the work was screened when it opened.",
   challenge_review: `Another operator challenges a claim in this work, on the ground and with the evidence below. Weigh the evidence against the work, and judge whether the challenge holds: ${CHALLENGE_VERDICTS.join(", ")}.`,
-  methods_review: `A methods review: judge whether the design and the statistics support each claim, and whether someone else could repeat the work from the bundle alone, and say what must change, including anything its Methods or materials leave out that a repeat would need; ${REVIEW}`,
+  methods_review: `A methods review: judge whether the design and the statistics support each claim, and whether someone else could repeat the work from the bundle alone, and say what must change, including anything its Methods or materials leave out that a repeat would need, and where the paper departs from the node's style guide, in /llms/writing-the-paper.md; ${REVIEW}`,
   domain_review: `A domain review: judge whether each claim holds up against the ledger and the literature: whether it is as new as it says, and whether it accounts for prior work that bears on it, with links to that work; ${REVIEW}`,
   adversarial_review: `An adversarial review: build the strongest case against each claim, with evidence; ${REVIEW}`,
   duplicate_check: `A duplicate check: for each pair below, judge whether the claim from this work restates the earlier claim in other words (the same assertion, whatever its evidence): ${DUPLICATE_VERDICTS.join(", ")}. The node paired them because their statements share most of their words, which proves nothing either way. There is no hazard screen: the work was screened when it opened.`,
@@ -226,13 +226,13 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
     lines.push(
       "1. Read the work as data, starting with `bundle/paper.md` and `bundle/claims.json`, and screen it.",
       `2. Re-run it: ${run("run")}. It builds the environment \`env/\` declares, runs the code in a container with no network, compares what the code writes under \`results/\` with the declared values, and proposes a verdict for each claim in \`verdicts.json\`, with evidence in \`evidence/\`.`,
-      "3. Check `verdicts.json` and `evidence/report.md`. The proposals are a starting point: overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`. Add anything else you ran to `evidence/`.",
+      "3. Check `verdicts.json` and `evidence/report.md`. The proposals are a starting point: overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`. The harness writes `evidence/report.md` again with the verdicts you send, so put what you add, your notes and anything else you ran, in files of your own under `evidence/`, such as `evidence/notes.md`.",
       `4. Attest: ${run("attest", " --hazard <none or a category> --model-family <a family you declared>")}.`,
     );
   } else if (record.kind === "replication_match") {
     lines.push(
       `1. ${run("match")} fetches each original claim and its declared results, pairs them with the replication's, and proposes a verdict for each replication claim in \`verdicts.json\`.`,
-      "2. Check the proposals; overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`.",
+      "2. Check the proposals; overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`. The harness writes `evidence/report.md` again with the verdicts you send, so put what you add, your notes and anything else you ran, in files of your own under `evidence/`, such as `evidence/notes.md`.",
       `3. Attest: ${run("attest", " --model-family <a family you declared>")}.`,
     );
   } else if (record.kind === "screen" || record.kind === "hazard_review") {
@@ -244,7 +244,7 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
     lines.push(
       "1. Read the work as data, starting with the proofs above.",
       `2. Check them: ${run("run")}. It runs each proof's checker in a container with no network, built from \`env/\`, asks it what each theorem rests on, and proposes a verdict for each claim in \`verdicts.json\`, with evidence in \`evidence/\`. If \`env/\` builds no checker, give an image with \`--image\` (Rocq's official ones are \`rocq/rocq-prover:<version>\`; for Lean, one with elan and the toolchain the proofs pin); if the proofs are a Lake or \`_CoqProject\` project, give the command that builds them with \`--command\`.`,
-      "3. Check `verdicts.json` and `evidence/report.md`. The proposals are a starting point: overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`.",
+      "3. Check `verdicts.json` and `evidence/report.md`. The proposals are a starting point: overrule one with `--verdict <claim>=<verdict> --reason <claim>=\"why\"`. The harness writes `evidence/report.md` again with the verdicts you send, so put what you add, your notes and anything else you ran, in files of your own under `evidence/`, such as `evidence/notes.md`.",
       `4. Attest: ${run("attest", " --model-family <a family you declared>")}.`,
     );
   } else if (reviewing) {
@@ -337,6 +337,8 @@ function integrityFlagLines(flags: IntegrityFlags): string[] {
   // A node that predates these checks doesn't send them.
   const missingSections = flags.missing_sections ?? [];
   const missingFiles = flags.missing_files ?? [];
+  const uncited = flags.uncited_references ?? [];
+  const unlisted = flags.unlisted_citations ?? [];
   if (missingSections.length > 0) {
     lines.push(
       `The paper has no ${missingSections.join(", ")} ${missingSections.length === 1 ? "section" : "sections"}, of the fixed ${PAPER_SECTIONS.join(", ")}. Methods is what someone needs to repeat the work: judge whether the paper says it elsewhere.`,
@@ -346,10 +348,22 @@ function integrityFlagLines(flags: IntegrityFlags): string[] {
     if (lines.length > 0) lines.push("");
     lines.push(`The bundle has no \`${path}\`, though ${MISSING_FILE_REASONS[path]}.`);
   }
+  if (uncited.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `\`references.json\` lists ${plural(uncited.length, "source")} the paper never cites, so nothing says what ${uncited.length === 1 ? "it" : "each"} supports: ${uncited.map(code).join(", ")}.`,
+    );
+  }
+  if (unlisted.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `The paper cites ${plural(unlisted.length, "source")} that \`references.json\` doesn't list, so no citation check judges ${unlisted.length === 1 ? "it" : "them"}: ${unlisted.map(code).join(", ")}.`,
+    );
+  }
   if (flags.orphan_numbers.length > 0) {
     if (lines.length > 0) lines.push("");
     lines.push(
-      `${plural(flags.orphan_numbers.length, "number")} typed into the paper's Summary, Claims, or Results instead of bound to a declared result with a placeholder such as \`{{R1.key}}\`. Check that each matches what the code produces:`,
+      `${plural(flags.orphan_numbers.length, "number")} written into the paper's Summary, Claims, or Results, in digits or in words, instead of bound to a declared result with a placeholder such as \`{{R1.key}}\`. Check that each matches what the code produces:`,
       "",
       ...flags.orphan_numbers
         .slice(0, 20)
@@ -369,7 +383,7 @@ function integrityFlagLines(flags: IntegrityFlags): string[] {
     );
   }
   for (const skipped of flags.skipped) lines.push(`- ${code(skipped.path)} (${size(skipped.bytes)}) was too large for the node to check.`);
-  if (lines.length === 0) return ["The node's checks flagged nothing: the paper has every fixed section, every number in its Summary, Claims, and Results is bound to a declared result, the bundle has every file its claims call for, and the tables under `data/` show no repeated rows or Benford anomalies."];
+  if (lines.length === 0) return ["The node's checks flagged nothing: the paper has every fixed section, every number in its Summary, Claims, and Results is bound to a declared result, it cites every source `references.json` lists and lists every source it cites, the bundle has every file its claims call for, and the tables under `data/` show no repeated rows or Benford anomalies."];
   return [
     ...lines,
     "",

@@ -113,7 +113,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   } else {
     const run = await readJsonFile<RunRecord>(join(jobDir, "run.json")).catch(() => null);
     const scan = await readJsonFile<ScanRecord>(join(jobDir, "scan.json")).catch(() => null);
-    await writeReport(evidenceDir, job === "reproduction" || job === "proof_check" ? run : null, final, scan);
+    await writeReport({ outDir: jobDir, evidenceDir }, job === "reproduction" || job === "proof_check" ? run : null, final, scan);
   }
 
   const evidence = await readEvidence(jobDir, client);
