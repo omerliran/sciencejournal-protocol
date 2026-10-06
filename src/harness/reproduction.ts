@@ -1,6 +1,6 @@
 import { closeSync, openSync, readSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { arch, platform } from "node:os";
 import { join } from "node:path";
 import { VERIFICATION_INPUT_DIRECTORIES } from "../bundle";
@@ -12,8 +12,20 @@ import { HarnessError, type Deps } from "./context";
 import { BUILD_LOG, copyResults, EVIDENCE_BUDGET, logBytes, RUN_LOG, writeLogs, writeReport, type RunRecord } from "./evidence";
 import { plural, seconds } from "./format";
 import { cloneTree, exists, listOutputs, LogTail, readFiles, readJsonFile, readOutput, removeTree, under, writeJsonFile } from "./files";
+import { COMPILE_DIR } from "./judge";
 import { answeredWith, loadJob, parseClaims, runsInSandbox, type ScanRecord } from "./job";
-import { askAboutTheorems, checkTheorems, findUnfinished, proofCommand, ProofOutput, proofProbe, type ProofProbe } from "./proof-check";
+import { leanToolchain, leanToolchainOfVersion, rocqVersionOf, runJudge, type JudgeAnswer, type JudgeImage, type JudgeRun } from "./judge";
+import {
+  assumptions,
+  checkTheorems,
+  compileCommand,
+  findUnfinished,
+  judgeAsks,
+  placeProofs,
+  ProofOutput,
+  proofProbe,
+  type ProofProbe,
+} from "./proof-check";
 import {
   containerSandbox,
   describePlan,
@@ -131,7 +143,7 @@ export async function runSubject(
   const proving = subject.kind === "proof_check";
   const probe = proving ? proofProbe(subject.claims.flatMap((claim) => claim.proofs)) : null;
   const command: CommandPlan = probe
-    ? proofCommand(probe, options.command)
+    ? compileCommand(probe, options.command)
     : planCommand(
         paths,
         subject.claims.flatMap((claim) => claim.computations.map((computation) => computation.produced_by)),
@@ -193,17 +205,20 @@ export async function runSubject(
       await removeTree(scratch);
     }
     await mkdir(join(fresh, "results"), { recursive: true });
-    // After the build, so the questions never change what the image is built from.
-    if (probe) await askAboutTheorems(fresh, probe);
+    // After the build, so the copies never change what the image is built from.
+    if (probe) await placeProofs(fresh, probe);
     const sink: OutputSink = output
       ? { write: (chunk, stream) => (log.write(chunk), output.write(chunk, stream)) }
       : log;
-    const what = proving ? "the proof checks" : command.command;
+    const what = proving ? "the proofs' compilation" : command.command;
     deps.print(`Running ${what} in ${box.engine.name}, with no network, for at most ${Math.round(limits.minutes * 100) / 100} minutes.`);
     run.result = await box.run({ image: run.image, workspace: fresh, command: command.command, limits }, sink);
     const failure = failureOf(run.result, limits, subject.declaredMinutes, proving, log.total > 0);
     if (failure) run.failure = failure;
-    return await finish(subject, run, { build, run: log }, deps, { workspace: fresh, probe, output });
+    const judgeLog = new LogTail(RUN_LOG.head, RUN_LOG.tail);
+    const judged = probe && output && !failure ? await judgeProofs(subject, probe, output, box, limits, fresh, judgeLog, deps) : null;
+    if (judged) run.judges = judged.runs;
+    return await finish(subject, run, { build, run: log, judge: judgeLog }, deps, { workspace: fresh, probe, output, judged });
   } finally {
     await removeTree(fresh);
   }
@@ -235,21 +250,22 @@ export async function compareAgain(subject: Subject, deps: Deps): Promise<{ run:
 async function finish(
   subject: Subject,
   run: RunRecord | null,
-  logs: { build?: LogTail; run?: LogTail },
+  logs: { build?: LogTail; run?: LogTail; judge?: LogTail },
   deps: Deps,
   {
     ignoreFailure = false,
     workspace,
     probe = null,
     output = null,
-  }: { ignoreFailure?: boolean; workspace?: string; probe?: ProofProbe | null; output?: ProofOutput | null } = {},
+    judged = null,
+  }: { ignoreFailure?: boolean; workspace?: string; probe?: ProofProbe | null; output?: ProofOutput | null; judged?: Judged | null } = {},
 ): Promise<{ run: RunRecord | null; verdicts: VerdictsRecord }> {
   if (workspace) await rename(workspace, join(subject.outDir, "workspace"));
   await writeLogs(subject.evidenceDir, logs);
   const failure = ignoreFailure ? undefined : run?.failure;
   let verdicts: VerdictsRecord;
   if (probe) {
-    verdicts = await checkProofs(subject, probe, output, run?.result?.exitCode ?? null, failure, deps.now());
+    verdicts = await checkProofs(subject, probe, output, run?.result?.exitCode ?? null, failure, judged, deps.now());
   } else {
     const named = new Set(
       subject.claims.flatMap((claim) => claim.computations.flatMap((computation) => resultLocation(computation.result)?.path ?? [])),
@@ -301,16 +317,109 @@ async function compareSubject(subject: Subject, failure: string | undefined, nam
   };
 }
 
-/** Each claim's proof-check proposal, from what the checker said about each theorem it names. */
+/** What the judge said about each theorem, by its index in the probe, and why it said nothing, if it couldn't run. */
+interface Judged {
+  answers: Map<number, JudgeAnswer>;
+  failure?: string;
+  runs: JudgeRun[];
+}
+
+/**
+ * Runs the judge for each checker the proofs use, on what the first step compiled: Lean's
+ * modules with their parts, Rocq's compiled files. The judge's image comes from the toolchain
+ * the proofs pin (`lean-toolchain` in proofs/ or env/, and Mathlib from a `lake-manifest.json`
+ * there), or else from the version the work's image said it has: an image that lies about it
+ * gets a judge that can't load what it compiled, which is could_not_run, never a pass.
+ */
+async function judgeProofs(
+  subject: Subject,
+  probe: ProofProbe,
+  output: ProofOutput,
+  box: Sandbox,
+  limits: Limits,
+  workspace: string,
+  log: LogTail,
+  deps: Deps,
+): Promise<Judged> {
+  const judged: Judged = { answers: new Map(), runs: [] };
+  const failures: string[] = [];
+  for (const checker of [...new Set(probe.files.map((file) => file.checker))]) {
+    const asks = judgeAsks(probe, checker);
+    if (asks.length === 0) continue;
+    const image = await judgeImageFor(checker, subject, output);
+    if (typeof image === "string") {
+      failures.push(image);
+      judged.runs.push({ checker, failure: image });
+      continue;
+    }
+    const compiled = probe.files
+      .filter((file) => file.checker === checker)
+      .flatMap((file) =>
+        (checker === "lean4" ? [".olean", ".olean.server", ".olean.private"] : [".vo"]).map((extension) => ({
+          from: join(workspace, COMPILE_DIR, `${file.module}${extension}`),
+          name: `${file.module}${extension}`,
+        })),
+      );
+    const { answers, run } = await runJudge(
+      box,
+      {
+        image,
+        asks,
+        compiled,
+        dir: join(subject.outDir, `.judge-${randomBytes(6).toString("hex")}`),
+        limits: { ...limits, minutes: Math.max(10, limits.minutes) },
+        assumptions: (lines) => assumptions("rocq", lines),
+      },
+      log,
+      deps.print,
+    );
+    judged.runs.push(run);
+    if (!answers) failures.push(run.failure ?? "The judge didn't run");
+    else for (const [i, ask] of asks.entries()) judged.answers.set(ask.index, answers[i]);
+  }
+  if (failures.length > 0) judged.failure = failures.join(" ");
+  return judged;
+}
+
+/** The judge's image for a checker, or why there is none. */
+async function judgeImageFor(checker: "lean4" | "rocq", subject: Subject, output: ProofOutput): Promise<JudgeImage | string> {
+  const text = async (path: string) => (path in subject.files ? await readFile(under(subject.bundleDir, path), "utf8").catch(() => null) : null);
+  if (checker === "rocq") {
+    const version = rocqVersionOf(output.versions.get("rocq") ?? "");
+    return version ? { checker, version } : "The image didn't say which Rocq it has, so there is no judge to check its compiled proofs.";
+  }
+  let toolchain: string | null = null;
+  for (const path of ["proofs/lean-toolchain", "env/lean-toolchain"]) toolchain ??= leanToolchain((await text(path)) ?? "");
+  toolchain ??= leanToolchainOfVersion(output.versions.get("lean4") ?? "");
+  if (!toolchain) {
+    return "The proofs pin no Lean toolchain (no proofs/lean-toolchain or env/lean-toolchain), and the image didn't say which Lean it has, so there is no judge to check them.";
+  }
+  let mathlib: string | undefined;
+  for (const path of ["proofs/lake-manifest.json", "env/lake-manifest.json"]) {
+    const manifest = await text(path);
+    if (mathlib || !manifest) continue;
+    try {
+      const packages = (JSON.parse(manifest) as { packages?: { name?: unknown; rev?: unknown }[] }).packages ?? [];
+      const rev = packages.find((p) => p.name === "mathlib")?.rev;
+      if (typeof rev === "string" && /^[0-9a-f]{40}$/.test(rev)) mathlib = rev;
+    } catch {
+      continue;
+    }
+  }
+  return { checker, toolchain, ...(mathlib && { mathlib }) };
+}
+
+/** Each claim's proof-check proposal, from what the judge said about each theorem it names. */
 async function checkProofs(
   subject: Subject,
   probe: ProofProbe,
   output: ProofOutput | null,
   exitCode: number | null,
   failure: string | undefined,
+  judged: Judged | null,
   now: Date,
 ): Promise<VerdictsRecord> {
-  const theorems = failure || !output ? [] : checkTheorems(probe, output, exitCode);
+  const theorems = failure || !output ? [] : checkTheorems(probe, output, exitCode, judged?.answers ?? new Map(), judged?.failure);
   const unfinished = await findUnfinished(subject.bundleDir, Object.keys(subject.files), probe.files.map((file) => file.checker));
   return {
     ...recordOf(subject, now),

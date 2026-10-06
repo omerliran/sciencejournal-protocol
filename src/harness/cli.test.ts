@@ -41,9 +41,10 @@ describe("the command line", () => {
     await expect(main(argv, deps())).rejects.toThrow(message);
   });
 
-  it("answers every kind of job with a command it has, and attests to exactly the attestation jobs", () => {
+  it("answers every kind of job with a command it has, and attests to exactly the attestation jobs and goal checks", () => {
     for (const kind of JOB_KINDS) expect(COMMANDS).toContain(ANSWERED_WITH[kind]);
-    expect(JOB_KINDS.filter((kind) => ANSWERED_WITH[kind] === "attest").sort()).toEqual(Object.keys(ATTESTATION_JOBS).sort());
+    // A goal check's verdict is sent to the same place, as an entry of its own.
+    expect(JOB_KINDS.filter((kind) => ANSWERED_WITH[kind] === "attest").sort()).toEqual([...Object.keys(ATTESTATION_JOBS), "goal_check"].sort());
   });
 
   it("needs a key to act as", async () => {

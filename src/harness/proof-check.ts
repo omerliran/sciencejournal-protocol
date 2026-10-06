@@ -1,20 +1,20 @@
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ProofEvidence } from "../claims";
-import { PROOF_FILE_EXTENSIONS, unfinishedProofs, type UnfinishedProof } from "../proofs";
+import { PROOF_FILE_EXTENSIONS, THEOREM_NAMES, unfinishedProofs, type UnfinishedProof } from "../proofs";
 import type { ProofChecker } from "../vocabulary";
 import { HarnessError } from "./context";
 import { under } from "./files";
-import { shellQuote } from "./format";
+import { COMPILE_DIR, moduleName, type JudgeAnswer, type JudgeAsk } from "./judge";
 import type { CommandPlan } from "./sandbox";
 
-// Proof checks. The checker runs on each proof file in the sandbox, and the harness asks it, at
-// the end of its own copy of the file, what each named theorem rests on: Lean's `#print axioms`,
-// Rocq's `Print Assumptions`. A theorem passes when the checker accepts its file and it rests on
-// nothing beyond the checker's standard axioms. Each question is preceded by a marker holding a
-// fresh random nonce, so a report counts only if it follows the harness's own question; a proof
-// file runs code while it is checked and can print anything, but it can't know the nonce
-// without reading its own copy, which is a deliberate attack the log shows. The agent decides.
+// Proof checks, in the two steps judge.ts describes. The first compiles each proof file, copied
+// under a module name the harness picks, in the image the work declares, and says whether the
+// checker accepted it. The second, the judge, decides what each named theorem is and rests on.
+// A theorem passes when its file compiled without errors, the judge found it accepted by the
+// kernel, and it rests on nothing beyond the checker's standard axioms. What the first step
+// printed is only a record: a proof file runs code while it is compiled and can print anything.
 
 /** The axioms each checker's foundations assume. Anything else, `sorryAx` included, is an assumption. */
 export const STANDARD_AXIOMS: Record<ProofChecker, readonly string[]> = {
@@ -22,29 +22,23 @@ export const STANDARD_AXIOMS: Record<ProofChecker, readonly string[]> = {
   rocq: [],
 };
 
-const NAMES: Record<ProofChecker, RegExp> = {
-  // Lean names: parts of letters, digits, `_`, `'`, `!`, `?`, or «quoted», joined by dots.
-  lean4: /^(?:«[^»\n]+»|[\p{L}_][\p{L}\p{N}_'!?]*)(?:\.(?:«[^»\n]+»|[\p{L}_][\p{L}\p{N}_'!?]*))*$/u,
-  // Rocq names: identifiers of letters, digits, `_`, and `'`, joined by dots.
-  rocq: /^[\p{L}_][\p{L}\p{N}_']*(?:\.[\p{L}_][\p{L}\p{N}_']*)*$/u,
-};
-
 export interface ProofFile {
   path: string;
   checker: ProofChecker;
-  /** Lines in the file as published; the harness's questions come after them. */
-  lines: number;
-  theorems: { theorem: string; index: number; line: number }[];
+  /** The module the harness compiles it as. */
+  module: string;
+  /** Where its copy goes in the workspace, compiled under the module's name. */
+  copy: string;
+  theorems: { theorem: string; index: number }[];
 }
 
-/** The questions the harness asks a run, and how to recognize the answers. */
+/** The proofs a check compiles and the theorems the judge is asked about. */
 export interface ProofProbe {
   nonce: string;
   files: ProofFile[];
   /** Theorems whose names the checker couldn't be asked about safely. */
   unaskable: { proof: string; theorem: string }[];
 }
-
 
 /** The proofs to check, from the claims' evidence: each file once, in order of first appearance. */
 export function proofProbe(proofs: readonly ProofEvidence[], nonce = randomBytes(8).toString("hex")): ProofProbe {
@@ -56,67 +50,55 @@ export function proofProbe(proofs: readonly ProofEvidence[], nonce = randomBytes
     if (file && file.checker !== proof.checker) {
       throw new HarnessError(`Claims name ${proof.proof} for two checkers, ${file.checker} and ${proof.checker}`);
     }
-    if (!file) files.push((file = { path: proof.proof, checker: proof.checker, lines: 0, theorems: [] }));
-    if (!NAMES[proof.checker].test(proof.theorem)) {
+    if (!file) {
+      const compiled = moduleName(files.length);
+      files.push((file = { path: proof.proof, checker: proof.checker, module: compiled, copy: `${COMPILE_DIR}/${compiled}${PROOF_FILE_EXTENSIONS[proof.checker]}`, theorems: [] }));
+    }
+    if (!THEOREM_NAMES[proof.checker].test(proof.theorem)) {
       unaskable.push({ proof: proof.proof, theorem: proof.theorem });
       continue;
     }
-    if (!file.theorems.some((t) => t.theorem === proof.theorem)) file.theorems.push({ theorem: proof.theorem, index: index++, line: 0 });
+    if (!file.theorems.some((t) => t.theorem === proof.theorem)) file.theorems.push({ theorem: proof.theorem, index: index++ });
   }
   return { nonce, files, unaskable };
 }
 
 const marker = (nonce: string, what: string | number) => `sj_harness_${nonce}_${what}`;
 
-/**
- * Adds the harness's questions to the end of each proof file in the workspace, and records the
- * lines they are on, so the checker's errors there are known to be about them.
- */
-export async function askAboutTheorems(workspace: string, probe: ProofProbe): Promise<void> {
-  for (const [f, file] of probe.files.entries()) {
-    const target = under(workspace, file.path);
-    let text = await readFile(target, "utf8").catch(() => {
+/** Copies each proof file to where the first step compiles it, under its module's name. */
+export async function placeProofs(workspace: string, probe: ProofProbe): Promise<void> {
+  await mkdir(join(workspace, COMPILE_DIR), { recursive: true });
+  for (const file of probe.files) {
+    await copyFile(under(workspace, file.path), under(workspace, file.copy)).catch(() => {
       throw new HarnessError(`${file.path}, which a claim names, isn't in the bundle`);
     });
-    if (!text.endsWith("\n")) text += "\n";
-    file.lines = text.split("\n").length - 1;
-    const lines: string[] = [""];
-    for (const theorem of file.theorems) {
-      const name = marker(probe.nonce, theorem.index);
-      if (file.checker === "lean4") {
-        lines.push(`#print "${name}"`);
-        theorem.line = file.lines + lines.length + 1;
-        lines.push(`#print axioms ${theorem.theorem}`);
-      } else {
-        lines.push(`Definition ${name} := Prop.`, `Print ${name}.`);
-        theorem.line = file.lines + lines.length + 1;
-        lines.push(`Print Assumptions ${theorem.theorem}.`);
-      }
-    }
-    const end = marker(probe.nonce, `end${f}`);
-    lines.push(...(file.checker === "lean4" ? [`#print "${end}"`] : [`Definition ${end} := Prop.`, `Print ${end}.`]));
-    await writeFile(target, `${text}${lines.join("\n")}\n`);
   }
 }
 
 /**
- * The command that checks every proof file: the one given, or each file with its checker, from
- * the bundle's root: `lean` for Lean 4, and `rocq compile` for Rocq, or `coqc` where the image
- * has Coq's older name for it. After each file the harness notes the checker's exit status.
+ * The first step's command: the one given, or each file's copy compiled with its checker, from
+ * the folder the copies are in, after a line saying which version of each checker the image
+ * has. Lean writes `<module>.olean`, Rocq `<module>.vo` under the logical name `SJ`. After each
+ * file the harness notes the checker's exit status.
  */
-export function proofCommand(probe: ProofProbe, given?: string): CommandPlan {
+export function compileCommand(probe: ProofProbe, given?: string): CommandPlan {
   const files = probe.files.map((file) => file.path);
   if (given) return { command: given, from: "given", files };
   if (files.length === 0) throw new HarnessError("No claim needing a verdict names a proof to check");
+  const checkers = new Set(probe.files.map((file) => file.checker));
+  const versions = [
+    ...(checkers.has("lean4") ? [`echo "${marker(probe.nonce, "lean")} $(lean --version 2>&1 | head -n 1)"`] : []),
+    ...(checkers.has("rocq") ? [`echo "${marker(probe.nonce, "rocq")} $( (rocq --version || coqc --version) 2>&1 | head -n 1)"`] : []),
+  ];
   const steps = probe.files.map((file, f) => {
-    const path = shellQuote(file.path);
-    const check =
+    const name = `${file.module}${PROOF_FILE_EXTENSIONS[file.checker]}`;
+    const compile =
       file.checker === "lean4"
-        ? `lean ${path}`
-        : `if command -v rocq >/dev/null 2>&1; then rocq compile ${path}; else coqc ${path}; fi`;
-    return `${check}; echo "${marker(probe.nonce, `exit${f}`)} $?"`;
+        ? `lean --root=. -o ${file.module}.olean ${name}`
+        : `if command -v rocq >/dev/null 2>&1; then rocq compile -Q . SJ ${name}; else coqc -Q . SJ ${name}; fi`;
+    return `(cd ${COMPILE_DIR} && ${compile}); echo "${marker(probe.nonce, `exit${f}`)} $?"`;
   });
-  return { command: steps.join("\n"), from: "checker", files };
+  return { command: [...versions, ...steps].join("\n"), from: "checker", files };
 }
 
 /** A checker's error: where it points, and the first line of what it says. */
@@ -127,26 +109,23 @@ export interface CheckerError {
 }
 
 /**
- * Reads a run's output as it streams, line by line and stream by stream: the harness's markers,
- * what follows each question, and the checkers' errors, by the format each checker writes them
- * in. Keeps only what it needs, so output of any length fits.
+ * Reads the first step's output as it streams, line by line and stream by stream: the
+ * harness's markers and the checkers' errors, by the format each checker writes them in. Keeps
+ * only what it needs, so output of any length fits.
  */
 export class ProofOutput {
-  /** The lines that followed each question, by theorem index. */
-  readonly answers = new Map<number, string[]>();
-  /** Files whose end marker printed: the checker reached every question in them. */
-  readonly ended = new Set<number>();
   /** Each file's checker exit status, when the harness's command ran it. */
   readonly exits = new Map<number, number>();
+  /** What each checker said its version was; the work's own image says it, so it only picks the judge's. */
+  readonly versions = new Map<ProofChecker, string>();
   readonly errors: CheckerError[] = [];
   private readonly partial = { stdout: "", stderr: "" };
-  private readonly current = { stdout: null as number | null, stderr: null as number | null };
   /** A Rocq location line, waiting for the line that says whether it is an error. */
   private readonly located = { stdout: null as { path: string; line: number } | null, stderr: null as { path: string; line: number } | null };
   private readonly token: RegExp;
 
   constructor(readonly probe: ProofProbe) {
-    this.token = new RegExp(`sj_harness_${probe.nonce}_(\\d+|end(\\d+)|exit(\\d+))\\b(?:\\s+(\\d+))?`);
+    this.token = new RegExp(`^sj_harness_${probe.nonce}_(?:exit(\\d+) (\\d+)|(lean|rocq) (.*))$`);
   }
 
   write(chunk: Uint8Array | string, stream: "stdout" | "stderr" = "stdout"): void {
@@ -167,19 +146,12 @@ export class ProofOutput {
   private line(line: string, stream: "stdout" | "stderr"): void {
     const mark = this.token.exec(line);
     if (mark) {
-      const [, what, end, exit, status] = mark;
-      if (end !== undefined) {
-        this.ended.add(Number(end));
-        this.current[stream] = null;
-      } else if (exit !== undefined) {
-        if (status !== undefined) this.exits.set(Number(exit), Number(status));
-      } else {
-        this.current[stream] = Number(what);
-        this.answers.set(Number(what), []);
-      }
+      const [, exit, status, checker, version] = mark;
+      if (exit !== undefined) this.exits.set(Number(exit), Number(status));
+      else if (!this.versions.has(checker === "lean" ? "lean4" : "rocq")) this.versions.set(checker === "lean" ? "lean4" : "rocq", version.trim());
       return;
     }
-    const lean = /^(.+?):(\d+):(\d+): error: (.*)$/.exec(line);
+    const lean = /^(.+?):(\d+):(\d+): error(?:\([^)]*\))?: (.*)$/.exec(line);
     if (lean) this.error({ path: lean[1], line: Number(lean[2]), message: lean[4] });
     const location = /^File "(.+?)", line (\d+), characters \d+-\d+:$/.exec(line);
     if (location) {
@@ -191,16 +163,18 @@ export class ProofOutput {
       // Rocq's errors at the end of a file come without a location.
       this.error({ path: "", line: 0, message: line.replace(/^Error:\s*/, "") });
     }
-    const answering = this.current[stream];
-    if (answering !== null) {
-      const lines = this.answers.get(answering)!;
-      if (lines.length < 400) lines.push(line);
-    }
   }
 
   private error(error: CheckerError): void {
     if (this.errors.length < 200) this.errors.push({ ...error, path: error.path.replace(/^(\.\/)+/, "") });
   }
+}
+
+/** The judge's questions, one per theorem, by checker, with each theorem's index in the probe. */
+export function judgeAsks(probe: ProofProbe, checker: ProofChecker): (JudgeAsk & { index: number })[] {
+  return probe.files
+    .filter((file) => file.checker === checker)
+    .flatMap((file) => file.theorems.map((t) => ({ module: file.module, theorem: t.theorem, index: t.index })));
 }
 
 /** One theorem's check: what it rests on, and whether it passed. */
@@ -209,80 +183,70 @@ export interface CheckedTheorem {
   theorem: string;
   checker: ProofChecker;
   status: "passed" | "failed" | "unknown";
-  /** What the checker said it rests on; absent when it said nothing. */
+  /** What the judge found it rests on; absent when the judge said nothing about it. */
   axioms?: string[];
   reason: string;
 }
 
 /**
- * Each theorem's result, from what the checker said after the harness's question, the errors it
- * reported in the theorem's file, and the file's exit status.
+ * Each theorem's result: failed when its file didn't compile; otherwise what the judge said,
+ * passed only when the kernel accepted it and it rests on no more than the standard axioms.
+ * `judged` holds the judge's answers by theorem index, and `judgeFailure` says why there are
+ * none, when the judge couldn't run.
  */
-export function checkTheorems(probe: ProofProbe, output: ProofOutput, exitCode: number | null): CheckedTheorem[] {
+export function checkTheorems(
+  probe: ProofProbe,
+  output: ProofOutput,
+  exitCode: number | null,
+  judged: ReadonlyMap<number, JudgeAnswer>,
+  judgeFailure?: string,
+): CheckedTheorem[] {
   output.end();
   const results: CheckedTheorem[] = probe.unaskable.map(({ proof, theorem }) => {
     const checker = probe.files.find((file) => file.path === proof)!.checker;
     return { proof, theorem, checker, status: "failed" as const, reason: `${theorem} isn't a name ${checkerName(checker)} can be asked about` };
   });
   for (const [f, file] of probe.files.entries()) {
-    const errors = output.errors.filter((error) => samePath(error.path, file.path) || (error.path === "" && file.checker === "rocq"));
-    const inFile = errors.filter((error) => error.line <= file.lines);
-    const atQuestions = errors.filter((error) => error.line > file.lines);
+    const errors = output.errors.filter(
+      (error) => samePath(error.path, file.copy) || samePath(error.path, file.copy.slice(COMPILE_DIR.length + 1)) || (error.path === "" && file.checker === "rocq"),
+    );
     const status = output.exits.get(f) ?? exitCode;
-    // A question about a theorem that isn't there makes the checker exit nonzero; that says
-    // nothing about the file itself, whose own errors are the ones within its lines.
-    const fileFailed = inFile.length > 0 || (status !== null && status !== 0 && atQuestions.length === 0);
-    const firstError = inFile[0] && ` (line ${inFile[0].line}: ${inFile[0].message})`;
-    for (const { theorem, index, line } of file.theorems) {
+    const firstError = errors[0] && ` (line ${errors[0].line}: ${errors[0].message})`;
+    for (const { theorem, index } of file.theorems) {
       const base = { proof: file.path, theorem, checker: file.checker };
       if (status === 126 || status === 127) {
         const what = status === 127 ? "isn't in the image" : "couldn't be executed";
         results.push({ ...base, status: "unknown", reason: `${checkerName(file.checker)}'s checker ${what} (exit status ${status}), so ${theorem} wasn't checked; give an image that has it with --image` });
         continue;
       }
-      const axioms = output.answers.has(index) ? assumptions(file.checker, output.answers.get(index)!) : null;
-      if (axioms) {
-        const extra = axioms.filter((axiom) => !STANDARD_AXIOMS[file.checker].includes(axiom));
-        if (extra.length > 0) {
-          results.push({ ...base, status: "failed", axioms, reason: restsOn(file.checker, theorem, extra) });
-        } else if (fileFailed) {
-          const why = firstError ?? (status !== null ? ` (exit status ${status})` : "");
-          results.push({ ...base, status: "failed", axioms, reason: `${theorem} rests on no more than ${standard(file.checker)}, but the checker reported errors in ${file.path}${why}` });
-        } else {
-          results.push({ ...base, status: "passed", axioms, reason: `${checkerName(file.checker)} accepted ${file.path}, and ${theorem} rests on no more than ${standard(file.checker)}` });
-        }
+      if (errors.length > 0 || (status !== null && status !== 0)) {
+        const why = firstError ?? (status !== null ? ` (exit status ${status})` : "");
+        results.push({ ...base, status: "failed", reason: `${checkerName(file.checker)} reported errors in ${file.path}${why}` });
         continue;
       }
-      const asked = errors.find((error) => error.line === line);
-      if (asked) {
-        results.push({ ...base, status: "failed", reason: `${checkerName(file.checker)} couldn't find ${theorem}: ${asked.message}` });
-      } else if (inFile.length > 0) {
-        results.push({ ...base, status: "failed", reason: `${checkerName(file.checker)} reported errors in ${file.path} before reaching ${theorem}${firstError}` });
-      } else if (atQuestions.some((error) => error.line < line)) {
-        // Rocq stops at its first error, so an earlier question that failed ends the file's checks.
-        const earlier = atQuestions.find((error) => error.line < line)!;
-        results.push({
-          ...base,
-          status: "unknown",
-          reason: `${checkerName(file.checker)} stopped at an earlier question in ${file.path} (${earlier.message}) before the harness could ask about ${theorem}; check it again without the theorem it couldn't find`,
-        });
-      } else if (status === 0 && !output.ended.has(f)) {
-        results.push({
-          ...base,
-          status: "failed",
-          reason: `${checkerName(file.checker)} accepted ${file.path} but stopped before the harness's questions at its end (look for something like #exit), so it never reported on ${theorem}`,
-        });
+      const answer = judged.get(index);
+      if (!answer) {
+        results.push({ ...base, status: "unknown", reason: judgeFailure ?? `the judge said nothing about ${theorem}` });
+      } else if (answer.status !== "checked") {
+        results.push({ ...base, status: answer.status, reason: answer.reason });
       } else {
-        const elsewhere = output.errors[0] ? `; its first error: ${output.errors[0].message}` : "";
-        results.push({
-          ...base,
-          status: "unknown",
-          reason: `${checkerName(file.checker)} never reported on ${theorem}, and showed no error in ${file.path}${elsewhere}; see run.log`,
-        });
+        const axioms = answer.axioms.map((axiom) => ownName(axiom, file.module));
+        const extra = axioms.filter((axiom) => !STANDARD_AXIOMS[file.checker].includes(axiom));
+        results.push(
+          extra.length > 0
+            ? { ...base, status: "failed", axioms, reason: restsOn(file.checker, theorem, extra) }
+            : { ...base, status: "passed", axioms, reason: `${checkerName(file.checker)} compiled ${file.path}, the kernel accepted ${theorem} again on its own, and it rests on no more than ${standard(file.checker)}` },
+        );
       }
     }
   }
   return results;
+}
+
+/** An axiom's name as the proof file spells it, without the module path the harness gave the file. */
+function ownName(axiom: string, module: string): string {
+  for (const prefix of [`SJ.${module}.`, `${module}.`]) if (axiom.startsWith(prefix)) return axiom.slice(prefix.length);
+  return axiom;
 }
 
 /** What a checker's answer says a theorem rests on, or null if it holds no answer. */
@@ -331,7 +295,7 @@ function checkerName(checker: ProofChecker): string {
   return checker === "lean4" ? "Lean" : "Rocq";
 }
 
-/** Whether a path a checker printed names the bundle file `path`, from whatever directory it ran in. */
+/** Whether a path a checker printed names the file `path`, from whatever directory it ran in. */
 function samePath(printed: string, path: string): boolean {
   if (!printed) return false;
   const a = printed.split("/").filter((part) => part !== "" && part !== ".");

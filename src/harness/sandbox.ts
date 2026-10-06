@@ -1,10 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { shellQuote } from "./format";
 import { HarnessError } from "./context";
 import { cloneTree, under } from "./files";
+import { judgeDockerfile, rocqImage, type JudgeImage } from "./judge";
 
 // The sandbox. Bundle code is someone else's code, so the harness runs it only in a container:
 // no network, no added privileges, bounded processes, memory, CPU, and time, as the user who
@@ -28,7 +29,9 @@ export type ImagePlan =
   | { from: "given"; ref: string }
   | { from: "Dockerfile"; file: string }
   | { from: "requirements"; file: string; base: string }
-  | { from: "conda"; file: string; base: string };
+  | { from: "conda"; file: string; base: string }
+  /** The judge's own image for a proof check: the pinned checker and nothing of the work's. */
+  | { from: "judge"; image: JudgeImage };
 
 /** The official Python image, from the registry the node's own image comes from. */
 export const PYTHON_IMAGE = "public.ecr.aws/docker/library/python:3.12-slim";
@@ -150,6 +153,10 @@ export function describePlan(plan: ImagePlan): string {
       return `${plan.file} installed with pip on ${plan.base}`;
     case "conda":
       return `${plan.file} installed with micromamba on ${plan.base}`;
+    case "judge":
+      return plan.image.checker === "lean4"
+        ? `the judge's image, built from ${plan.image.toolchain}${plan.image.mathlib ? ` and Mathlib at ${plan.image.mathlib}` : ""} alone`
+        : `the judge's image, Rocq's official ${rocqImage(plan.image.version)}`;
   }
 }
 
@@ -334,13 +341,14 @@ export function containerSandbox(engine: Engine): Sandbox {
         const home = await imageHome(found.id);
         return { plan, ref, ...found, reused, ...(home && { home }), seconds: (Date.now() - started) / 1000 };
       };
-      if (plan.from === "given") {
-        const present = await inspect(plan.ref);
-        if (present) return done(plan.ref, present, true);
-        const pulled = await run(["pull", plan.ref], log, BUILD_MINUTES);
-        const found = pulled.code === 0 ? await inspect(plan.ref) : null;
-        if (!found) throw new ImageError(`Couldn't pull ${plan.ref} (exit code ${pulled.code}); see build.log`);
-        return done(plan.ref, found, false);
+      const pulled = plan.from === "given" ? plan.ref : plan.from === "judge" && plan.image.checker === "rocq" ? rocqImage(plan.image.version) : null;
+      if (pulled) {
+        const present = await inspect(pulled);
+        if (present) return done(pulled, present, true);
+        const pull = await run(["pull", pulled], log, BUILD_MINUTES);
+        const found = pull.code === 0 ? await inspect(pulled) : null;
+        if (!found) throw new ImageError(`Couldn't pull ${pulled} (exit code ${pull.code}); see build.log`);
+        return done(pulled, found, false);
       }
       const tag = `sj-harness:${key}`;
       const built = await inspect(tag);
@@ -350,11 +358,19 @@ export function containerSandbox(engine: Engine): Sandbox {
       if (plan.from === "Dockerfile") {
         file = under(workspace, plan.file);
         context = workspace;
-      } else {
+      } else if (plan.from === "judge" && plan.image.checker === "lean4") {
+        // Built from the pinned checker alone: nothing of the work is in its context.
+        await mkdir(scratch, { recursive: true });
+        file = join(scratch, "Dockerfile");
+        await writeFile(file, judgeDockerfile(plan.image));
+        context = scratch;
+      } else if (plan.from === "requirements" || plan.from === "conda") {
         await cloneTree(join(workspace, "env"), join(scratch, "env"));
         file = join(scratch, "Dockerfile");
         await writeFile(file, environmentDockerfile(plan));
         context = scratch;
+      } else {
+        throw new ImageError(`The harness can't prepare an image ${describePlan(plan)}`);
       }
       const result = await run([...buildCommand(engine), "--tag", tag, "--file", file, context], log, BUILD_MINUTES);
       const found = result.code === 0 ? await inspect(tag) : null;

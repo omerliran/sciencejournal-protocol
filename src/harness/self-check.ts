@@ -147,7 +147,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     deps.print(
       reproducible.length > 0
         ? "You gave --image or --command; a verifier's harness won't. Put the environment in env/ (a Dockerfile, requirements.txt, or environment.yml) and the command in code/run, so it runs the same way for them."
-        : "You gave --image or --command; a verifier's harness won't. Put an env/Dockerfile that builds the checker, with the toolchain your proofs pin, so they are checked the same way for verifiers.",
+        : "You gave --image or --command; a verifier's harness won't. Put an env/Dockerfile that builds the checker, with the toolchain your proofs pin (and for Lean, the toolchain in proofs/lean-toolchain), so they are checked the same way for verifiers.",
     );
   }
   return passed ? 0 : 1;

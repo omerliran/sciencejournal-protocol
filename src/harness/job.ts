@@ -18,6 +18,7 @@ import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writ
 import { plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
 import { findUnfinished } from "./proof-check";
+import { isGoalCheckJob, writeGoalCheckJob, type GoalCheckJobView } from "./goal-check";
 import { isIdeaJob, writeIdeaJob, type IdeaJobView } from "./idea-screen";
 import { HARNESS } from "./version";
 
@@ -39,6 +40,8 @@ export interface JobView {
   challenge?: { index: number; claim: string; ground: ChallengeGround; evidence: Record<string, string> };
   /** For a citation check: each source the bundle cites, and the claims it is cited for. */
   citations?: CitationView[];
+  /** For a job that screens for hazards: each goal of a swarm the work cites, with the goals above it from the swarm's root. */
+  goals?: { goal: string; swarm: string; title: string | null; path: { goal: string; needs: string; statement: string | null }[] }[];
   /** For a duplicate check: each pair of a claim and an earlier claim whose statements share most of their words. */
   pairs?: PairView[];
   downloads?: Record<
@@ -57,6 +60,8 @@ export interface CitationView {
   title?: string;
   authors?: string[];
   year?: number;
+  /** For a goal of a swarm: what it asks, what settles it, and its swarm. */
+  goal?: { statement: string | null; needs: string; swarm: string; title: string | null };
 }
 
 /**
@@ -124,9 +129,9 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  let answer: JobView | IdeaJobView | { job: null; retry_after_seconds: number };
+  let answer: JobView | IdeaJobView | GoalCheckJobView | { job: null; retry_after_seconds: number };
   try {
-    answer = await client.post<JobView | IdeaJobView | { job: null; retry_after_seconds: number }>("/api/v1/jobs", request);
+    answer = await client.post<JobView | IdeaJobView | GoalCheckJobView | { job: null; retry_after_seconds: number }>("/api/v1/jobs", request);
   } catch (error) {
     // Asking too often, or after its organization handed back too many jobs, gets no job for a
     // while, and the node says how long.
@@ -141,6 +146,11 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   if (isIdeaJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeIdeaJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
+    return { record: { kind: answer.kind } as JobRecord, jobDir };
+  }
+  if (isGoalCheckJob(answer)) {
+    const jobDir = join(options.dir, jobDirectoryName(answer.job));
+    await writeGoalCheckJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
     return { record: { kind: answer.kind } as JobRecord, jobDir };
   }
   const view = answer;
@@ -248,6 +258,7 @@ export const ANSWERED_WITH: Record<JobKind, string> = {
   citation_check: "citation-check",
   duplicate_check: "duplicate-check",
   idea_screen: "screen-idea",
+  goal_check: "attest",
 };
 
 /**
@@ -265,7 +276,12 @@ export function answeredWith(record: Pick<JobRecord, "kind">, command: string): 
 
 /** Whether a job's work runs in the sandbox: a reproduction, a proof check, or a challenge that re-running fails. */
 export function runsInSandbox(record: Pick<JobRecord, "kind" | "challenge">): boolean {
-  return record.kind === "reproduction" || record.kind === "proof_check" || (record.kind === "challenge_review" && record.challenge?.ground === "reproduction");
+  return (
+    record.kind === "reproduction" ||
+    record.kind === "proof_check" ||
+    record.kind === "goal_check" ||
+    (record.kind === "challenge_review" && record.challenge?.ground === "reproduction")
+  );
 }
 
 /** Writes a challenge's evidence under challenge/, read-only, held to the evidence path rules. */

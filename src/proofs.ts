@@ -15,6 +15,33 @@ export const UNFINISHED_PROOF_KEYWORDS: Record<ProofChecker, readonly string[]> 
 /** The file a checker reads proofs from, by extension. */
 export const PROOF_FILE_EXTENSIONS: Record<ProofChecker, string> = { lean4: ".lean", rocq: ".v" };
 
+/**
+ * The names a checker can be asked about, by checker. Lean: parts of letters, digits, `_`, `'`,
+ * `!`, `?`, or «quoted», joined by dots. Rocq: identifiers of letters, digits, `_`, and `'`,
+ * joined by dots. A name that isn't one never goes into a file the checker reads.
+ */
+export const THEOREM_NAMES: Record<ProofChecker, RegExp> = {
+  lean4: /^(?:«[^»\n]+»|[\p{L}_][\p{L}\p{N}_'!?]*)(?:\.(?:«[^»\n]+»|[\p{L}_][\p{L}\p{N}_'!?]*))*$/u,
+  rocq: /^[\p{L}_][\p{L}\p{N}_']*(?:\.[\p{L}_][\p{L}\p{N}_']*)*$/u,
+};
+
+/** A name's parts, split at the dots outside «quotes», with the quotes taken off. */
+export function theoremNameParts(name: string): string[] {
+  const parts: string[] = [];
+  let part = "";
+  let quoted = false;
+  for (const char of name) {
+    if (char === "«" && !quoted) quoted = true;
+    else if (char === "»" && quoted) quoted = false;
+    else if (char === "." && !quoted) {
+      parts.push(part);
+      part = "";
+    } else part += char;
+  }
+  parts.push(part);
+  return parts;
+}
+
 export interface UnfinishedProof {
   keyword: string;
   /** Where it is: the line, from 1, and the column, from 1, counted in code points. */
@@ -29,7 +56,7 @@ export function unfinishedProofs(checker: ProofChecker, text: string): Unfinishe
   return words.filter((word) => keywords.has(word.text)).map((word) => ({ keyword: word.text, ...position(text, word.start) }));
 }
 
-type Word = { text: string; start: number };
+export type Word = { text: string; start: number };
 
 // Letters as both languages' lexers take them: ASCII and Unicode letters, and `_`. Lean's lexer
 // also takes letter-like symbols such as Greek letters, which \p{L} covers.
@@ -45,6 +72,15 @@ const ROCQ_REST = /[\p{L}\p{N}_']/u;
  * whole, braces included.
  */
 function leanWords(text: string): Word[] {
+  return leanTokens(text);
+}
+
+/**
+ * Lean 4's words as {@link leanWords} reads them, and with them the tokens that start
+ * metaprogramming outside any word: a `#` command such as `#eval` (`#` directly before a
+ * letter, which `#[` arrays never are), and `@[`, which opens attributes.
+ */
+export function leanTokens(text: string): Word[] {
   const words: Word[] = [];
   let i = 0;
   while (i < text.length) {
@@ -61,6 +97,14 @@ function leanWords(text: string): Word[] {
       i = end < 0 ? text.length : end + 1 + hashes.length;
     } else if (char === "'" && /^'(\\(u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'/u.test(text.slice(i, i + 16))) {
       i += /^'(\\(u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'/u.exec(text.slice(i, i + 16))![0].length;
+    } else if (char === "#" && LETTER.test(codePointAt(text, i + 1))) {
+      const start = i;
+      i++;
+      while (i < text.length && LEAN_REST.test(codePointAt(text, i))) i += codePointAt(text, i).length;
+      words.push({ text: text.slice(start, i), start });
+    } else if (text.startsWith("@[", i)) {
+      words.push({ text: "@[", start: i });
+      i += 2;
     } else if (char === "«") {
       i = dottedName(text, i, LEAN_REST, words, false);
     } else if (LETTER.test(codePointAt(text, i))) {

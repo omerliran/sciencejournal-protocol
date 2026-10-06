@@ -78,6 +78,11 @@ export const LEDGER_ENTRY_TYPES = [
   "idea",
   "thread",
   "post",
+  "swarm",
+  "goal",
+  "goal_proof",
+  "goal_attempt",
+  "goal_check",
   "sealed",
   "canary",
   "hazard_review",
@@ -193,6 +198,7 @@ export const JOB_KINDS = [
   "citation_check",
   "duplicate_check",
   "idea_screen",
+  "goal_check",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
@@ -287,6 +293,38 @@ export type PostKind = (typeof POST_KINDS)[number];
 export const FORUM_FLAG_REASONS = IDEA_FLAG_REASONS;
 export type ForumFlagReason = IdeaFlagReason;
 
+/**
+ * What settles a goal in a swarm: a status on the trust ladder that evidence citing the goal
+ * must reach. Formal goals in a swarm that pins a checker are also proved by a proof of the
+ * goal itself that checks.
+ */
+export const GOAL_NEEDS = ["formally_verified", "reproduced", "replicated", "reviewed"] as const;
+export type GoalNeed = (typeof GOAL_NEEDS)[number];
+
+/**
+ * Where a goal stands: proved or refuted by a checked proof of it or of its negation, settled by
+ * a claim that cites it and reached what the goal needs, or open. Computed from the log.
+ */
+export const GOAL_STATUSES = ["open", "proved", "refuted", "settled"] as const;
+export type GoalStatus = (typeof GOAL_STATUSES)[number];
+
+/** What a goal proof proves: the goal, or its negation, which refutes it. */
+export const GOAL_PROOF_SIDES = ["goal", "negation"] as const;
+export type GoalProofSide = (typeof GOAL_PROOF_SIDES)[number];
+
+/** A goal check's verdict on a goal proof. */
+export const GOAL_CHECK_VERDICTS = ["passed", "failed", "could_not_run"] as const;
+export type GoalCheckVerdict = (typeof GOAL_CHECK_VERDICTS)[number];
+
+/**
+ * What a note on a goal offers: an approach worth trying, progress, a question and its answer,
+ * a request for help, what its writer is working on and until when, or a comment. Notes are
+ * signed but not logged, and they expire; a result belongs in a proof or a bundle, and a dead
+ * end in an attempt, which are logged.
+ */
+export const NOTE_KINDS = ["approach", "progress", "question", "answer", "request", "working_on", "comment"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+
 /** What a field task asks observers to record. Text is kept but never compared. */
 export const MEASUREMENT_KINDS = ["number", "choice", "text"] as const;
 export type MeasurementKind = (typeof MEASUREMENT_KINDS)[number];
@@ -316,4 +354,20 @@ export const LIMITS = {
   maxPostRefs: 20,
   /** How far ahead a working_on post's until date may be, from when it is logged. */
   maxWorkingOnDays: 30,
+  maxSwarmTitle: 140,
+  /** What a goal asks, in characters: a paragraph, so briefs can hold a path of them. */
+  maxGoalStatement: 2000,
+  /** A swarm's, goal's, or attempt's longer text. */
+  maxSwarmBody: 10_000,
+  /** A goal's Lean statement, a single term. */
+  maxLeanStatement: 4000,
+  /** Definitions a formal goal states itself with, in characters. */
+  maxLeanContext: 20_000,
+  maxLeanImports: 20,
+  /** A goal proof's Lean file, in bytes. */
+  maxGoalProofBytes: 1_000_000,
+  /** The most minutes a goal proof may declare its check takes. */
+  maxGoalProofMinutes: 120,
+  maxNoteBody: 2000,
+  maxNoteRefs: 10,
 } as const;

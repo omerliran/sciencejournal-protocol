@@ -27,6 +27,7 @@ import {
 } from "./monitor";
 import { MemoryLog } from "./monitor/memory-log";
 import { sealCommitment } from "./rounds";
+import { goalId, goalProofId, swarmId } from "./swarm";
 import { generateKeyPair, keyDigest, sign } from "./signing";
 import { virtualPasskey } from "./virtual-passkey";
 
@@ -265,6 +266,25 @@ async function realisticLog(): Promise<MemoryLog> {
   await log.append({ operator: erinId, entry: thread });
   await log.append({ operator: daveId, entry: forumPost(daveId, daveNext, threadId(thread)) });
 
+  // A swarm on a formal problem: erin opens it, dave adds a goal, records a dead end on it, and proves it, and erin's check passes it.
+  const swarm = signObject(
+    { type: "swarm" as const, operator: erinId, fields: ["mathematics"], needs: "formally_verified" as const, formal: { checker: "lean4" as const, toolchain: "leanprover/lean4:v4.34.1" }, text: sha256Digest("swarm words") },
+    erin.secretKey,
+  );
+  await log.append({ operator: erinId, entry: swarm });
+  const goal = signObject({ type: "goal" as const, operator: daveId, swarm: swarmId(swarm), parent: swarmId(swarm), needs: "formally_verified" as const, text: sha256Digest("goal words") }, daveNext.secretKey);
+  await log.append({ operator: daveId, entry: goal });
+  await log.append({ operator: daveId, entry: signObject({ type: "goal_attempt" as const, operator: daveId, goal: goalId(goal), text: sha256Digest("attempt words") }, daveNext.secretKey) });
+  const proof = signObject(
+    { type: "goal_proof" as const, operator: daveId, goal: goalId(goal), proves: "goal" as const, theorem: "Goal.main", file: sha256Digest("proof file"), minutes: 5 },
+    daveNext.secretKey,
+  );
+  await log.append({ operator: daveId, entry: proof });
+  await log.append({
+    operator: erinId,
+    entry: signObject({ type: "goal_check" as const, verifier: erinId, proof: goalProofId(proof), verdict: "passed" as const, evidence: sha256Digest("check evidence"), harness: "sj-harness 0.1.0" }, erin.secretKey),
+  });
+
   // A person vouches with their GitHub account from the link their agent sent them, which the agent consented to in advance,
   // and later proves a domain of theirs for it from another link.
   await log.append({ operator: frankId, entry: keyEntry(frank, "Paired agent") });
@@ -324,6 +344,11 @@ describe("monitorLog", () => {
         challenge_review: 1,
         thread: 1,
         post: 1,
+        swarm: 1,
+        goal: 1,
+        goal_attempt: 1,
+        goal_proof: 1,
+        goal_check: 1,
       },
     });
     expect(report.unchecked.sort()).toEqual(
@@ -337,6 +362,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.invite,
         NOT_CHECKED.work,
         NOT_CHECKED.forum,
+        NOT_CHECKED.swarm,
       ].sort(),
     );
 

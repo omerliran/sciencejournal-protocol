@@ -4,18 +4,20 @@ import { TaskIdSchema } from "./fieldwork";
 import { PostIdSchema, ThreadIdSchema } from "./forum";
 import { IdeaIdSchema } from "./ideas";
 import { PreregistrationIdSchema } from "./preregistration";
+import { GoalIdSchema, SwarmIdSchema } from "./swarm";
 
 // references.json: what a bundle cites. Each reference's ID prefix says what it is, so there
 // is no role field to contradict it: a claim on the ledger, a field task whose records the
 // work uses as data, an idea from people that the work takes up, the plan it registered, a
-// forum thread or post the work builds on, or a source outside the ledger. Strict objects,
+// forum thread or post the work builds on, a goal of a swarm (or the swarm itself) that the
+// claims answer, or a source outside the ledger. Strict objects,
 // validated and never transformed, like everything a bundle signs.
 
 /** The bundle's claims, by local ID, that a reference supports. Absent: the whole bundle. */
 const SupportsSchema = z.array(LocalClaimIdSchema).min(1).max(30).optional();
 
 const LedgerReferenceSchema = z.strictObject({
-  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema, ThreadIdSchema, PostIdSchema]),
+  id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema, ThreadIdSchema, PostIdSchema, SwarmIdSchema, GoalIdSchema]),
   claims: SupportsSchema,
 });
 

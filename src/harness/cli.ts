@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "./attest";
 import { shellQuote } from "./format";
+import { readJsonFile } from "./files";
+import { isGoalCheckJob, runGoalCheckJob, selfGoalCheck, sendGoalCheck } from "./goal-check";
 import { screenIdea } from "./idea-screen";
 import { HarnessError, type Deps } from "./context";
 import { runsInSandbox, takeJob } from "./job";
@@ -24,8 +26,8 @@ Verifying
                               itself when no container engine answers; --ideas also takes ideas
                               from people to screen before they appear.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
-                              results with the declared ones, or run a proof check's checkers and ask
-                              what each theorem rests on; propose a verdict per claim. For a challenge
+                              results with the declared ones, or compile a proof check's proofs and
+                              have the judge check them; propose a verdict per claim. For a challenge
                               on the reproduction ground, re-run the challenged claim.
   compare <job dir>           Compare the workspace's results again, after you ran something by hand.
   attest <job dir> --model-family <family> [--hazard <none|category>]
@@ -53,6 +55,12 @@ Verifying
 Publishing
   reproduce <bundle dir> [--out <dir>]
                               Run your own bundle the way verifiers will, before you submit it.
+  goal-check <goal ID> <file.lean> --theorem <name> [--negation] [--minutes <n>]
+                              Check your proof of a swarm's goal (or of its negation) the way goal
+                              checks will, before you submit it; the goal's Lean comes from the node.
+
+A goal_check job, which a swarm's work or job --software lean4 may hand you, is checked with run
+and sent with attest (--verdict passed, failed, or could_not_run to send another verdict).
 
 run and reproduce take --image <ref>, --command "<shell command>", --minutes <n>, --memory <8g>,
 --cpus <n>, --pids <n>, and --engine docker|podman.
@@ -89,6 +97,8 @@ const OPTIONS = {
   "knew-publisher": { type: "boolean" },
   ideas: { type: "boolean" },
   note: { type: "string" },
+  theorem: { type: "string" },
+  negation: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -108,6 +118,7 @@ const ACCEPTS: Record<string, string[]> = {
   "duplicate-check": [...SIGNING, "verdict", "model-family"],
   "screen-idea": [...SIGNING, "verdict", "reason", "note"],
   reproduce: [...RUNNING, "out"],
+  "goal-check": ["node", "theorem", "negation", "minutes", "engine"],
 };
 
 /** The harness's commands. */
@@ -139,6 +150,10 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
   if (!accepted) throw new HarnessError(`There is no ${command} command. See sj-harness help.`, 2);
   for (const option of Object.keys(values)) {
     if (!accepted.includes(option)) throw new HarnessError(`--${option} doesn't apply to ${command}. See sj-harness help.`, 2);
+  }
+  if (command === "goal-check") {
+    if (!target || extra.length !== 1) throw new HarnessError("goal-check takes a goal ID and a Lean file: sj-harness goal-check <goal ID> <file.lean> --theorem <name>", 2);
+    return selfGoalCheck(target, resolve(extra[0]), { node: values.node, theorem: values.theorem, negation: values.negation, minutes: number(values.minutes, "minutes"), engine: values.engine }, deps);
   }
   if (extra.length > 0) throw new HarnessError(`${command} takes one directory, not ${positionals.length - 1}`, 2);
   if (command !== "job" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);
@@ -178,6 +193,13 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     }
     case "run":
     case "compare": {
+      const kind = (await readJsonFile<{ kind?: string }>(join(resolve(target!), "job.json")).catch(() => null))?.kind;
+      if (kind === "goal_check") {
+        if (command === "compare") throw new HarnessError("A goal check has nothing to compare: run it again.");
+        await runGoalCheckJob(resolve(target!), { engine: values.engine }, deps);
+        next(`check verdicts.json and evidence/report.md, then ${deps.invocation} attest <dir>`);
+        return 0;
+      }
       const subject = await jobSubject(resolve(target!));
       const { run } =
         command === "run" ? await runSubject(subject, runOptions(values), deps) : await compareAgain(subject, deps);
@@ -190,7 +212,12 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       );
       return 0;
     }
-    case "attest":
+    case "attest": {
+      const job = await readJsonFile<{ kind: string }>(join(resolve(target!), "job.json")).catch(() => null);
+      if (job && isGoalCheckJob(job as { kind: "goal_check" })) {
+        if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);
+        return sendGoalCheck(resolve(target!), { ...credentials, verdict: values.verdict?.[0] }, deps);
+      }
       return attest(
         resolve(target!),
         {
@@ -205,6 +232,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
         },
         deps,
       );
+    }
     case "hazard": {
       if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);
       return hazard(resolve(target!), { ...credentials, verdict: values.verdict?.[0] }, deps);

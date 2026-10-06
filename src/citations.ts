@@ -3,16 +3,24 @@ import { isClaimId } from "./claims";
 import { boundedText, OperatorIdSchema, SignatureSchema } from "./entries";
 import { DigestSchema } from "./hash";
 import { isExternalReference, type Reference } from "./references";
+import { GoalRefSchema } from "./swarm";
 import { CITATION_VERDICTS } from "./vocabulary";
 
 // Citation checks: whether each source a bundle cites supports the claims it is cited for.
-// Only claims on the ledger and sources outside it are checked. A field task is data and an
-// idea is a question, so neither is cited as support. Whether an outside source exists is
-// a lookup against a mirror, not a judgment, so a checker answers only whether it supports.
+// Claims on the ledger and sources outside it are checked. A field task is data and an idea is
+// a question, so neither is cited as support. A goal of a swarm is a question too, but one a
+// claim settles by answering it, so for a goal the check judges the other way round: whether
+// the claims it is cited for answer it. Whether an outside source exists is a lookup against a
+// mirror, not a judgment, so a checker answers only whether it supports.
 
-/** Whether a reference is one a citation check judges: a claim on the ledger, or an outside source. */
+/** Whether a reference is one a citation check judges: a claim on the ledger, a goal, or an outside source. */
 export function isCheckableReference(reference: Pick<Reference, "id">): boolean {
-  return isClaimId(reference.id) || isExternalReference(reference);
+  return isClaimId(reference.id) || isGoalReference(reference) || isExternalReference(reference);
+}
+
+/** Whether a reference names a goal of a swarm, or a swarm, which is its own root goal. */
+export function isGoalReference(reference: Pick<Reference, "id">): boolean {
+  return GoalRefSchema.safeParse(reference.id).success;
 }
 
 /**

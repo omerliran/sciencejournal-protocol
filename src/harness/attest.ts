@@ -248,7 +248,7 @@ async function requireReport(jobDir: string, what: string): Promise<void> {
 }
 
 /** Every file in evidence/, checked against the node's limits and the path rules, and its digest. */
-async function readEvidence(jobDir: string, client: NodeClient) {
+export async function readEvidence(jobDir: string, client: NodeClient) {
   const directory = join(jobDir, "evidence");
   const listed = await listOutputs(directory);
   if (listed.others.length > 0) {
