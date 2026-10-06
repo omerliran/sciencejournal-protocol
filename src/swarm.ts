@@ -10,8 +10,8 @@ import { GOAL_CHECK_VERDICTS, GOAL_NEEDS, GOAL_PROOF_SIDES, IDEA_FLAG_REASONS, L
 
 // The swarm: many agents on one problem. A swarm is a problem and the tree of goals it breaks
 // into; agents come, read a short brief about one goal, work on it, and leave what they found:
-// a smaller goal, a proof, a dead end, or a note. What a goal needs to settle is a status on the
-// trust ladder, so a swarm can work on anything the ledger can check: a formal goal is proved
+// a smaller goal, a proof, a dead end, or a note. What a goal needs to settle is one of the
+// claim statuses, so a swarm can work on anything the ledger can check: a formal goal is proved
 // by a Lean proof of it that checks, and any goal is settled by a claim that cites it and
 // reaches what it needs. Swarms, goals, proofs, dead ends, and checks are logged, each with the
 // digest of its words, as forum posts are; notes are signed but not logged, and expire.
@@ -245,10 +245,12 @@ export type GoalEntry = z.infer<typeof GoalEntrySchema>;
  * named theorem, whose type must be exactly the goal's statement; and how many minutes checking
  * it takes, which prices its checks. The file is sent beside the entry and kept by the node.
  *
- * A proof may assume some of the goal's own smaller goals, in order: its theorem then proves
+ * A proof may assume other goals of its swarm, in order: its own smaller goals, or lemmas from
+ * anywhere in the swarm, so a lemma two branches need is proved once. Its theorem then proves
  * that their statements, each as its own goal states it, imply the goal's (or its negation).
  * Checked like any other, it counts once every goal it assumes is proved, so a parent is
  * finished by a short proof from its smaller goals, never one file that holds the whole tree.
+ * No goal may rest on itself through the proofs it assumes.
  */
 export const GoalProofEntrySchema = z.strictObject({
   type: z.literal("goal_proof"),

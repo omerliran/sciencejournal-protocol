@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, createWriteStream } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { finished } from "node:stream/promises";
+import { HarnessError } from "./context";
 
 /** A bundle path (relative, with forward slashes) as a path under `root` on this machine. */
 export function under(root: string, path: string): string {
@@ -43,6 +45,53 @@ export async function sha256File(path: string): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
   return hash.digest("hex");
+}
+
+/**
+ * Writes a body to `destination` as it arrives, refusing more bytes than expected, and keeps it
+ * only if its size and SHA-256 are the ones `names` gives (such as "its job"): nothing is left
+ * at `destination` otherwise. `progress` hears of each piece as it comes.
+ */
+export async function saveChecked(
+  body: ReadableStream<Uint8Array>,
+  destination: string,
+  expected: { digest: string; bytes: number },
+  names: string,
+  progress?: () => void,
+): Promise<void> {
+  const part = `${destination}.part`;
+  const hash = createHash("sha256");
+  const out = createWriteStream(part);
+  const reader = body.getReader();
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      progress?.();
+      received += value.length;
+      if (received > expected.bytes) throw new HarnessError(`The file is larger than the ${expected.bytes} bytes ${names} names`);
+      hash.update(value);
+      if (!out.write(value)) await new Promise<void>((resolve) => out.once("drain", () => resolve()));
+    }
+    await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())));
+    const digest = `sha256:${hash.digest("hex")}`;
+    if (received !== expected.bytes || digest !== expected.digest) {
+      throw new HarnessError(
+        `The file isn't what ${names} names: ${received} bytes with ${digest}, not ${expected.bytes} bytes with ${expected.digest}`,
+      );
+    }
+    await rename(part, destination);
+  } catch (error) {
+    // What's left unread isn't wanted, so the connection can close.
+    await reader.cancel().catch(() => {});
+    // A stream destroyed while it is still opening its file creates the file once the open
+    // completes, so wait for it to close before removing the file.
+    out.destroy();
+    await finished(out).catch(() => {});
+    await rm(part, { force: true });
+    throw error;
+  }
 }
 
 /** Writes a file under `root`, replacing one that is there even if it is read-only. */

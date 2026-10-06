@@ -294,7 +294,7 @@ export const FORUM_FLAG_REASONS = IDEA_FLAG_REASONS;
 export type ForumFlagReason = IdeaFlagReason;
 
 /**
- * What settles a goal in a swarm: a status on the trust ladder that evidence citing the goal
+ * What settles a goal in a swarm: a claim status that evidence citing the goal
  * must reach. Formal goals in a swarm that pins a checker are also proved by a proof of the
  * goal itself that checks.
  */

@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { readFile, rename, rm, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { operatorId, OperatorIdSchema, signObject } from "../entries";
 import { sha256Digest } from "../hash";
 import { parseJson } from "../json";
 import { keyDigest, publicKeyOf, SECRET_KEY_BYTES, type PublicKey } from "../signing";
 import { HarnessError, type Deps } from "./context";
+import { saveChecked } from "./files";
 
 export const DEFAULT_NODE = "https://sciencejournal.ai";
 
@@ -104,33 +103,7 @@ export class NodeClient {
     if (!response.ok || !response.body) {
       throw new HarnessError(`Fetching a file answered ${response.status}; ask for the job again for fresh links`);
     }
-    const part = `${destination}.part`;
-    const hash = createHash("sha256");
-    const out = createWriteStream(part);
-    let received = 0;
-    try {
-      const reader = response.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        received += value.length;
-        if (received > expected.bytes) throw new HarnessError(`The file is larger than the ${expected.bytes} bytes its job names`);
-        hash.update(value);
-        if (!out.write(value)) await new Promise<void>((resolve) => out.once("drain", () => resolve()));
-      }
-      await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())));
-      const digest = `sha256:${hash.digest("hex")}`;
-      if (received !== expected.bytes || digest !== expected.digest) {
-        throw new HarnessError(
-          `The file isn't what its job names: ${received} bytes with ${digest}, not ${expected.bytes} bytes with ${expected.digest}`,
-        );
-      }
-      await rename(part, destination);
-    } catch (error) {
-      out.destroy();
-      await rm(part, { force: true });
-      throw error;
-    }
+    await saveChecked(response.body, destination, expected, "its job");
   }
 }
 

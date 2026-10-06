@@ -271,36 +271,54 @@ describe.skipIf(!engine)(`a goal check, on ${engine?.command ?? "no engine"}`, (
     "passes a proof from the smaller goals it assumes, each read in its own context, and refuses one they don't support",
     async () => {
       const both = "theorem both (h1 : ∀ n : Nat, n + 0 = n) (h2 : ∀ n : Nat, 0 + n = n) : ∀ n : Nat, n + 0 = n ∧ 0 + n = n := fun n => ⟨h1 n, h2 n⟩\n";
-      const reduction = (left: { context: string | null; statement: string }) => ({
+      const reduction = (left: { contexts: string[]; statement: string }) => ({
         contexts: [],
         statement: "∀ n : Nat, n + 0 = n ∧ 0 + n = n",
         premises: [
-          { goal: "goal:right", context: null, statement: "∀ n : Nat, n + 0 = n" },
+          { goal: "goal:right", contexts: [], statement: "∀ n : Nat, n + 0 = n" },
           { goal: "goal:left", ...left },
         ],
         file: both,
         theorem: "both",
       });
-      expect(await check(reduction({ context: null, statement: "∀ n : Nat, 0 + n = n" }))).toMatchObject({
+      expect(await check(reduction({ contexts: [], statement: "∀ n : Nat, 0 + n = n" }))).toMatchObject({
         verdict: "passed",
         reason: expect.stringContaining("from the statements of goal:right, goal:left"),
       });
       // The hypotheses in the wrong order prove something else.
-      expect(await check({ ...reduction({ context: null, statement: "∀ n : Nat, 0 + n = n" }), file: both.replace("(h1 : ∀ n : Nat, n + 0 = n) (h2 : ∀ n : Nat, 0 + n = n)", "(h2 : ∀ n : Nat, 0 + n = n) (h1 : ∀ n : Nat, n + 0 = n)") })).toMatchObject({ verdict: "failed" });
+      expect(await check({ ...reduction({ contexts: [], statement: "∀ n : Nat, 0 + n = n" }), file: both.replace("(h1 : ∀ n : Nat, n + 0 = n) (h2 : ∀ n : Nat, 0 + n = n)", "(h2 : ∀ n : Nat, 0 + n = n) (h1 : ∀ n : Nat, n + 0 = n)") })).toMatchObject({ verdict: "failed" });
       // A smaller goal's context that makes + multiply changes what that goal says, and only that
       // goal: 0 * n = n doesn't give the parent's 0 + n = n.
       const multiplies = "instance (priority := high) sjTimes : Add Nat := ⟨fun a b => a * b⟩";
-      expect(await check(reduction({ context: multiplies, statement: "∀ n : Nat, 0 + n = n" }))).toMatchObject({ verdict: "failed" });
+      expect(await check(reduction({ contexts: [multiplies], statement: "∀ n : Nat, 0 + n = n" }))).toMatchObject({ verdict: "failed" });
       // Two smaller goals that declare the same name can't be loaded together.
       expect(
         await check({
-          ...reduction({ context: "def sjShared : Nat := 1", statement: "∀ n : Nat, 0 + n = n" }),
+          ...reduction({ contexts: ["def sjShared : Nat := 1"], statement: "∀ n : Nat, 0 + n = n" }),
           premises: [
-            { goal: "goal:right", context: "def sjShared : Nat := 0", statement: "∀ n : Nat, n + 0 = n" },
-            { goal: "goal:left", context: "def sjShared : Nat := 1", statement: "∀ n : Nat, 0 + n = n" },
+            { goal: "goal:right", contexts: ["def sjShared : Nat := 0"], statement: "∀ n : Nat, n + 0 = n" },
+            { goal: "goal:left", contexts: ["def sjShared : Nat := 1"], statement: "∀ n : Nat, 0 + n = n" },
           ],
         }),
       ).toMatchObject({ verdict: "could_not_run", reason: expect.stringContaining("can't be loaded together") });
+    },
+    20 * 60_000,
+  );
+
+  it(
+    "reads a goal assumed from another branch on its own chain, sharing the contexts the chains share",
+    async () => {
+      // The goal and a lemma from another branch share the root's context; the lemma's branch adds its own.
+      const fromElsewhere = (lemma: string[]) => ({
+        contexts: ["def two : Nat := 2", "def four : Nat := 4"],
+        statement: "two + two = four",
+        premises: [{ goal: "goal:lemma", contexts: lemma, statement: "two + two = 2 * two" }],
+        file: "theorem from_lemma (h : two + two = 2 * two) : two + two = four := h.trans rfl\n",
+        theorem: "from_lemma",
+      });
+      expect(await check(fromElsewhere(["def two : Nat := 2", "def six : Nat := 6"]))).toMatchObject({ verdict: "passed" });
+      // A lemma whose branch says two is three says something else, and can't stand in for the goal's two.
+      expect(await check(fromElsewhere(["def two : Nat := 3"]))).toMatchObject({ verdict: "could_not_run", reason: expect.stringContaining("can't be loaded together") });
     },
     20 * 60_000,
   );

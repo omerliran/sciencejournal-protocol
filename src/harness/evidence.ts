@@ -9,6 +9,7 @@ import { exists, listOutputs, readOutput, removeTree, sha256File, sha256Output, 
 import type { ScanRecord } from "./job";
 import { describePlan, type CommandPlan, type ImageInfo, type Limits, type RunResult } from "./sandbox";
 import type { JudgeRun } from "./judge";
+import type { PointedFile } from "./pointers";
 import type { CheckedTheorem } from "./proof-check";
 import type { MatchedResult, ReproducedResult, VerdictsRecord } from "./verdicts";
 
@@ -36,6 +37,8 @@ export interface RunRecord {
   result?: RunResult;
   /** For a proof check, how the judge ran on what the run compiled. */
   judges?: JudgeRun[];
+  /** The public files the bundle points at, each fetched and checked before the run. */
+  external?: PointedFile[];
   /** Why the run didn't happen or didn't finish. */
   failure?: string;
   /** Set by compare: when the comparison was made again, and whether the results changed after the run. */
@@ -252,6 +255,16 @@ function howItRan(run: RunRecord): string[] {
       checker: "each proof file's checker",
     }[run.command.from];
     lines.push(`- **Command:** ${code(run.command.command)}, from ${from}, run from the bundle's root.`);
+  }
+  if (run.external && run.external.length > 0) {
+    const total = run.external.reduce((sum, file) => sum + file.bytes, 0);
+    const each = run.external
+      .slice(0, 20)
+      .map((file) => `${code(file.path)} from ${code(file.from ?? file.url)}${file.fetched ? "" : " (kept from an earlier run, and checked again)"}`);
+    const more = run.external.length > 20 ? `; and ${run.external.length - 20} more, which environment.json lists` : "";
+    lines.push(
+      `- **Data it points at:** ${plural(run.external.length, "public file")} (${size(total)}) that \`data/external.json\` names, each fetched outside the container before the run, checked against its size and SHA-256, and put at its path: ${each.join("; ")}${more}.`,
+    );
   }
   if (run.limits) {
     const declared = run.subject.declared_minutes;

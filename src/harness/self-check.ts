@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BundleLayoutError, digestBundle } from "../bundle";
 import { ClaimsFileSchema, isComputation, isProof } from "../claims";
+import { externalBytes, type ExternalData } from "../external";
 import type { Digest } from "../hash";
 import { integrityFlags, MISSING_FILE_REASONS } from "../integrity";
 import { parseJson } from "../json";
@@ -15,6 +16,7 @@ import { listFiles, readFiles, sha256File, under, writeJsonFile } from "./files"
 import { plural, size } from "./format";
 import { SCAN_LIMIT, type ScanRecord } from "./job";
 import { checkMaterials, readMaterials } from "./materials";
+import { describePointers, readPointers } from "./pointers";
 import { runSubject, type RunOptions } from "./reproduction";
 import type { Sandbox } from "./sandbox";
 import { HARNESS } from "./version";
@@ -53,6 +55,14 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     throw error;
   }
 
+  let pointers: ExternalData;
+  try {
+    pointers = await readPointers(root, paths);
+  } catch (error) {
+    if (error instanceof HarnessError) throw new HarnessError(`A node would refuse this bundle: ${error.message}`);
+    throw error;
+  }
+
   const manifest = ManifestSchema.safeParse(json(files, "manifest.json"));
   if (!manifest.success) {
     throw new HarnessError(`manifest.json doesn't check: ${manifest.error.issues.map((issue) => `/${issue.path.join("/")} ${issue.message}`).join("; ")}`);
@@ -83,7 +93,14 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     skipped: [...sizes].filter(([, bytes]) => bytes > SCAN_LIMIT).map(([path, bytes]) => ({ path, bytes })),
   };
   await writeJsonFile(join(outDir, "scan.json"), scan);
-  deps.print(`Bundle ${digests.bundle}: ${plural(paths.length, "file")}, ${size([...sizes.values()].reduce((a, b) => a + b, 0))}.`);
+  const bundleBytes = [...sizes.values()].reduce((a, b) => a + b, 0);
+  deps.print(`Bundle ${digests.bundle}: ${plural(paths.length, "file")}, ${size(bundleBytes)}.`);
+  const pointed = describePointers(pointers);
+  if (pointed) {
+    deps.print(
+      `It points at ${pointed} in data/external.json. Verifiers fetch each one before they run the work, so only those that can download ${size(bundleBytes + externalBytes(pointers))} in all are given work that re-runs it.`,
+    );
+  }
   const builtCode = scan.binary.filter((path) => path.startsWith("code/"));
   if (builtCode.length > 0) {
     deps.print(
@@ -112,6 +129,8 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     verificationInputs: digests.verificationInputs,
     files: Object.fromEntries([...sizes].map(([path, bytes]) => [path, { digest: digests.files[path], bytes }])),
     declaredMinutes: manifest.data.compute.minutes,
+    // Shared by the reproduction and the proof check, so a file is fetched once.
+    externalDir: join(outDir, "external"),
   };
   let passed = true;
   if (reproducible.length > 0) {

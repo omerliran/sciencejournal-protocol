@@ -26,6 +26,13 @@ const INPUT_DIRECTORIES = new Set<string>(VERIFICATION_INPUT_DIRECTORIES);
 
 export class BundleLayoutError extends Error {
   override name = "BundleLayoutError";
+  constructor(
+    message: string,
+    /** The paths at fault. */
+    readonly paths: readonly string[] = [],
+  ) {
+    super(message);
+  }
 }
 
 export interface BundleDigests {
@@ -48,7 +55,7 @@ export function digestBundle(
   uploaded: ReadonlyMap<string, Digest> = new Map(),
 ): BundleDigests {
   const twice = [...uploaded.keys()].find((path) => files.has(path));
-  if (twice) throw new BundleLayoutError(`"${twice}" is both sent and uploaded`);
+  if (twice) throw new BundleLayoutError(`"${twice}" is both sent and uploaded`, [twice]);
   checkPaths([...files.keys(), ...uploaded.keys()], true);
 
   const digests = new Map<string, Digest>([
@@ -78,32 +85,53 @@ export function digestEvidence(files: ReadonlyMap<string, Uint8Array>): {
   return { files: digests, evidence: canonicalDigest(digests) };
 }
 
+/**
+ * Checks the paths of the files a bundle points at, in data/external.json, beside the paths of
+ * its own files: each sits under data/, none is one of the bundle's own or given twice, and
+ * together they keep the rules a bundle's paths keep, so a verifier can put every file where
+ * its path says. Throws BundleLayoutError naming the paths at fault.
+ */
+export function checkPointedPaths(paths: Iterable<string>, pointed: readonly string[]): void {
+  const own = new Set(paths);
+  const seen = new Set<string>();
+  for (const path of pointed) {
+    const segments = path.split("/");
+    if (segments.length < 2 || segments[0] !== "data") {
+      throw new BundleLayoutError(`"${path}" isn't under data/, where the files a bundle points at go`, [path]);
+    }
+    if (own.has(path)) throw new BundleLayoutError(`"${path}" is both in the bundle and pointed at`, [path]);
+    if (seen.has(path)) throw new BundleLayoutError(`"${path}" is pointed at twice`, [path]);
+    seen.add(path);
+  }
+  checkPaths([...own, ...pointed], true);
+}
+
 function checkPaths(paths: string[], bundleLayout: boolean): void {
   const seen = new Map<string, string>();
   for (const path of paths) {
     const segments = path.split("/");
     if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-      throw new BundleLayoutError(`"${path}" is not a normalized relative path`);
+      throw new BundleLayoutError(`"${path}" is not a normalized relative path`, [path]);
     }
     if (/[\\\x00-\x1f\x7f]/.test(path)) {
-      throw new BundleLayoutError(`"${path}" contains a backslash or control character`);
+      throw new BundleLayoutError(`"${path}" contains a backslash or control character`, [path]);
     }
     if (path.normalize("NFC") !== path) {
-      throw new BundleLayoutError(`"${path}" is not Unicode NFC`);
+      throw new BundleLayoutError(`"${path}" is not Unicode NFC`, [path]);
     }
 
     const allowed =
       !bundleLayout ||
       (segments.length === 1 ? BUNDLE_FILES.has(path) : DIRECTORIES.has(segments[0]));
     if (!allowed) {
-      throw new BundleLayoutError(`"${path}" is outside the submission layout`);
+      throw new BundleLayoutError(`"${path}" is outside the submission layout`, [path]);
     }
 
     // Mirrors on case-insensitive filesystems must be able to hold every file.
     const folded = path.toLowerCase();
     const clash = seen.get(folded);
     if (clash !== undefined) {
-      throw new BundleLayoutError(`"${path}" and "${clash}" differ only in case`);
+      throw new BundleLayoutError(`"${path}" and "${clash}" differ only in case`, [path, clash]);
     }
     seen.set(folded, path);
   }
@@ -113,7 +141,7 @@ function checkPaths(paths: string[], bundleLayout: boolean): void {
     for (let depth = 1; depth < parts.length; depth++) {
       const parent = parts.slice(0, depth).join("/");
       if (seen.has(parent)) {
-        throw new BundleLayoutError(`"${seen.get(parent)}" is both a file and a directory`);
+        throw new BundleLayoutError(`"${seen.get(parent)}" is both a file and a directory`, [seen.get(parent)!, seen.get(folded)!]);
       }
     }
   }

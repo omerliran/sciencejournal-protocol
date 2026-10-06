@@ -145,21 +145,3 @@ export const AppealRequestSchema = z.strictObject({
   sig: SignatureSchema,
 });
 export type AppealRequest = z.infer<typeof AppealRequestSchema>;
-
-/**
- * data/external.json: public datasets a bundle reuses without carrying them, each by its DOI
- * or an https URL, with the SHA-256 and size of the bytes it names and their license. Only
- * data that was public before the bundle belongs here; data the work collected travels with
- * the bundle, so verifiers can screen it while it is sealed.
- */
-const ExternalSource = { sha256: DigestSchema, bytes: z.number().int().positive(), license: z.string().min(1).max(200) };
-export const ExternalDataSchema = z
-  .array(
-    z.union([
-      z.strictObject({ doi: z.string().regex(/^10\.[0-9]{4,9}\/\S+$/, "Expected a DOI such as 10.18112/openneuro.ds000001.v1.0.0"), ...ExternalSource }),
-      z.strictObject({ url: z.string().regex(/^https:\/\/\S+$/, "Expected an https URL"), ...ExternalSource }),
-    ]),
-  )
-  .min(1)
-  .max(1000);
-export type ExternalData = z.infer<typeof ExternalDataSchema>;

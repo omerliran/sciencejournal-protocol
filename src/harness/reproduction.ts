@@ -5,6 +5,7 @@ import { arch, platform } from "node:os";
 import { join } from "node:path";
 import { VERIFICATION_INPUT_DIRECTORIES } from "../bundle";
 import { isComputation, isProof, type Computation, type ProofEvidence } from "../claims";
+import type { ExternalData } from "../external";
 import { canonicalDigest, type Digest } from "../hash";
 import { bundleInputs, resultLocation } from "../results";
 import { REVIEW_JOBS } from "../vocabulary";
@@ -14,6 +15,7 @@ import { plural, seconds } from "./format";
 import { cloneTree, exists, listOutputs, LogTail, readFiles, readJsonFile, readOutput, removeTree, under, writeJsonFile } from "./files";
 import { COMPILE_DIR } from "./judge";
 import { answeredWith, loadJob, parseClaims, runsInSandbox, type ScanRecord } from "./job";
+import { describePointers, fetchPointed, placePointed, readPointers } from "./pointers";
 import { leanToolchain, leanToolchainOfVersion, rocqVersionOf, runJudge, type JudgeAnswer, type JudgeImage, type JudgeRun } from "./judge";
 import {
   assumptions,
@@ -65,6 +67,8 @@ export interface Subject {
   outDir: string;
   /** Where the evidence goes: report.md, run.log, environment.json, and results/. */
   evidenceDir: string;
+  /** Where the public files the bundle points at are kept between runs, named by digest. */
+  externalDir: string;
   verificationInputs: Digest;
   files: Record<string, { digest: string; bytes: number }>;
   declaredMinutes: number;
@@ -113,6 +117,7 @@ export async function jobSubject(jobDir: string): Promise<Subject> {
     outDir: jobDir,
     // A challenge review's report is the reviewer's own, so what the harness re-ran goes beside it.
     evidenceDir: kind === "challenge_rerun" ? join(jobDir, "evidence", "rerun") : join(jobDir, "evidence"),
+    externalDir: join(jobDir, "external"),
     verificationInputs: record.verification_inputs,
     files: record.files,
     declaredMinutes: record.compute.minutes,
@@ -173,6 +178,15 @@ export async function runSubject(
   // Nothing from an earlier run stays to be mistaken for this one's: its workspace and logs go.
   await removeTree(join(subject.outDir, "workspace"));
   for (const log of ["run.log", "build.log"]) await rm(join(subject.evidenceDir, log), { force: true });
+  // Pointers that can't be used keep the work from running anywhere, so they are read first.
+  let pointers: ExternalData;
+  try {
+    pointers = await readPointers(subject.bundleDir, paths);
+  } catch (error) {
+    if (!(error instanceof HarnessError)) throw error;
+    run.failure = error.message;
+    return finish(subject, run, {}, deps, { probe });
+  }
   const box = sandbox === undefined ? await engineSandbox(options.engine) : sandbox;
   if (!box) {
     run.failure = "No container engine (Docker or Podman) answered here, and the harness runs bundle code only in a container.";
@@ -203,6 +217,19 @@ export async function runSubject(
       return await finish(subject, run, { build }, deps, { workspace: fresh, probe });
     } finally {
       await removeTree(scratch);
+    }
+    // The public files the bundle points at, fetched outside the container and checked, go where
+    // their paths say: after the build, so they never change what the image is built from.
+    if (pointers.length > 0) {
+      deps.print(`The bundle points at ${describePointers(pointers)}.`);
+      try {
+        run.external = await fetchPointed(pointers, subject.externalDir, deps);
+      } catch (error) {
+        if (!(error instanceof HarnessError)) throw error;
+        run.failure = error.message;
+        return await finish(subject, run, { build }, deps, { workspace: fresh, probe });
+      }
+      await placePointed(pointers, subject.externalDir, fresh);
     }
     await mkdir(join(fresh, "results"), { recursive: true });
     // After the build, so the copies never change what the image is built from.

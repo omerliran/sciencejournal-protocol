@@ -1,4 +1,5 @@
 import { isClaimId, type ProofEvidence } from "../claims";
+import { EXTERNAL_DATA, externalBytes, type ExternalData } from "../external";
 import { MISSING_FILE_REASONS, type IntegrityFlags } from "../integrity";
 import { PAPER_SECTIONS } from "../paper";
 import type { UnfinishedProof } from "../proofs";
@@ -35,6 +36,10 @@ export interface BriefInput {
   unfinished?: (UnfinishedProof & { path: string })[];
   /** For a review of work that lists its materials: what each RRID it gives resolves to. */
   materials?: MaterialsCheck;
+  /** The public files the work points at in data/external.json, or why that file can't be used. */
+  pointers?: ExternalData | string;
+  /** Whether the harness runs this job's work, and so fetches what it points at. */
+  runs?: boolean;
   invocation: string;
   now: Date;
 }
@@ -45,7 +50,7 @@ export type BriefProof = ProofEvidence & { local_id: string };
 const MEANINGS = Object.entries(SIGNIFICANCE_MEANINGS)
   .map(([rating, meaning]) => `${rating} if ${meaning}`)
   .join("; ");
-const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Rate each one's significance too, how much it adds to what was known, whatever your verdict: ${MEANINGS}; or ${SIGNIFICANCE_RATINGS.at(-1)}. A replication isn't known: rate what confirming the original is worth. Your rating is your opinion, on the record, and no status depends on it. Reviews stay sealed until all three are in, so no reviewer sees another's. The work is usually still sealed too, so you can't look up whose it is; don't try. If something in it tells you anyway, such as a byline, an address, or a repository, say so with --knew-publisher and say what in your report, so readers know your review wasn't blind.`;
+const REVIEW = `give each claim below a verdict, ${ATTESTATION_JOBS.methods_review.join(", ")}, with your report as your evidence. Rate each one's significance too, how much it adds to what was known, whatever your verdict: ${MEANINGS}; or ${SIGNIFICANCE_RATINGS.at(-1)}. A replication isn't known: rate what confirming the original is worth. Rate a negative result as you would a positive one, by what knowing it is worth. Your rating is your opinion, on the record, and no status depends on it. Reviews stay sealed until all three are in, so no reviewer sees another's. The work is usually still sealed too, so you can't look up whose it is; don't try. If something in it tells you anyway, such as a byline, an address, or a repository, say so with --knew-publisher and say what in your report, so readers know your review wasn't blind.`;
 
 /** What each ground of a challenge says is wrong with the claim. */
 const GROUNDS: Record<ChallengeGround, string> = {
@@ -69,7 +74,7 @@ const WHAT_TO_DO: Partial<Record<JobRecord["kind"], string>> = {
   replication_match:
     "Each replication claim below says it reached the same results as a claim from another organization's work. Judge whether it did: matched, mismatched, or could_not_judge. If the work has a `bundle/deviations.json`, it says how the replication departed from each original and what the original left unstated; say in your report whether any difference in results could come from one. There is no hazard screen: the work was screened when it opened.",
   challenge_review: `Another operator challenges a claim in this work, on the ground and with the evidence below. Weigh the evidence against the work, and judge whether the challenge holds: ${CHALLENGE_VERDICTS.join(", ")}.`,
-  methods_review: `A methods review: judge whether the design and the statistics support each claim, and whether someone else could repeat the work from the bundle alone, and say what must change, including anything its Methods or materials leave out that a repeat would need, and where the paper departs from the node's style guide, in /llms/writing-the-paper.md; ${REVIEW}`,
+  methods_review: `A methods review: judge whether the design and the statistics support each claim, and whether someone else could repeat the work from the bundle alone, and say what must change, including anything its Methods or materials leave out that a repeat would need, and where the paper departs from the node's style guide, in /llms/writing-the-paper.md. For a negative result, judge whether the code tests what the claim says it rules out and whether the test could have found the effect, since a re-run repeats a bug as faithfully as a finding; ${REVIEW}`,
   domain_review: `A domain review: judge whether each claim holds up against the ledger and the literature: whether it is as new as it says, and whether it accounts for prior work that bears on it, with links to that work; ${REVIEW}`,
   adversarial_review: `An adversarial review: build the strongest case against each claim, with evidence; ${REVIEW}`,
   duplicate_check: `A duplicate check: for each pair below, judge whether the claim from this work restates the earlier claim in other words (the same assertion, whatever its evidence): ${DUPLICATE_VERDICTS.join(", ")}. The node paired them because their statements share most of their words, which proves nothing either way. There is no hazard screen: the work was screened when it opened.`,
@@ -81,7 +86,20 @@ const UNKNOWN_KIND =
   "This harness doesn't know this kind of job yet. Read what /llms.txt says about it, and answer it the way it describes.";
 
 /** JOB.md: what the job is, what it asks, what the scan found, and the commands to run next. */
-export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [], unfinished = [], materials, invocation, now }: BriefInput): string {
+export function renderBrief({
+  record,
+  jobDir,
+  scan,
+  rubric,
+  declared,
+  proofs = [],
+  unfinished = [],
+  materials,
+  pointers = [],
+  runs = false,
+  invocation,
+  now,
+}: BriefInput): string {
   const run = (command: string, rest = "") => `\`${invocation} ${command} ${shellQuote(jobDir)}${rest}\``;
   const reviewing = (REVIEW_JOBS as readonly string[]).includes(record.kind);
   const asked = record.claims.filter((claim) => claim.needs_verdict);
@@ -207,6 +225,9 @@ export function renderBrief({ record, jobDir, scan, rubric, declared, proofs = [
     );
   }
 
+  if (typeof pointers === "string" || pointers.length > 0) {
+    lines.push("", "## Data it points at", "", ...pointerLines(pointers, runs, jobDir));
+  }
   lines.push("", "## Hidden content", "", ...hiddenContent(scan));
   if (record.integrity) lines.push("", "## Integrity flags", "", ...integrityFlagLines(record.integrity));
 
@@ -404,6 +425,28 @@ function integrityFlagLines(flags: IntegrityFlags): string[] {
     "",
     "Each is something to look at, not a finding. Say in your evidence what you make of each; quoted text comes from the bundle.",
   ];
+}
+
+/** What the work reads without carrying it: the public files data/external.json points at. */
+function pointerLines(pointers: ExternalData | string, running: boolean, jobDir: string): string[] {
+  if (typeof pointers === "string") {
+    return [`${revealHidden(pointers)}. The work can't be run as it stands; say so in your evidence.`];
+  }
+  const lines = [
+    `The work also reads ${plural(pointers.length, "public file")} (${size(externalBytes(pointers))}) that \`bundle/${EXTERNAL_DATA}\` points at rather than carries, each by the URL of its bytes, with their size, SHA-256, and license:`,
+    "",
+    ...pointers
+      .slice(0, 20)
+      .map((file) => `- ${code(file.path)} (${size(file.bytes)}, ${code(file.license)}) from ${code(file.url)}${file.doi ? `, of the dataset ${code(`doi:${file.doi}`)}` : ""}`),
+    ...(pointers.length > 20 ? [`- and ${pointers.length - 20} more, which the file lists`] : []),
+  ];
+  if (running) {
+    lines.push(
+      "",
+      `\`run\` fetches each one outside the container, following only redirects to other https URLs, keeps it only if its size and SHA-256 match, and puts it at its path before the work runs. It keeps them in ${code(`${jobDir}/external/`)}, named by their SHA-256, and uses a file there again once it checks, so you can also put them there yourself, fetched however you like. Each URL's host learns that someone fetched it, and from where.`,
+    );
+  }
+  return lines;
 }
 
 function hiddenContent(scan: ScanRecord): string[] {

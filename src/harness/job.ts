@@ -17,6 +17,7 @@ import { HarnessError, type Deps } from "./context";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
 import { plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
+import { readPointers } from "./pointers";
 import { findUnfinished } from "./proof-check";
 import { isGoalCheckJob, writeGoalCheckJob, type GoalCheckJobView } from "./goal-check";
 import { isIdeaJob, writeIdeaJob, type IdeaJobView } from "./idea-screen";
@@ -228,10 +229,28 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   const listed = (REVIEW_JOBS as readonly string[]).includes(view.kind) ? readMaterials(inline.get("materials.json")) : null;
   if (listed?.some((material) => material.rrid)) deps.print("Looking up the RRIDs materials.json gives...");
   const materials = listed && listed.length > 0 ? await checkMaterials(listed, deps) : undefined;
+  // What the work reads without carrying it, or why that can't be used, which a run would answer could_not_run.
+  const pointers = await readPointers(bundleDir, Object.keys(files)).catch((error: unknown) => {
+    if (error instanceof HarnessError) return error.message;
+    throw error;
+  });
   await writeUnder(
     jobDir,
     "JOB.md",
-    renderBrief({ record, jobDir, scan, rubric, declared, proofs, unfinished, materials, invocation: deps.invocation, now: deps.now() }),
+    renderBrief({
+      record,
+      jobDir,
+      scan,
+      rubric,
+      declared,
+      proofs,
+      unfinished,
+      materials,
+      pointers,
+      runs: runsInSandbox(record),
+      invocation: deps.invocation,
+      now: deps.now(),
+    }),
   );
 
   deps.print(`${again ? "Your open job" : "New job"} ${view.job}: ${view.kind} of ${view.bundle}, due ${view.deadline}.`);
