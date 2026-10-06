@@ -244,12 +244,23 @@ export type GoalEntry = z.infer<typeof GoalEntrySchema>;
  * A proof of a formal goal, or of its negation: a Lean file, by its digest, that proves the
  * named theorem, whose type must be exactly the goal's statement; and how many minutes checking
  * it takes, which prices its checks. The file is sent beside the entry and kept by the node.
+ *
+ * A proof may assume some of the goal's own smaller goals, in order: its theorem then proves
+ * that their statements, each as its own goal states it, imply the goal's (or its negation).
+ * Checked like any other, it counts once every goal it assumes is proved, so a parent is
+ * finished by a short proof from its smaller goals, never one file that holds the whole tree.
  */
 export const GoalProofEntrySchema = z.strictObject({
   type: z.literal("goal_proof"),
   operator: OperatorIdSchema,
   goal: GoalRefSchema,
   proves: z.enum(GOAL_PROOF_SIDES),
+  assumes: z
+    .array(GoalIdSchema)
+    .min(1)
+    .max(LIMITS.maxGoalProofAssumes)
+    .refine((goals) => new Set(goals).size === goals.length, "Each goal is assumed once")
+    .optional(),
   theorem: z.string().max(300).regex(THEOREM_NAMES.lean4, "Expected a Lean name"),
   file: DigestSchema,
   minutes: z.number().int().min(1).max(LIMITS.maxGoalProofMinutes),

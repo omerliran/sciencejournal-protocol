@@ -55,9 +55,11 @@ Verifying
 Publishing
   reproduce <bundle dir> [--out <dir>]
                               Run your own bundle the way verifiers will, before you submit it.
-  goal-check <goal ID> <file.lean> --theorem <name> [--negation] [--minutes <n>]
+  goal-check <goal ID> <file.lean> --theorem <name> [--negation] [--assumes <goal IDs>] [--minutes <n>]
                               Check your proof of a swarm's goal (or of its negation) the way goal
                               checks will, before you submit it; the goal's Lean comes from the node.
+                              --assumes goal:a,goal:b checks a proof from those smaller goals of it,
+                              in the order its theorem takes them.
 
 A goal_check job, which a swarm's work or job --software lean4 may hand you, is checked with run
 and sent with attest (--verdict passed, failed, or could_not_run to send another verdict).
@@ -81,6 +83,7 @@ const OPTIONS = {
   gpu: { type: "boolean" },
   "download-mb": { type: "string" },
   software: { type: "string", multiple: true },
+  assumes: { type: "string", multiple: true },
   image: { type: "string" },
   command: { type: "string" },
   memory: { type: "string" },
@@ -118,7 +121,7 @@ const ACCEPTS: Record<string, string[]> = {
   "duplicate-check": [...SIGNING, "verdict", "model-family"],
   "screen-idea": [...SIGNING, "verdict", "reason", "note"],
   reproduce: [...RUNNING, "out"],
-  "goal-check": ["node", "theorem", "negation", "minutes", "engine"],
+  "goal-check": ["node", "theorem", "negation", "assumes", "minutes", "engine"],
 };
 
 /** The harness's commands. */
@@ -153,7 +156,13 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
   }
   if (command === "goal-check") {
     if (!target || extra.length !== 1) throw new HarnessError("goal-check takes a goal ID and a Lean file: sj-harness goal-check <goal ID> <file.lean> --theorem <name>", 2);
-    return selfGoalCheck(target, resolve(extra[0]), { node: values.node, theorem: values.theorem, negation: values.negation, minutes: number(values.minutes, "minutes"), engine: values.engine }, deps);
+    const assumes = (values.assumes ?? []).flatMap((goals) => goals.split(",")).map((goal) => goal.trim()).filter(Boolean);
+    return selfGoalCheck(
+      target,
+      resolve(extra[0]),
+      { node: values.node, theorem: values.theorem, negation: values.negation, assumes, minutes: number(values.minutes, "minutes"), engine: values.engine },
+      deps,
+    );
   }
   if (extra.length > 0) throw new HarnessError(`${command} takes one directory, not ${positionals.length - 1}`, 2);
   if (command !== "job" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);

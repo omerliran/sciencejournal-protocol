@@ -368,6 +368,8 @@ export const LIMITS = {
   maxGoalProofBytes: 1_000_000,
   /** The most minutes a goal proof may declare its check takes. */
   maxGoalProofMinutes: 120,
+  /** The most smaller goals one proof may assume: as many as a goal may have. */
+  maxGoalProofAssumes: 12,
   maxNoteBody: 2000,
   maxNoteRefs: 10,
 } as const;

@@ -116,6 +116,8 @@ export interface JudgeAsk {
   theorem: string;
   /** For a goal: the constant, from the statement module, that the theorem's type must be exactly. */
   states?: { module: string; name: string };
+  /** Modules the statement is built from, which the judge replays and the kernel must accept too. */
+  also?: string[];
 }
 
 /** What the judge said about one theorem. */
@@ -133,9 +135,16 @@ export function leanJudgeCommand(asks: readonly JudgeAsk[]): string {
       module: ask.module,
       theorem: leanParts(ask.theorem),
       ...(ask.states && { states: { module: ask.states.module, name: leanParts(ask.states.name) } }),
+      ...(ask.also && { also: ask.also.map(moduleOnly) }),
     })),
   };
   return `LEAN_PATH="$(cat ${LEAN_PATH_FILE})" lean --run ${JUDGE_DIR}/Judge.lean ${shellQuote(JSON.stringify(request))}`;
+}
+
+/** A module the harness named, of letters and digits alone, so none can stand in for a library's path. */
+function moduleOnly(module: string): string {
+  if (!/^SJ[A-Za-z0-9]+$/.test(module)) throw new HarnessError(`${module} isn't a module the harness names`);
+  return module;
 }
 
 function leanParts(name: string): string[] {
@@ -393,6 +402,7 @@ structure Ask where
   module : Name
   thm : Name
   states : Option (Name × Name)
+  also : Array Name
 
 def parseAsk (j : Json) : Except String Ask := do
   let module := (← j.getObjValAs? String "module").toName
@@ -400,7 +410,10 @@ def parseAsk (j : Json) : Except String Ask := do
   let states ← match j.getObjVal? "states" with
     | .ok s => pure (some ((← s.getObjValAs? String "module").toName, ← nameOf (← s.getObjValAs? (Array Json) "name")))
     | .error _ => pure none
-  return { module, thm, states }
+  let also ← match j.getObjVal? "also" with
+    | .ok a => (← a.getArr?).mapM fun m => return (← m.getStr?).toName
+    | .error _ => pure #[]
+  return { module, thm, states, also }
 
 unsafe def main (args : List String) : IO UInt32 := do
   let [request] := args | IO.eprintln "The judge takes one JSON argument."; return 2
@@ -416,6 +429,7 @@ unsafe def main (args : List String) : IO UInt32 := do
   for ask in asks do
     unless modules.contains ask.module do modules := modules.push ask.module
     if let some (m, _) := ask.states then unless modules.contains m do modules := modules.push m
+    for m in ask.also do unless modules.contains m do modules := modules.push m
   let mut rejected : NameMap String := {}
   let mut unloadable : NameMap String := {}
   for m in modules do
@@ -424,7 +438,7 @@ unsafe def main (args : List String) : IO UInt32 := do
     catch e => unloadable := unloadable.insert m (toString e)
   -- Each proof is read on its own, with only the statement it must prove beside it.
   for ask in asks, i in [0:asks.size] do
-    let involved := ask.module :: (ask.states.map (·.1)).toList
+    let involved := ask.module :: (ask.states.map (·.1)).toList ++ ask.also.toList
     if let some why := involved.findSome? unloadable.find? then
       say i "unknown" s!"the compiled proof couldn't be loaded: {why}"; continue
     if let some why := involved.findSome? rejected.find? then

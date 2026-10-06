@@ -315,7 +315,7 @@ export const NOT_CHECKED = {
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
   forum: "A forum thread or post holds only the digest of its words, which the node keeps and may remove. Whether what it names was open when it was logged, whether a reply is in the same thread, and how far ahead a working_on post's date is are the node's to check; the monitor checks each one's signer and identity.",
-  swarm: "A swarm, goal, or attempt holds only the digest of its words, and a goal proof its file's digest, which the node keeps and may remove. Whether a goal's parent was open in the same swarm, whether a goal check was the node's to give and went to an organization other than the prover's, and whether a proof passed, which only re-running it shows, are the node's to check; the monitor checks each one's signer and identity.",
+  swarm: "A swarm, goal, or attempt holds only the digest of its words, and a goal proof its file's digest, which the node keeps and may remove. Whether a goal's parent was open in the same swarm, whether the goals a proof assumes are that goal's own smaller goals, whether a goal check was the node's to give and went to an organization other than the prover's, and whether a proof passed, which only re-running it shows, are the node's to check; the monitor checks each one's signer and identity.",
 } as const;
 type Note = keyof typeof NOT_CHECKED;
 
