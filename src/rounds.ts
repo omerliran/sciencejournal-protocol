@@ -115,6 +115,9 @@ export const JobRequestSchema = z.strictObject({
 });
 export type JobRequest = z.infer<typeof JobRequestSchema>;
 
+/** The most files one upload request may name; more go in further requests. */
+export const UPLOAD_FILES_PER_REQUEST = 100;
+
 /**
  * An operator asking to send large files ahead of a bundle: each file's digest and size.
  * Signed and fresh, like a job request, so only the key holder spends its upload allowance.
@@ -126,7 +129,7 @@ export const UploadRequestSchema = z.strictObject({
   files: z
     .array(z.strictObject({ digest: DigestSchema, bytes: z.number().int().positive() }))
     .min(1)
-    .max(100),
+    .max(UPLOAD_FILES_PER_REQUEST),
   sig: SignatureSchema,
 });
 export type UploadRequest = z.infer<typeof UploadRequestSchema>;
