@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { IMPORTANCE_REASON, IMPORTANCE_REASON_CHARS } from "../importance";
 import type { JobKind } from "../vocabulary";
 import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
@@ -7,7 +8,7 @@ import { HARNESS } from "./version";
 
 // Rating how important a published bundle's claims are: a job of judgment that runs nothing,
 // which every bundle prepays and job hands out among the rest. The harness writes the paper and
-// the claims down, and signs and sends the scores the verifier gives; it proposes none.
+// the claims down, and signs and sends the scores and reasons the verifier gives; it proposes none.
 
 /** An importance job as the node hands it out. */
 export interface ImportanceJobView {
@@ -56,7 +57,7 @@ export async function writeImportanceJob(view: ImportanceJobView, jobDir: string
 
 function briefFor(record: ImportanceJobRecord, jobDir: string, invocation: string): string {
   const { min, max, true_north, bands, dimensions, rules } = record.scale;
-  const scores = record.claims.map((claim) => `--score ${claim.local_id}=<${min}-${max}>`).join(" ");
+  const scores = record.claims.map((claim) => `--score ${claim.local_id}=<${min}-${max}> --reason ${claim.local_id}="<why>"`).join(" ");
   return `# Rate how important these claims are
 
 A published bundle's paper is in paper.md, and the claims to rate are below and in claims.json.
@@ -84,7 +85,8 @@ ${record.claims.map((claim) => `- **${claim.local_id}** (${claim.type}${claim.co
 
 ## Your scores
 
-Give every claim a whole number, naming the model you are:
+Give every claim a whole number and its reason, ${IMPORTANCE_REASON}. Readers see your score and
+reason with your name on the claim's page once all its ratings are in. Name the model you are:
 
     ${invocation} rate ${jobDir} ${MODEL_FLAGS} ${scores}
 
@@ -96,27 +98,48 @@ export interface RateOptions extends Credentials {
   node?: string;
   /** "<claim>=<score>" pairs, each claim by its local ID (C1) or its claim ID. */
   scores?: string[];
+  /** "<claim>=<why>" pairs, a reason for each score, its claim named the same way. */
+  reasons?: string[];
 }
 
-/** Signs and sends a rater's scores for the importance job in `jobDir`. */
+/** Signs and sends a rater's scores and reasons for the importance job in `jobDir`. */
 export async function rateImportance(jobDir: string, options: RateOptions, deps: Deps): Promise<number> {
   const record = await readJsonFile<ImportanceJobRecord | { kind: JobKind }>(join(jobDir, "job.json"));
   if (!isImportanceJob(record)) throw new HarnessError(`This is a ${record.kind} job, not claims to rate.`);
   const { min, max } = record.scale;
-  const scores: Record<string, number> = {};
-  for (const pair of options.scores ?? []) {
-    const cut = pair.indexOf("=");
-    const claim = cut > 0 ? record.claims.find((c) => c.local_id === pair.slice(0, cut) || c.claim_id === pair.slice(0, cut)) : undefined;
-    if (!claim) throw new HarnessError(`--score takes <claim>=<score> for a claim this job lists, such as C1=40; got ${pair}`, 2);
-    const score = Number(pair.slice(cut + 1));
-    if (!Number.isInteger(score) || score < min || score > max) {
-      throw new HarnessError(`${claim.local_id}'s score must be a whole number from ${min} to ${max}; got ${pair.slice(cut + 1)}`, 2);
+  /** Each "<claim>=<value>" pair given with `flag`, by the claim's ID. */
+  const byClaim = (flag: string, pairs: readonly string[], example: string) => {
+    const given: Record<string, string> = {};
+    for (const pair of pairs) {
+      const cut = pair.indexOf("=");
+      const claim = cut > 0 ? record.claims.find((c) => c.local_id === pair.slice(0, cut) || c.claim_id === pair.slice(0, cut)) : undefined;
+      if (!claim) throw new HarnessError(`${flag} takes <claim>=<${flag.slice(2)}> for a claim this job lists, such as ${example}; got ${pair}`, 2);
+      if (claim.claim_id in given) throw new HarnessError(`${claim.local_id} has two of ${flag}`, 2);
+      given[claim.claim_id] = pair.slice(cut + 1);
     }
-    if (claim.claim_id in scores) throw new HarnessError(`${claim.local_id} is scored twice`, 2);
-    scores[claim.claim_id] = score;
+    const missing = record.claims.filter((claim) => !(claim.claim_id in given)).map((claim) => claim.local_id);
+    if (missing.length > 0) throw new HarnessError(`Give ${flag} for every claim the job lists; missing ${missing.join(", ")}`, 2);
+    return given;
+  };
+  const localId = (id: string) => record.claims.find((claim) => claim.claim_id === id)!.local_id;
+  const scores: Record<string, number> = {};
+  for (const [id, given] of Object.entries(byClaim("--score", options.scores ?? [], "C1=40"))) {
+    const score = Number(given);
+    if (given.trim() === "" || !Number.isInteger(score) || score < min || score > max) {
+      throw new HarnessError(`${localId(id)}'s score must be a whole number from ${min} to ${max}; got ${given}`, 2);
+    }
+    scores[id] = score;
   }
-  const missing = record.claims.filter((claim) => !(claim.claim_id in scores)).map((claim) => claim.local_id);
-  if (missing.length > 0) throw new HarnessError(`Score every claim the job lists; missing ${missing.join(", ")}`, 2);
+  const reasons: Record<string, string> = {};
+  for (const [id, given] of Object.entries(byClaim("--reason", options.reasons ?? [], 'C1="Narrow: …"'))) {
+    // Signed text is trimmed before signing, since the node can't trim what a signature covers.
+    const reason = given.trim();
+    if (reason === "") throw new HarnessError(`${localId(id)}'s reason is empty: say why it scores what it does`, 2);
+    if (reason.length > IMPORTANCE_REASON_CHARS) {
+      throw new HarnessError(`${localId(id)}'s reason runs ${reason.length} characters; keep it to ${IMPORTANCE_REASON_CHARS}`, 2);
+    }
+    reasons[id] = reason;
+  }
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
   const entry = signAs(operator, {
@@ -124,6 +147,7 @@ export async function rateImportance(jobDir: string, options: RateOptions, deps:
     rater: operator.id,
     bundle: record.bundle,
     scores,
+    reasons,
   });
   const response = await client.post<{
     bundle: string;

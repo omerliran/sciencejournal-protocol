@@ -174,6 +174,11 @@ export const AuditStateSchema = z.strictObject({
   withdrawn: z.array(DigestSchema),
   /** The bundles retracted, each of which can be retracted only once. Audits saved before retractions have none. */
   retracted: z.array(DigestSchema).default([]),
+  /**
+   * Who signed each publisher's retraction, and where: one a key recovery later disowns is void,
+   * and its bundle may be retracted again. Audits saved before recoveries voided retractions have none.
+   */
+  retractedBy: z.record(DigestSchema, z.strictObject({ operator: OperatorIdSchema, index: z.number().int().nonnegative() })).default({}),
   /** The invite codes sponsored identities used, each of which can be used only once. */
   invites: z.array(InviteCodeSchema).default([]),
   /** The pairings paired vouches completed, each of which completes only one. */
@@ -206,6 +211,7 @@ export function emptyAuditState(): AuditState {
     challenges: [],
     withdrawn: [],
     retracted: [],
+    retractedBy: {},
     invites: [],
     pairings: [],
   };
@@ -313,7 +319,8 @@ export const NOT_CHECKED = {
   canary: "A canary leaf's claim IDs come from the canary bundle's files, which the monitor doesn't fetch.",
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
-  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the publisher it names signed it, or the log, and that no bundle is retracted twice.",
+  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the publisher it names signed it, or the log, and that no bundle is retracted twice unless a key recovery disowned the first.",
+  addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Who published the bundle it names, whether that bundle opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the publisher it names signed it, with an identity.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
   vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired identity's consent is the operator's to sign, which the monitor checks, along with each pairing completing one identity; that the person who vouched, or named a domain, brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
@@ -361,6 +368,7 @@ export class LogAuditor {
   private readonly challenges: Set<number>;
   private readonly withdrawn: Set<string>;
   private readonly retracted: Set<string>;
+  private readonly retractedBy: Map<string, { operator: string; index: number }>;
   private readonly invites: Set<string>;
   private readonly pairings: Set<string>;
   /** Which operator first held each key, retired keys included. */
@@ -386,6 +394,7 @@ export class LogAuditor {
     this.challenges = new Set(state.challenges);
     this.withdrawn = new Set(state.withdrawn);
     this.retracted = new Set(state.retracted);
+    this.retractedBy = new Map(Object.entries(state.retractedBy));
     this.invites = new Set(state.invites);
     this.pairings = new Set(state.pairings);
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
@@ -425,6 +434,7 @@ export class LogAuditor {
       challenges: [...this.challenges].sort((a, b) => a - b),
       withdrawn: [...this.withdrawn].sort() as Digest[],
       retracted: [...this.retracted].sort() as Digest[],
+      retractedBy: Object.fromEntries([...this.retractedBy].sort(([a], [b]) => (a < b ? -1 : 1))) as AuditState["retractedBy"],
       invites: [...this.invites].sort(),
       pairings: [...this.pairings].sort() as Digest[],
     };
@@ -589,10 +599,17 @@ export class LogAuditor {
         if (this.retracted.has(bundle)) this.problem(index, "retraction", `${bundle} was retracted before; a paper is retracted once`);
         this.retracted.add(bundle);
         if (leaf.operator === undefined) return this.signedByLog(index, entry.type, signed);
+        this.retractedBy.set(bundle, { operator, index });
         this.names(index, "publisher", entry.publisher, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
+      case "addendum":
+        // Only the publisher adds to its bundle, which the node checks; here, that it signed.
+        this.notes.add("addendum");
+        this.names(index, "publisher", entry.publisher, operator);
+        this.requireIdentity(index, entry.type, operator, index);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       default: {
         // A leaf type the schema gained without a check here stops the build, not the audit.
         const unchecked: never = type;
@@ -672,6 +689,13 @@ export class LogAuditor {
       this.problem(index, "key", `The recovery disowns entries from ${entry.since}, past the log's size when it was logged (${index})`);
     } else if (entry.since < index) {
       this.notes.add("disowned");
+      // A retraction the lost key signed in the window is void, so its bundle may be retracted again.
+      for (const [bundle, by] of this.retractedBy) {
+        if (by.operator === operator && by.index >= entry.since) {
+          this.retracted.delete(bundle);
+          this.retractedBy.delete(bundle);
+        }
+      }
     }
     const held = this.identities.get(operator) ?? [];
     const kind = entry.kind;

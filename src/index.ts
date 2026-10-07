@@ -35,6 +35,7 @@ export * from "./receipts";
 export * from "./references";
 export * from "./results";
 export * from "./retractions";
+export * from "./addenda";
 export * from "./rounds";
 export * from "./scan";
 export * from "./signing";

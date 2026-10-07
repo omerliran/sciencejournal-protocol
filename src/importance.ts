@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
-import { OperatorIdSchema, SignatureSchema } from "./entries";
+import { OperatorIdSchema, SignatureSchema, signedText } from "./entries";
 import { DigestSchema } from "./hash";
 import { LIMITS } from "./vocabulary";
 
@@ -97,21 +97,41 @@ export function importanceBand(score: number): ImportanceBand {
 
 const ClaimKeySchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)");
 
+/** The most a rater's reason for one score may say: a few sentences a reader can follow. */
+export const IMPORTANCE_REASON_CHARS = 1000;
+
+/** What a rater's reason for a score says, for raters and the instructions that brief them. */
+export const IMPORTANCE_REASON =
+  "a sentence or three a reader can follow: where the claim sits among the bands, and what weighed most in placing it there";
+
 /**
  * An operator's signed ratings of the claims in one published bundle it was given as a job:
- * each a whole number on the importance scale, by a model of a family that didn't write the
- * bundle, as `model_family` and `model` name it (families.ts).
+ * each a whole number on the importance scale with the rater's reason for it, by a model of a
+ * family that didn't write the bundle, as `model_family` and `model` name it (families.ts).
  */
-export const ImportanceRatingSchema = z.strictObject({
-  type: z.literal("importance_rating"),
-  rater: OperatorIdSchema,
-  bundle: DigestSchema,
-  scores: z
-    .record(ClaimKeySchema, z.number().int().min(IMPORTANCE_SCALE.min).max(IMPORTANCE_SCALE.max))
-    .refine((scores) => Object.keys(scores).length > 0, "Rate at least one claim")
-    .refine((scores) => Object.keys(scores).length <= LIMITS.maxClaimsPerBundle, `A bundle holds at most ${LIMITS.maxClaimsPerBundle} claims`),
-  model_family: ModelFamilySchema,
-  model: ModelNameSchema,
-  sig: SignatureSchema,
-});
+export const ImportanceRatingSchema = z
+  .strictObject({
+    type: z.literal("importance_rating"),
+    rater: OperatorIdSchema,
+    bundle: DigestSchema,
+    scores: z
+      .record(ClaimKeySchema, z.number().int().min(IMPORTANCE_SCALE.min).max(IMPORTANCE_SCALE.max))
+      .refine((scores) => Object.keys(scores).length > 0, "Rate at least one claim")
+      .refine((scores) => Object.keys(scores).length <= LIMITS.maxClaimsPerBundle, `A bundle holds at most ${LIMITS.maxClaimsPerBundle} claims`),
+    reasons: z.record(ClaimKeySchema, signedText(IMPORTANCE_REASON_CHARS), {
+      error: (issue) => (issue.input === undefined ? `Give each score its reason, ${IMPORTANCE_REASON}` : undefined),
+    }),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
+    sig: SignatureSchema,
+  })
+  .superRefine((rating, ctx) => {
+    // Every score has its reason, and every reason its score.
+    for (const claim of Object.keys(rating.scores)) {
+      if (!Object.hasOwn(rating.reasons, claim)) ctx.addIssue({ code: "custom", path: ["reasons", claim], message: "Give this score its reason" });
+    }
+    for (const claim of Object.keys(rating.reasons)) {
+      if (!Object.hasOwn(rating.scores, claim)) ctx.addIssue({ code: "custom", path: ["reasons", claim], message: "Give a reason only for a claim you score" });
+    }
+  });
 export type ImportanceRating = z.infer<typeof ImportanceRatingSchema>;

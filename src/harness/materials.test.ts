@@ -108,6 +108,6 @@ it("tells a publisher, before it submits, what verifiers will see about repeatin
 
   // A measurement alone has nothing to re-run, so the check passes, and says what it found.
   expect(await selfCheck(root, {}, deps)).toBe(0);
-  expect(lines).toContain("paper.md has no Claims, Methods, Limitations, Provenance sections; verifiers will see that flagged.");
+  expect(lines).toContain("paper.md has no Claims, Methods, Discussion, Limitations, Provenance sections; verifiers will see that flagged.");
   expect(lines).toContain("RRID:CVCL_1906 (HEp-2): Problematic cell line: Contaminated.");
 });

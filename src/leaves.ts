@@ -13,6 +13,7 @@ import {
   SignatureSchema,
   type Detached,
 } from "./entries";
+import { AddendumEntrySchema } from "./addenda";
 import { ChallengeEntrySchema, ChallengeReviewEntrySchema } from "./challenges";
 import { CitationCheckEntrySchema } from "./citations";
 import { DuplicateCheckEntrySchema } from "./duplicates";
@@ -111,6 +112,7 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: PublisherRetractionEntrySchema }),
   z.strictObject({ timestamp, entry: NodeRetractionEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: AddendumEntrySchema }),
 ]);
 export type SignedLeaf = z.infer<typeof SignedLeafSchema>;
 

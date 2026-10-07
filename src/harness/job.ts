@@ -19,6 +19,7 @@ import { plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
 import { readPointers } from "./pointers";
 import { findUnfinished } from "./proof-check";
+import { isAddendumJob, writeAddendumJob, type AddendumJobView } from "./addendum-screen";
 import { isGoalCheckJob, writeGoalCheckJob, type GoalCheckJobView } from "./goal-check";
 import { isIdeaJob, writeIdeaJob, type IdeaJobView } from "./idea-screen";
 import { isImportanceJob, writeImportanceJob, type ImportanceJobView } from "./importance";
@@ -131,12 +132,10 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  let answer: JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | { job: null; retry_after_seconds: number };
+  type Answer = JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | AddendumJobView | { job: null; retry_after_seconds: number };
+  let answer: Answer;
   try {
-    answer = await client.post<JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | { job: null; retry_after_seconds: number }>(
-      "/api/v1/jobs",
-      request,
-    );
+    answer = await client.post<Answer>("/api/v1/jobs", request);
   } catch (error) {
     // Asking too often, or after its organization handed back too many jobs, gets no job for a
     // while, and the node says how long.
@@ -167,6 +166,11 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   if (isImportanceJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeImportanceJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
+    return { record: { kind: answer.kind } as JobRecord, jobDir };
+  }
+  if (isAddendumJob(answer)) {
+    const jobDir = join(options.dir, jobDirectoryName(answer.job));
+    await writeAddendumJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
     return { record: { kind: answer.kind } as JobRecord, jobDir };
   }
   const view = answer;
@@ -294,6 +298,7 @@ export const ANSWERED_WITH: Record<JobKind, string> = {
   idea_screen: "screen-idea",
   goal_check: "attest",
   importance_rating: "rate",
+  addendum_screen: "screen-addendum",
 };
 
 /**

@@ -63,6 +63,13 @@ const retraction = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`,
     keys.secretKey,
   );
 
+/** An addendum `publisher` adds to `bundle`, signed with `keys`. */
+const addendum = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, publisher: string) =>
+  signObject(
+    { type: "addendum" as const, publisher, bundle, words: sha256Digest("addendum words"), model_family: "family-a", model: "test-model" },
+    keys.secretKey,
+  );
+
 const bundleEntry = (keys: Keys, name: string) =>
   signObject({ type: "bundle" as const, bundle: sha256Digest(name) }, keys.secretKey);
 
@@ -252,6 +259,8 @@ async function realisticLog(): Promise<MemoryLog> {
   // Alice retracts that paper herself, with her new key, and a person at the node retracts the first on a finding.
   await log.append({ operator: aliceId, entry: retraction(aliceNext, sha256Digest("bundle 3"), aliceId) });
   await log.append({ entry: retraction(log, bundle.bundle) });
+  // Alice adds a note to her second paper, as many as she likes.
+  await log.append({ operator: aliceId, entry: addendum(aliceNext, sha256Digest("bundle 3"), aliceId) });
 
   // The vouched agent challenges the published claim, and a panelist's review is sealed until the panel agrees.
   const challenge = await log.append({ operator: carolId, entry: challengeEntry(carolId, carol) });
@@ -350,6 +359,7 @@ describe("monitorLog", () => {
         canary: 1,
         withdrawal: 2,
         retraction: 2,
+        addendum: 1,
         key_recovery: 3,
         challenge: 1,
         challenge_review: 1,
@@ -369,6 +379,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.canary,
         NOT_CHECKED.withdrawal,
         NOT_CHECKED.retraction,
+        NOT_CHECKED.addendum,
         NOT_CHECKED.recovery,
         NOT_CHECKED.vouch,
         NOT_CHECKED.invite,
@@ -916,6 +927,45 @@ describe("monitorLog", () => {
       { check: "retraction", index: 5, reason: `${sha256Digest("bundle")} was retracted before; a paper is retracted once` },
       { check: "signature", index: 6, reason: `The retraction entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
       { check: "signature", index: 7, reason: "The retraction entry's sig doesn't verify against the log's key" },
+    ]);
+  });
+
+  it("lets a bundle be retracted again once a key recovery disowns its retraction, and only then", async () => {
+    const log = await logOf([{ operator: aliceId, entry: keyEntry(alice) }]);
+    await log.append({ operator: aliceId, entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: aliceId }, log.secretKey), organization: aliceId });
+    // Before the theft, alice retracts one paper; then whoever took her key retracts another.
+    await log.append({ operator: aliceId, entry: retraction(alice, sha256Digest("first"), aliceId) });
+    const since = log.size;
+    await log.append({ operator: aliceId, entry: retraction(alice, sha256Digest("second"), aliceId) });
+    await log.append({
+      operator: aliceId,
+      entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: aliceId, key: aliceNext.publicKey, since }, log.secretKey),
+    });
+    // The recovery voided the second, so it may be retracted again; the first stands.
+    await log.append({ operator: aliceId, entry: retraction(aliceNext, sha256Digest("second"), aliceId) });
+    await log.append({ operator: aliceId, entry: retraction(aliceNext, sha256Digest("first"), aliceId) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "retraction", index: 6, reason: `${sha256Digest("first")} was retracted before; a paper is retracted once` },
+    ]);
+  });
+
+  it("takes any number of addenda, each signed by the publisher its leaf names, with an identity", async () => {
+    const log = await logOf([
+      { operator: aliceId, entry: keyEntry(alice) },
+      { operator: bobId, entry: keyEntry(bob) },
+    ]);
+    await log.append({ operator: aliceId, entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: aliceId }, log.secretKey), organization: aliceId });
+    await log.append({ operator: aliceId, entry: addendum(alice, sha256Digest("bundle"), aliceId) });
+    await log.append({ operator: aliceId, entry: addendum(alice, sha256Digest("bundle"), aliceId) });
+    // Bob's key signs an addendum naming alice, which the leaf gives to alice.
+    await log.append({ operator: aliceId, entry: addendum(bob, sha256Digest("bundle"), aliceId) });
+    // Bob has no identity on the log.
+    await log.append({ operator: bobId, entry: addendum(bob, sha256Digest("other"), bobId) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signature", index: 5, reason: `The addendum entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
+      { check: "identity", index: 6, reason: `${bobId} has no identity on the log before entry 6, and addendum entries need one` },
     ]);
   });
 

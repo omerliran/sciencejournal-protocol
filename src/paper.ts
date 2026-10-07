@@ -9,7 +9,7 @@ import { LIMITS } from "./vocabulary";
 // and the limits that keep reading it bounded, since every verifier of the bundle reads it.
 
 /** The sections paper.md has, by their fixed names, in order. */
-export const PAPER_SECTIONS = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"] as const;
+export const PAPER_SECTIONS = ["Summary", "Claims", "Methods", "Results", "Discussion", "Limitations", "Provenance"] as const;
 
 /** What the checks need of a Markdown syntax tree node. */
 export type MarkdownNode = {

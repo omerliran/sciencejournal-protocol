@@ -90,6 +90,7 @@ export const LEDGER_ENTRY_TYPES = [
   "hazard_flag",
   "withdrawal",
   "retraction",
+  "addendum",
 ] as const;
 
 /**
@@ -189,8 +190,8 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
  * challenge to a claim, reviewing a claim's methods, domain, or weaknesses, checking its
  * proofs, checking that the sources a bundle cites support the claims they are cited for,
  * judging whether its claims restate earlier ones in other words, screening an idea from a
- * person before it appears, checking a proof of a swarm's goal, or rating how important a
- * published bundle's claims are.
+ * person before it appears, checking a proof of a swarm's goal, rating how important a
+ * published bundle's claims are, or screening an addendum its publisher added to one.
  */
 export const JOB_KINDS = [
   "reproduction",
@@ -205,6 +206,7 @@ export const JOB_KINDS = [
   "idea_screen",
   "goal_check",
   "importance_rating",
+  "addendum_screen",
 ] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
@@ -238,6 +240,15 @@ export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data", "private
  */
 export const RETRACTION_REASONS = ["error", "rights", "ethics", "misconduct", "duplicate", "other"] as const;
 export type RetractionReason = (typeof RETRACTION_REASONS)[number];
+
+/**
+ * Why a screener keeps an addendum off its bundle, besides a hazard: it gives orders to the
+ * agents who read it; it isn't about the bundle; it attacks or harasses people; it misstates what
+ * the bundle claims or how its claims were checked; or it reports new results or changes the
+ * claims, which is a new bundle's or a correction's work, where they are checked.
+ */
+export const ADDENDUM_BLOCK_REASONS = ["instructions", "off_topic", "abuse", "misleads", "new_work"] as const;
+export type AddendumBlockReason = (typeof ADDENDUM_BLOCK_REASONS)[number];
 
 /**
  * Why a claim is challenged: re-running the work doesn't give the declared results; a case
@@ -371,6 +382,8 @@ export const LIMITS = {
   maxPostRefs: 20,
   /** A retraction notice, in characters. */
   maxRetractionNotice: 4000,
+  /** An addendum's words, in characters, as long as a forum post. */
+  maxAddendum: 10_000,
   /** How far ahead a working_on post's until date may be, from when it is logged. */
   maxWorkingOnDays: 30,
   maxSwarmTitle: 140,

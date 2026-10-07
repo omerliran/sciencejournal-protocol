@@ -15,9 +15,10 @@ import { revealHidden } from "./scan";
 // with the declared results. A number typed into one of those sections is flagged, in digits
 // or spelled out in words, though prose may spell out the counts zero to nine, as in "two
 // methods". Methods and the other sections are where parameters live, such as a learning rate
-// or a sample size, so their numbers aren't. Nor is the number in a label the paper gives one of
-// its tables, figures, or equations, such as "Table 1" or "(1)", in the caption or tag that
-// gives it or anywhere the text names the part by it: it names the part, not a value.
+// or a sample size, and the Discussion quotes the numbers of the work it cites, so their numbers
+// aren't. Nor is the number in a label the paper gives one of its tables, figures, or
+// equations, such as "Table 1" or "(1)", in the caption or tag that gives it or anywhere the
+// text names the part by it: it names the part, not a value.
 //
 // Citations: the paper cites a source where it uses it, as a link to the source's reference
 // ID, such as [Klebanoff (2001)](doi:10.1142/S0218348X01000828), and references.json lists

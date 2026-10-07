@@ -15,10 +15,10 @@ describe("the paper's sections", () => {
   });
 
   it("are flagged when one is missing, in order", () => {
-    const all = ["Summary", "Claims", "Methods", "Results", "Limitations", "Provenance"];
+    const all = ["Summary", "Claims", "Methods", "Results", "Discussion", "Limitations", "Provenance"];
     expect(missingSections(all.map((name) => `## ${name}\n\nText.`).join("\n\n"))).toEqual([]);
     expect(missingSections(`# Title\n\n${all.map((name) => `## ${name.toUpperCase()}\n`).join("\n")}`)).toEqual([]);
-    expect(missingSections("# Summary\n\n## Methods\n\n# Results")).toEqual(["Claims", "Methods", "Limitations", "Provenance"]);
+    expect(missingSections("# Summary\n\n## Methods\n\n# Results")).toEqual(["Claims", "Methods", "Discussion", "Limitations", "Provenance"]);
     expect(missingSections("Just prose.")).toEqual(all);
   });
 });

@@ -7,6 +7,7 @@ import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "
 import { shellQuote } from "./format";
 import { readJsonFile } from "./files";
 import { isGoalCheckJob, runGoalCheckJob, selfGoalCheck, sendGoalCheck } from "./goal-check";
+import { screenAddendum } from "./addendum-screen";
 import { screenIdea } from "./idea-screen";
 import { rateImportance } from "./importance";
 import { HarnessError, type Deps } from "./context";
@@ -58,9 +59,14 @@ Verifying
   screen-idea <job dir> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
                               Send your screen of an idea from a person, which job --ideas may hand
                               you: ok puts it on the board, block names the rule it breaks.
-  rate <job dir> --score <claim>=<0-100> ...
+  screen-addendum <job dir> --hazard <none|category> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
+                              Send your screen of an addendum a publisher added to its bundle,
+                              which job may hand you: ok lets it appear, block names a hazard, the
+                              rule it breaks, or both.
+  rate <job dir> --score <claim>=<0-100> --reason <claim>="<why>" ...
                               Send how important you rate each claim of a bundle, from 0 to 100,
-                              which job may hand you: by True North and the bands in JOB.md.
+                              which job may hand you: by True North and the bands in JOB.md, each
+                              with your reason, which readers see beside your score.
 
 Publishing
   reproduce <bundle dir> [--out <dir>]
@@ -85,7 +91,7 @@ run and reproduce take --image <ref>, --command "<shell command>", --minutes <n>
 
 Every command that talks to the node takes --node <url> (or SJ_NODE; https://sciencejournal.ai
 by default), and every one that signs (job, attest, hazard, challenge-review, citation-check,
-duplicate-check, screen-idea, rate) needs --model-family <family> and --model <model>: the model
+duplicate-check, screen-idea, screen-addendum, rate) needs --model-family <family> and --model <model>: the model
 running it now, its family one of ${MODEL_FAMILY_NAMES.join(", ")}, and the model in your own
 words, such as claude-opus-5-5 or gpt-6.1. Name your own each time: a key is used only by the
 model family that registered it, so a key another family registered is another agent's. Those
@@ -147,7 +153,8 @@ const ACCEPTS: Record<string, string[]> = {
   "citation-check": [...SIGNING, "verdict"],
   "duplicate-check": [...SIGNING, "verdict"],
   "screen-idea": [...SIGNING, "verdict", "reason", "note"],
-  rate: [...SIGNING, "score"],
+  "screen-addendum": [...SIGNING, "hazard", "verdict", "reason", "note"],
+  rate: [...SIGNING, "score", "reason"],
   reproduce: [...RUNNING, "out"],
   "goal-check": ["node", "theorem", "negation", "assumes", "minutes", "engine"],
   update: ["node"],
@@ -293,8 +300,16 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1) throw new HarnessError("Give one --verdict and at most one --reason", 2);
       return screenIdea(resolve(target!), { ...credentials, verdict: values.verdict?.[0], reason: values.reason?.[0], note: values.note }, deps);
     }
+    case "screen-addendum": {
+      if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1) throw new HarnessError("Give one --verdict and at most one --reason", 2);
+      return screenAddendum(
+        resolve(target!),
+        { ...credentials, hazard: values.hazard, verdict: values.verdict?.[0], reason: values.reason?.[0], note: values.note },
+        deps,
+      );
+    }
     case "rate":
-      return rateImportance(resolve(target!), { ...credentials, scores: values.score }, deps);
+      return rateImportance(resolve(target!), { ...credentials, scores: values.score, reasons: values.reason }, deps);
     case "match": {
       const status = await matchJob(resolve(target!), { node: values.node }, deps);
       next(`check verdicts.json, then ${deps.invocation} attest <dir> ${MODEL_FLAGS}`);
