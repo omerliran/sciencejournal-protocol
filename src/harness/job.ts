@@ -21,6 +21,7 @@ import { readPointers } from "./pointers";
 import { findUnfinished } from "./proof-check";
 import { isGoalCheckJob, writeGoalCheckJob, type GoalCheckJobView } from "./goal-check";
 import { isIdeaJob, writeIdeaJob, type IdeaJobView } from "./idea-screen";
+import { isImportanceJob, writeImportanceJob, type ImportanceJobView } from "./importance";
 import { HARNESS } from "./version";
 
 /** A job as the node hands it out. */
@@ -130,9 +131,12 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  let answer: JobView | IdeaJobView | GoalCheckJobView | { job: null; retry_after_seconds: number };
+  let answer: JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | { job: null; retry_after_seconds: number };
   try {
-    answer = await client.post<JobView | IdeaJobView | GoalCheckJobView | { job: null; retry_after_seconds: number }>("/api/v1/jobs", request);
+    answer = await client.post<JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | { job: null; retry_after_seconds: number }>(
+      "/api/v1/jobs",
+      request,
+    );
   } catch (error) {
     // Asking too often, or after its organization handed back too many jobs, gets no job for a
     // while, and the node says how long.
@@ -152,6 +156,11 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   if (isGoalCheckJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeGoalCheckJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
+    return { record: { kind: answer.kind } as JobRecord, jobDir };
+  }
+  if (isImportanceJob(answer)) {
+    const jobDir = join(options.dir, jobDirectoryName(answer.job));
+    await writeImportanceJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
     return { record: { kind: answer.kind } as JobRecord, jobDir };
   }
   const view = answer;
@@ -278,6 +287,7 @@ export const ANSWERED_WITH: Record<JobKind, string> = {
   duplicate_check: "duplicate-check",
   idea_screen: "screen-idea",
   goal_check: "attest",
+  importance_rating: "rate",
 };
 
 /**

@@ -8,6 +8,7 @@ import { shellQuote } from "./format";
 import { readJsonFile } from "./files";
 import { isGoalCheckJob, runGoalCheckJob, selfGoalCheck, sendGoalCheck } from "./goal-check";
 import { screenIdea } from "./idea-screen";
+import { rateImportance } from "./importance";
 import { HarnessError, type Deps } from "./context";
 import { runsInSandbox, takeJob } from "./job";
 import { matchJob } from "./match";
@@ -24,7 +25,8 @@ Verifying
                               --minutes <n>, --gpu, --download-mb <n>, and --software <tags>;
                               --minutes 0 asks only for work you read, as the harness does by
                               itself when no container engine answers; --ideas also takes ideas
-                              from people to screen before they appear.
+                              from people to screen before they appear. It takes claims to rate
+                              for importance among the rest, unless you add --no-importance.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
                               results with the declared ones, or compile a proof check's proofs and
                               have the judge check them; propose a verdict per claim. For a challenge
@@ -53,6 +55,9 @@ Verifying
   screen-idea <job dir> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
                               Send your screen of an idea from a person, which job --ideas may hand
                               you: ok puts it on the board, block names the rule it breaks.
+  rate <job dir> --model-family <family> --score <claim>=<0-100> ...
+                              Send how important you rate each claim of a bundle, from 0 to 100,
+                              which job may hand you: by True North and the bands in JOB.md.
 
 Publishing
   reproduce <bundle dir> [--out <dir>]
@@ -103,6 +108,9 @@ const OPTIONS = {
   "over-budget": { type: "boolean" },
   "knew-publisher": { type: "boolean" },
   ideas: { type: "boolean" },
+  importance: { type: "boolean" },
+  "no-importance": { type: "boolean" },
+  score: { type: "string", multiple: true },
   note: { type: "string" },
   theorem: { type: "string" },
   negation: { type: "boolean" },
@@ -114,7 +122,7 @@ const SIGNING = ["node", "operator", "key"];
 const RUNNING = ["image", "command", "minutes", "memory", "cpus", "pids", "engine"];
 /** The options each command takes; anything else is a mistake worth saying so. */
 const ACCEPTS: Record<string, string[]> = {
-  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas"],
+  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "importance", "no-importance"],
   run: RUNNING,
   compare: [],
   attest: [...SIGNING, "hazard", "model-family", "verdict", "reason", "significance", "over-budget", "knew-publisher"],
@@ -124,6 +132,7 @@ const ACCEPTS: Record<string, string[]> = {
   "citation-check": [...SIGNING, "verdict", "model-family"],
   "duplicate-check": [...SIGNING, "verdict", "model-family"],
   "screen-idea": [...SIGNING, "verdict", "reason", "note"],
+  rate: [...SIGNING, "score", "model-family"],
   reproduce: [...RUNNING, "out"],
   "goal-check": ["node", "theorem", "negation", "assumes", "minutes", "engine"],
 };
@@ -180,8 +189,10 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       // work to read, unless the verifier says how many minutes it can run.
       const engine = minutes === undefined ? await deps.findEngine() : undefined;
       const readsOnly = engine === null;
+      // Rating claims' importance is work every bundle prepays, so it asks for it unless told not to.
+      const importance = !values["no-importance"];
       const asked =
-        minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software || values.ideas;
+        minutes !== undefined || values.gpu !== undefined || values["download-mb"] !== undefined || values.software || values.ideas || importance;
       const can =
         asked || readsOnly
           ? {
@@ -190,6 +201,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
               download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
               software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
               ...(values.ideas && { ideas: true }),
+              ...(importance && { importance: true }),
             }
           : undefined;
       if (readsOnly) {
@@ -266,6 +278,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1) throw new HarnessError("Give one --verdict and at most one --reason", 2);
       return screenIdea(resolve(target!), { ...credentials, verdict: values.verdict?.[0], reason: values.reason?.[0], note: values.note }, deps);
     }
+    case "rate":
+      return rateImportance(resolve(target!), { ...credentials, scores: values.score, modelFamily: values["model-family"] }, deps);
     case "match": {
       const status = await matchJob(resolve(target!), { node: values.node }, deps);
       next(`check verdicts.json, then ${deps.invocation} attest <dir> --model-family <a family you declared>`);

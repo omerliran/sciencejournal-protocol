@@ -173,8 +173,9 @@ const LEAN_ATTACKS: Record<string, { theorem: string; lean: string; verdict: str
 };
 
 describe.skipIf(!engine)(`the judge, on ${engine?.command ?? "no engine"}`, () => {
+  // Declaring five minutes, so a busy machine still compiles the proofs inside the judge's time limit.
   const onlyProofs = async (overrides: Record<string, string>) => {
-    const bundle = await writeBundle(0, overrides);
+    const bundle = await writeBundle(0, overrides, 5);
     for (const path of ["code/compute.py", "code/run", "env/requirements.txt", "results/R1.json"]) await rm(join(bundle, path), { force: true });
     return bundle;
   };

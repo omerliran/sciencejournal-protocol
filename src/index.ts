@@ -11,6 +11,7 @@ export * from "./forum";
 export * from "./swarm";
 export * from "./hash";
 export * from "./ideas";
+export * from "./importance";
 export * from "./integrity";
 export * from "./identity";
 export * from "./challenges";
