@@ -23,6 +23,7 @@ import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema, sha256Hex } from "./hash";
 import { IdeaEntrySchema } from "./ideas";
+import { NodeRetractionEntrySchema, PublisherRetractionEntrySchema } from "./retractions";
 import {
   CanaryEntrySchema,
   HazardFlagEntrySchema,
@@ -40,7 +41,8 @@ const timestamp = z.iso.datetime();
  * entries a person signs name the observer, whether they observe, suggest ideas, or both. For
  * bundles, the claim IDs and fields are derived from the bundle's contents, so anyone holding
  * the bundle can check them; for identities, the log adds the organization the identity
- * counts as. Entries the node signs itself (commitments, canaries, withdrawals) name no one.
+ * counts as. Entries the node signs itself (commitments, canaries, withdrawals, and the
+ * retractions a person at the node makes) name no one.
  * An entry that was sealed first carries `sealed`: the commitment it opens, on the same log,
  * and the salt that opens it. A log that only logs, with no bundles to read, can't derive
  * what a bundle holds, so its bundle leaves name no claims, fields, or version, and its canary
@@ -107,6 +109,8 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: GoalCheckEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: PublisherRetractionEntrySchema }),
+  z.strictObject({ timestamp, entry: NodeRetractionEntrySchema }),
 ]);
 export type SignedLeaf = z.infer<typeof SignedLeafSchema>;
 

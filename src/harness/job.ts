@@ -10,7 +10,7 @@ import { bundleInputs, type BundleInputs } from "../results";
 import type { Capabilities } from "../rounds";
 import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
-import { REVIEW_JOBS, type ChallengeGround, type JobKind } from "../vocabulary";
+import { JOB_KINDS, REVIEW_JOBS, type ChallengeGround, type JobKind } from "../vocabulary";
 import { renderBrief, type BriefProof, type Rubric } from "./brief";
 import { NodeClient, NodeError, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
@@ -147,6 +147,12 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   if (answer.job === null) {
     deps.print(`No job fits what you can run right now. Ask again in about ${Math.ceil(answer.retry_after_seconds / 60)} minutes.`);
     return null;
+  }
+  if (!(JOB_KINDS as readonly string[]).includes(answer.kind)) {
+    // A node newer than this harness hands out kinds of job it doesn't know.
+    throw new HarnessError(
+      `The node handed you a job of a kind this harness doesn't know, ${answer.kind}. Run ${deps.invocation} update, then ask for a job again: the node hands you the same one.`,
+    );
   }
   if (isIdeaJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));

@@ -26,4 +26,6 @@ export interface Deps {
   invocation: string;
   /** The container engine that answers here, Docker or Podman, or null when neither does. */
   findEngine: () => Promise<Engine | null>;
+  /** The file the harness runs from when it was built into one, as nodes serve it; absent when it runs from its source. */
+  self?: string;
 }

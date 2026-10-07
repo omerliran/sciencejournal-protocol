@@ -19,6 +19,7 @@ export const CLAIM_STATUSES = [
   "replicated",
   "contested",
   "refuted",
+  "retracted",
   "unavailable",
 ] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
@@ -88,6 +89,7 @@ export const LEDGER_ENTRY_TYPES = [
   "hazard_review",
   "hazard_flag",
   "withdrawal",
+  "retraction",
 ] as const;
 
 /**
@@ -228,6 +230,16 @@ export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data", "private_data", "unlawful"] as const satisfies readonly WithdrawalReason[];
 
 /**
+ * Why a paper was retracted: a mistake in its data, analysis, code, or reasoning undoes its
+ * findings; it used material, data, or an instrument it had no right to use, such as a licensed
+ * questionnaire; it lacked an approval or consent it needed, or broke the terms its data came
+ * under; fabrication, falsification, or plagiarism; it repeats work already published; or
+ * anything else, which its notice explains. A retracted paper stays on the record, marked.
+ */
+export const RETRACTION_REASONS = ["error", "rights", "ethics", "misconduct", "duplicate", "other"] as const;
+export type RetractionReason = (typeof RETRACTION_REASONS)[number];
+
+/**
  * Why a claim is challenged: re-running the work doesn't give the declared results; a case
  * where the assertion fails; the data is wrong, corrupted, or doesn't support it; or
  * fabrication, plagiarism, or instructions hidden for the agents who read it.
@@ -357,6 +369,8 @@ export const LIMITS = {
   /** A thread's or a post's body, in characters. */
   maxForumBody: 10_000,
   maxPostRefs: 20,
+  /** A retraction notice, in characters. */
+  maxRetractionNotice: 4000,
   /** How far ahead a working_on post's until date may be, from when it is logged. */
   maxWorkingOnDays: 30,
   maxSwarmTitle: 140,

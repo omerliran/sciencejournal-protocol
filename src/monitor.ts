@@ -108,6 +108,7 @@ export const PROBLEMS = {
   seal: "A revealed entry doesn't open its commitment, or a commitment is opened or closed twice",
   identity: "An identity the protocol doesn't allow, or an entry from an operator without the identity it needs",
   withdrawal: "A bundle withdrawn twice",
+  retraction: "A bundle retracted twice",
   challenge: "A challenge review that names no earlier challenge",
   checkpoint: "A checkpoint isn't the log's signed tree head, its keys aren't signed by the log's key, or a signature on it doesn't verify",
 } as const;
@@ -171,6 +172,8 @@ export const AuditStateSchema = z.strictObject({
   challenges: z.array(z.number().int().nonnegative()),
   /** The bundles withdrawn, each of which can be withdrawn only once. */
   withdrawn: z.array(DigestSchema),
+  /** The bundles retracted, each of which can be retracted only once. Audits saved before retractions have none. */
+  retracted: z.array(DigestSchema).default([]),
   /** The invite codes sponsored identities used, each of which can be used only once. */
   invites: z.array(InviteCodeSchema).default([]),
   /** The pairings paired vouches completed, each of which completes only one. */
@@ -202,6 +205,7 @@ export function emptyAuditState(): AuditState {
     commitments: {},
     challenges: [],
     withdrawn: [],
+    retracted: [],
     invites: [],
     pairings: [],
   };
@@ -309,6 +313,7 @@ export const NOT_CHECKED = {
   canary: "A canary leaf's claim IDs come from the canary bundle's files, which the monitor doesn't fetch.",
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
+  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the publisher it names signed it, or the log, and that no bundle is retracted twice.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
   vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired identity's consent is the operator's to sign, which the monitor checks, along with each pairing completing one identity; that the person who vouched, or named a domain, brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
@@ -355,6 +360,7 @@ export class LogAuditor {
   private readonly commitments: Map<number, Digest>;
   private readonly challenges: Set<number>;
   private readonly withdrawn: Set<string>;
+  private readonly retracted: Set<string>;
   private readonly invites: Set<string>;
   private readonly pairings: Set<string>;
   /** Which operator first held each key, retired keys included. */
@@ -379,6 +385,7 @@ export class LogAuditor {
     this.commitments = new Map(Object.entries(state.commitments).map(([index, digest]) => [Number(index), digest]));
     this.challenges = new Set(state.challenges);
     this.withdrawn = new Set(state.withdrawn);
+    this.retracted = new Set(state.retracted);
     this.invites = new Set(state.invites);
     this.pairings = new Set(state.pairings);
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
@@ -417,6 +424,7 @@ export class LogAuditor {
       commitments: Object.fromEntries([...this.commitments].sort(([a], [b]) => a - b).map(([i, d]) => [String(i), d])),
       challenges: [...this.challenges].sort((a, b) => a - b),
       withdrawn: [...this.withdrawn].sort() as Digest[],
+      retracted: [...this.retracted].sort() as Digest[],
       invites: [...this.invites].sort(),
       pairings: [...this.pairings].sort() as Digest[],
     };
@@ -572,6 +580,18 @@ export class LogAuditor {
           this.close(index, entry.sealed as number);
         }
         return;
+      }
+      case "retraction": {
+        // A publisher retracts its own paper, signing as itself; a person at the node retracts
+        // any paper, signing as the log, and then the leaf names no one.
+        this.notes.add("retraction");
+        const bundle = entry.bundle as Digest;
+        if (this.retracted.has(bundle)) this.problem(index, "retraction", `${bundle} was retracted before; a paper is retracted once`);
+        this.retracted.add(bundle);
+        if (leaf.operator === undefined) return this.signedByLog(index, entry.type, signed);
+        this.names(index, "publisher", entry.publisher, operator);
+        this.requireIdentity(index, entry.type, operator, index);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       default: {
         // A leaf type the schema gained without a check here stops the build, not the audit.

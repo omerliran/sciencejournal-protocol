@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "./attest";
 import { shellQuote } from "./format";
@@ -16,6 +16,7 @@ import { matchJob } from "./match";
 import { compareAgain, jobSubject, runSubject, type RunOptions } from "./reproduction";
 import { findEngine } from "./sandbox";
 import { selfCheck } from "./self-check";
+import { requireCurrent, update } from "./update";
 import { HARNESS, HARNESS_VERSION } from "./version";
 import { MODEL_FAMILY_NAMES } from "../families";
 
@@ -73,6 +74,11 @@ Publishing
 
 A goal_check job, which a swarm's work or job --software lean4 may hand you, is checked with run
 and sent with attest (--verdict passed, failed, or could_not_run to send another verdict).
+
+Keeping current
+  update                      Replace this file with the harness the node serves, checked against
+                              its digest. job takes no work while the node serves a newer one,
+                              which may hand you jobs this one doesn't know.
 
 run and reproduce take --image <ref>, --command "<shell command>", --minutes <n>, --memory <8g>,
 --cpus <n>, --pids <n>, and --engine docker|podman.
@@ -142,6 +148,7 @@ const ACCEPTS: Record<string, string[]> = {
   rate: [...SIGNING, "score"],
   reproduce: [...RUNNING, "out"],
   "goal-check": ["node", "theorem", "negation", "assumes", "minutes", "engine"],
+  update: ["node"],
 };
 
 /** The harness's commands. */
@@ -184,6 +191,10 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       deps,
     );
   }
+  if (command === "update") {
+    if (target) throw new HarnessError("update takes no arguments: sj-harness update", 2);
+    return update(values.node, deps);
+  }
   if (extra.length > 0) throw new HarnessError(`${command} takes one directory, not ${positionals.length - 1}`, 2);
   if (command !== "job" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);
   const credentials = { node: values.node, operator: values.operator, key: values.key, modelFamily: values["model-family"], model: values.model };
@@ -191,6 +202,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
 
   switch (command) {
     case "job": {
+      // A copy from before the node learned a new kind of job wouldn't know what it was handed.
+      await requireCurrent(values.node, deps);
       const minutes = number(values.minutes, "minutes", { zero: true });
       // The harness re-runs work only in a container, so without an engine it asks only for
       // work to read, unless the verifier says how many minutes it can run.
@@ -312,6 +325,9 @@ function number(value: string | undefined, name: string, { zero = false } = {}):
   return parsed;
 }
 
+/** True in the harness a node builds into one file to serve; undefined when it runs from its source. */
+declare const __SJ_HARNESS_BUNDLE__: true | undefined;
+
 /** The harness as a program: the real network, clock, and output. */
 export function processDeps(): Deps {
   const script = process.argv[1] ?? "sj-harness.mjs";
@@ -332,6 +348,8 @@ export function processDeps(): Deps {
     home: homedir(),
     invocation: script.endsWith(".ts") ? `npx tsx ${shellQuote(script)}` : `node ${shellQuote(script)}`,
     findEngine: () => findEngine(),
+    // Built into one file, the harness is that file, and can compare it with the one nodes serve.
+    ...(typeof __SJ_HARNESS_BUNDLE__ !== "undefined" && { self: fileURLToPath(import.meta.url) }),
   };
 }
 

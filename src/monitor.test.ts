@@ -56,6 +56,13 @@ const CLAIM = `claim:${"c".repeat(64)}` as const;
 const keyEntry = (keys: Keys, name = "Agent") =>
   signObject({ type: "key" as const, key: keys.publicKey, name, model_families: ["family-a"] }, keys.secretKey);
 
+/** A retraction of `bundle`: its publisher's when `publisher` is named, else one a person at the node made, which the log signs. */
+const retraction = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, publisher?: string) =>
+  signObject(
+    { type: "retraction" as const, ...(publisher && { publisher }), bundle, reason: "error" as const, notice: sha256Digest("notice words") },
+    keys.secretKey,
+  );
+
 const bundleEntry = (keys: Keys, name: string) =>
   signObject({ type: "bundle" as const, bundle: sha256Digest(name) }, keys.secretKey);
 
@@ -242,6 +249,9 @@ async function realisticLog(): Promise<MemoryLog> {
     entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: aliceId, key: aliceNext.publicKey, since: log.size }, log.secretKey),
   });
   await log.append(bundleLeaf(aliceId, bundleEntry(aliceNext, "bundle 3")));
+  // Alice retracts that paper herself, with her new key, and a person at the node retracts the first on a finding.
+  await log.append({ operator: aliceId, entry: retraction(aliceNext, sha256Digest("bundle 3"), aliceId) });
+  await log.append({ entry: retraction(log, bundle.bundle) });
 
   // The vouched agent challenges the published claim, and a panelist's review is sealed until the panel agrees.
   const challenge = await log.append({ operator: carolId, entry: challengeEntry(carolId, carol) });
@@ -339,6 +349,7 @@ describe("monitorLog", () => {
         hazard_flag: 1,
         canary: 1,
         withdrawal: 2,
+        retraction: 2,
         key_recovery: 3,
         challenge: 1,
         challenge_review: 1,
@@ -357,6 +368,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.identity,
         NOT_CHECKED.canary,
         NOT_CHECKED.withdrawal,
+        NOT_CHECKED.retraction,
         NOT_CHECKED.recovery,
         NOT_CHECKED.vouch,
         NOT_CHECKED.invite,
@@ -882,6 +894,28 @@ describe("monitorLog", () => {
       { check: "challenge", index: 8, reason: "The review names entry 2, which isn't a challenge logged before the review was committed at entry 7" },
       { check: "challenge", index: 11, reason: "The review names entry 10, which isn't a challenge logged before the review was committed at entry 9" },
       { check: "identity", index: 13, reason: `${carolId} has no identity on the log before entry 13, and challenge entries need one` },
+    ]);
+  });
+
+  it("retracts a paper once, signed by the publisher its leaf names or by the log", async () => {
+    const log = await logOf([
+      { operator: aliceId, entry: keyEntry(alice) },
+      { operator: bobId, entry: keyEntry(bob) },
+    ]);
+    const invited = (id: string) => ({ operator: id, entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: id }, log.secretKey), organization: id });
+    await log.append(invited(aliceId));
+    await log.append(invited(bobId));
+    await log.append({ operator: aliceId, entry: retraction(alice, sha256Digest("bundle"), aliceId) });
+    await log.append({ entry: retraction(log, sha256Digest("bundle")) });
+    // Bob's key signs a retraction naming alice, which the leaf gives to alice.
+    await log.append({ operator: aliceId, entry: retraction(bob, sha256Digest("other"), aliceId) });
+    // A retraction that names no one must be the log's.
+    await log.append({ entry: retraction(bob, sha256Digest("third")) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "retraction", index: 5, reason: `${sha256Digest("bundle")} was retracted before; a paper is retracted once` },
+      { check: "signature", index: 6, reason: `The retraction entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
+      { check: "signature", index: 7, reason: "The retraction entry's sig doesn't verify against the log's key" },
     ]);
   });
 
