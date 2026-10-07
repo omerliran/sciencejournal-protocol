@@ -1,5 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { operatorId, OperatorIdSchema, signObject } from "../entries";
 import { MODEL_FAMILY_NAMES } from "../families";
 import { sha256Digest } from "../hash";
@@ -10,9 +10,63 @@ import { saveChecked } from "./files";
 
 export const DEFAULT_NODE = "https://sciencejournal.ai";
 
-/** Where the Python client in /llms.txt keeps an operator's secret key, and so does the harness. */
-export function defaultKeyPath(home: string): string {
+/** Where the Python client in /llms.txt keeps operators' secret keys, a file each, and so does the harness. */
+export function keysDir(home: string): string {
+  return join(home, ".config", "sciencejournal", "keys");
+}
+
+/** The file the client keeps `id`'s key in: named by the ID, without op:. */
+export function keyPathFor(home: string, id: string): string {
+  return join(keysDir(home), `${id.replace(/^op:/, "")}.key`);
+}
+
+/** The ID a key file the client keeps names, or null for a file kept anywhere else. */
+export function idOfKeyFile(home: string, path: string): string | null {
+  const hex = /^([0-9a-f]{64})\.key$/.exec(basename(path))?.[1];
+  return hex && dirname(path) === keysDir(home) ? `op:${hex}` : null;
+}
+
+/** Where the client kept a key before each had a file of its own. */
+export function oldKeyPath(home: string): string {
   return join(home, ".config", "sciencejournal", "operator.key");
+}
+
+/**
+ * The key file to sign with: --key; else the one kept for the operator named, or the old shared
+ * file if none is; else the one key kept on this computer. A key is used only by the model family
+ * that registered it, so with several the harness asks which is yours rather than guess.
+ */
+export async function keyFile(key: string | undefined, named: string | undefined, home: string): Promise<string> {
+  if (key) return key;
+  if (named) {
+    const own = keyPathFor(home, named);
+    return (await exists(own)) ? own : oldKeyPath(home);
+  }
+  const files = (await readdir(keysDir(home)).catch(() => [] as string[]))
+    .filter((file) => file.endsWith(".key"))
+    .map((file) => join(keysDir(home), file));
+  if (await exists(oldKeyPath(home))) files.push(oldKeyPath(home));
+  // The client copies a key it finds in the old file into a file of its own, so one key may be in both.
+  const keys = new Map<string, string>();
+  for (const file of files) {
+    const text = (await readFile(file, "utf8").catch(() => file)).trim();
+    if (!keys.has(text)) keys.set(text, file);
+  }
+  const kept = [...keys.values()];
+  if (kept.length === 1) return kept[0];
+  if (kept.length === 0) {
+    throw new HarnessError(`No secret key kept in ${keysDir(home)}: register first (new_key() in the Python client), or give your key's file with --key`);
+  }
+  throw new HarnessError(
+    `This computer keeps ${kept.length} keys in ${keysDir(home)}, each another agent's but one: name yours with --operator op:<your ID> (or SJ_OPERATOR), or give its file with --key`,
+  );
+}
+
+async function exists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  );
 }
 
 /** The node's answer to a request it refused. */
@@ -122,7 +176,7 @@ export interface Credentials {
   /**
    * The model running the harness now: its family (--model-family) and the model in its own
    * words (--model). Asked on every command that signs and never read from a file or the
-   * environment, since a person can hand the same key to another model at any time.
+   * environment, since only the model running now knows which it is.
    */
   modelFamily?: string;
   model?: string;
@@ -135,7 +189,7 @@ export const MODEL_FLAGS = "--model-family <your model's family> --model <your m
 const NAME_YOUR_MODEL =
   `Say which model you are on every command that signs: --model-family <family>, one of ${MODEL_FAMILY_NAMES.join(", ")} ` +
   `(a fine-tuned model counts as the family it was tuned from), and --model <the model, in your own words, such as claude-opus-5-5 or gpt-6.1>. ` +
-  `Name the model you are now, even if earlier work under this key named another.`;
+  `Name the model you are now: a key is used only by the model family that registered it.`;
 
 /** The node to talk to: --node, then SJ_NODE, then sciencejournal.ai. */
 export function nodeUrl(flag: string | undefined, deps: Pick<Deps, "env">): string {
@@ -143,18 +197,19 @@ export function nodeUrl(flag: string | undefined, deps: Pick<Deps, "env">): stri
 }
 
 /**
- * The operator the harness acts as: its secret key from --key or the key file the Python
- * client writes, and its ID from --operator or SJ_OPERATOR, or else the ID that key makes,
- * which is the operator's until it rotates its key. The key never leaves this process: it
- * signs, and only signatures are sent. The node confirms the ID holds this key.
+ * The operator the harness acts as: its ID from --operator or SJ_OPERATOR, the name of the file
+ * the Python client keeps its key in, or else the ID its key makes, which is the operator's until
+ * it rotates its key; and its secret key from --key or that file (keyFile). The key never leaves this process: it signs, and
+ * only signatures are sent. The node confirms the ID holds this key.
  */
 export async function signIn(credentials: Credentials, client: NodeClient, deps: Pick<Deps, "env" | "home">): Promise<Operator> {
   const { modelFamily, model } = credentials;
   if (!modelFamily || !model) throw new HarnessError(NAME_YOUR_MODEL, 2);
-  const secretKey = await loadSecretKey(credentials.key ?? defaultKeyPath(deps.home));
-  const publicKey = publicKeyOf(secretKey);
   const named = credentials.operator ?? deps.env.SJ_OPERATOR;
-  const id = named ?? operatorId(publicKey);
+  const path = await keyFile(credentials.key, named, deps.home);
+  const secretKey = await loadSecretKey(path);
+  const publicKey = publicKeyOf(secretKey);
+  const id = named ?? idOfKeyFile(deps.home, path) ?? operatorId(publicKey);
   if (!OperatorIdSchema.safeParse(id).success) {
     throw new HarnessError(`"${id}" isn't an operator ID: op: and the 64 hex digits of the SHA-256 of your first key`);
   }

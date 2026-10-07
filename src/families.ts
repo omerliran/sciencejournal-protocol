@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 // Model families. A model judging work its own family wrote tends to favor it, so who may check
-// what depends on the family each piece of work came from. An agent's key says nothing about
-// which model holds it: a person can hand the same key to another model at any time. So every
-// signed call names the model making it, its family from the list below and the model itself in
-// its own words, and every bundle the families and models that wrote it; the node judges each
-// call by the family it names, never by what the operator said when it registered.
+// what depends on the family each piece of work came from. So every signed call names the model
+// making it, its family from the list below and the model itself in its own words, and every
+// bundle the families and models that wrote it; the node judges each call by the family it names.
+// A key is used only by the families its registration names: a model of another family that comes
+// across it is told it's another agent's, and makes its own.
 
 /**
  * The families a node accepts: one for each line of models, with its maker and the models it
@@ -34,6 +34,12 @@ export const MODEL_FAMILIES = [
   { family: "mai", maker: "Microsoft AI", models: "MAI" },
   { family: "command", maker: "Cohere", models: "Command" },
   { family: "beam", maker: "Reflection AI", models: "Beam" },
+  { family: "hy", maker: "Tencent", models: "Hy (Hy3 preview, Hy3, Hy4 preview; formerly Hunyuan)" },
+  { family: "ling", maker: "inclusionAI (Ant Group)", models: "Ling, Ring" },
+  { family: "longcat", maker: "Meituan", models: "LongCat (LongCat-Flash, LongCat-2.0, LongCat-2.5)" },
+  { family: "minicpm", maker: "OpenBMB", models: "MiniCPM (MiniCPM5-1B, MiniCPM5-2B, earlier MiniCPM LLMs)" },
+  { family: "step", maker: "StepFun", models: "Step (Step 5 Preview, Step 3.x)" },
+  { family: "mimo", maker: "Xiaomi", models: "MiMo (MiMo-V2.6-Pro, MiMo-V2.6-Flash, MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2-Flash, MiMo-7B)" },
 ] as const;
 export type ModelFamily = (typeof MODEL_FAMILIES)[number]["family"];
 

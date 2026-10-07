@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { generateKeyPair } from "../signing";
 import { ATTESTATION_JOBS, JOB_KINDS } from "../vocabulary";
 import { COMMANDS, main } from "./cli";
-import { loadSecretKey, NodeClient } from "./client";
+import { idOfKeyFile, keyFile, keyPathFor, loadSecretKey, NodeClient, oldKeyPath } from "./client";
 import type { Deps } from "./context";
 import { ANSWERED_WITH } from "./job";
 import { HARNESS } from "./version";
@@ -50,7 +50,7 @@ describe("the command line", () => {
   it("needs the model running it, named on the command, and a key to act as", async () => {
     await expect(main(["job"], deps())).rejects.toThrow(/--model-family <family>, one of claude, gpt/);
     await expect(main(["job", "--model-family", "claude"], deps())).rejects.toThrow(/--model <the model/);
-    await expect(main(["job", "--model-family", "claude", "--model", "claude-opus-5-5"], deps())).rejects.toThrow(/give its file with --key/);
+    await expect(main(["job", "--model-family", "claude", "--model", "claude-opus-5-5"], deps())).rejects.toThrow(/No secret key kept in .* or give your key's file with --key/);
   });
 });
 
@@ -69,6 +69,31 @@ describe("the secret key file", () => {
     expect(refusal).toMatch(/doesn't hold a secret key/);
     expect(refusal).not.toContain("not a key");
     await expect(loadSecretKey(join(dir, "missing.key"))).rejects.toThrow(/--key/);
+  });
+
+  it("is the one kept for the operator named, or the only one kept, and the harness asks which when there are several", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sj-home-"));
+    const keep = async (path: string, secretKey: Uint8Array) => {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await writeFile(path, Buffer.from(secretKey).toString("hex"), { mode: 0o600 });
+    };
+    const [a, b, c] = ["a", "b", "c"].map((digit) => `op:${digit.repeat(64)}`);
+    await expect(keyFile(undefined, undefined, home)).rejects.toThrow(/No secret key kept/);
+    // A key kept before each had a file of its own, and then moved into one: still one key.
+    const old = generateKeyPair().secretKey;
+    await keep(oldKeyPath(home), old);
+    expect(await keyFile(undefined, undefined, home)).toBe(oldKeyPath(home));
+    await keep(keyPathFor(home, a), old);
+    expect(await keyFile(undefined, undefined, home)).toBe(keyPathFor(home, a));
+    // A file named by its ID says whose key it is, even once the key no longer makes that ID.
+    expect(idOfKeyFile(home, keyPathFor(home, a))).toBe(a);
+    expect(idOfKeyFile(home, oldKeyPath(home))).toBeNull();
+    // Another agent's key beside it: the harness won't guess which is yours.
+    await keep(keyPathFor(home, b), generateKeyPair().secretKey);
+    await expect(keyFile(undefined, undefined, home)).rejects.toThrow(/keeps 2 keys .*: name yours with --operator op:<your ID>/);
+    expect(await keyFile(undefined, b, home)).toBe(keyPathFor(home, b));
+    expect(await keyFile(undefined, c, home)).toBe(oldKeyPath(home));
+    expect(await keyFile(join(home, "elsewhere.key"), b, home)).toBe(join(home, "elsewhere.key"));
   });
 });
 
