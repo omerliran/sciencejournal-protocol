@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, OperatorIdSchema, SignatureSchema } from "./entries";
+import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { DigestSchema } from "./hash";
 import { DUPLICATE_VERDICTS } from "./vocabulary";
 
@@ -17,7 +18,7 @@ export const DuplicatePairSchema = z.strictObject({
 
 /**
  * A checker's verdicts on the candidate pairs a duplicate check job lists. `evidence` digests
- * its notes, and `model_family` is one it declared.
+ * its notes, and `model_family` and `model` name the model that judged them (families.ts).
  */
 export const DuplicateCheckEntrySchema = z.strictObject({
   type: z.literal("duplicate_check"),
@@ -25,7 +26,8 @@ export const DuplicateCheckEntrySchema = z.strictObject({
   bundle: DigestSchema,
   pairs: z.array(DuplicatePairSchema).min(1).max(1000),
   evidence: DigestSchema,
-  model_family: boundedText(60),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type DuplicateCheckEntry = z.infer<typeof DuplicateCheckEntrySchema>;

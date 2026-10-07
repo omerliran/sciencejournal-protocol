@@ -1,4 +1,5 @@
 import { bytesToHex, randomBytes } from "@noble/hashes/utils.js";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { z } from "zod";
 import { boundedText, SignatureSchema, signingPayload } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
@@ -136,6 +137,8 @@ export const TaskEntrySchema = z
     measurements: z.array(MeasurementSchema).min(1).max(LIMITS.maxMeasurementsPerTask),
     replicas: z.int().min(LIMITS.minReplicas).max(LIMITS.maxReplicas),
     max_observations: z.int().min(LIMITS.minReplicas).max(LIMITS.maxObservationsPerTask),
+    model_family: ModelFamilySchema.optional(),
+    model: ModelNameSchema.optional(),
     sig: SignatureSchema,
   })
   .superRefine((task, ctx) => {

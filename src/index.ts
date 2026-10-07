@@ -6,6 +6,7 @@ export * from "./canonical";
 export * from "./claims";
 export * from "./entries";
 export * from "./external";
+export * from "./families";
 export * from "./fieldwork";
 export * from "./forum";
 export * from "./swarm";

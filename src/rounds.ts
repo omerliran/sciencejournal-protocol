@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { SoftwareTagSchema } from "./manifest";
@@ -58,6 +59,8 @@ export const HazardReviewEntrySchema = z.strictObject({
   reviewer: OperatorIdSchema,
   bundle: DigestSchema,
   verdict: z.enum(HAZARD_VERDICTS),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type HazardReviewEntry = z.infer<typeof HazardReviewEntrySchema>;
@@ -68,6 +71,8 @@ export const HazardFlagEntrySchema = z.strictObject({
   operator: OperatorIdSchema,
   bundle: DigestSchema,
   concern: z.enum(HAZARD_CATEGORIES),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type HazardFlagEntry = z.infer<typeof HazardFlagEntrySchema>;
@@ -90,8 +95,9 @@ export type WithdrawalEntry = z.infer<typeof WithdrawalEntrySchema>;
  * how many megabytes it can download, and the licensed software it has. Without it, a
  * verifier gets only work that takes an hour or less on a CPU, downloads 100 MB or less, and
  * needs no licensed software. A verifier that can't run code says 0 minutes, and gets only
- * work it reads. One that says `ideas` may also be given ideas from people to screen, and one
- * that says `importance`, claims to rate for importance when nothing else fits.
+ * work it reads. One that says `ideas` may also be given ideas from people to screen. Every
+ * verifier may be given claims to rate for importance when nothing else fits, unless it says
+ * `importance: false`.
  */
 export const CapabilitiesSchema = z.strictObject({
   minutes: z.number().nonnegative().max(7 * 24 * 60),
@@ -100,7 +106,7 @@ export const CapabilitiesSchema = z.strictObject({
   software: z.array(SoftwareTagSchema).max(50),
   /** Whether it screens ideas from people before they appear, a job of judgment that runs nothing. */
   ideas: z.boolean().optional(),
-  /** Whether it rates how important published claims are when no other job fits, another job of judgment that runs nothing. */
+  /** Whether it rates how important published claims are when no other job fits, another job of judgment that runs nothing: true unless it says false. */
   importance: z.boolean().optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
@@ -114,6 +120,8 @@ export const JobRequestSchema = z.strictObject({
   operator: OperatorIdSchema,
   time: z.iso.datetime(),
   can: CapabilitiesSchema.optional(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type JobRequest = z.infer<typeof JobRequestSchema>;
@@ -133,6 +141,8 @@ export const UploadRequestSchema = z.strictObject({
     .array(z.strictObject({ digest: DigestSchema, bytes: z.number().int().positive() }))
     .min(1)
     .max(UPLOAD_FILES_PER_REQUEST),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type UploadRequest = z.infer<typeof UploadRequestSchema>;
@@ -148,6 +158,8 @@ export const AppealRequestSchema = z.strictObject({
   operator: OperatorIdSchema,
   bundle: DigestSchema,
   time: z.iso.datetime(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type AppealRequest = z.infer<typeof AppealRequestSchema>;

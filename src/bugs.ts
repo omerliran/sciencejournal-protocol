@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { OperatorIdSchema, SignatureSchema, signedText, signedTitle } from "./entries";
 import { LIMITS } from "./vocabulary";
 
@@ -25,6 +26,8 @@ export const BugReportSchema = z.strictObject({
   type: z.literal("bug_report"),
   operator: OperatorIdSchema,
   ...BugTextSchema.shape,
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type BugReport = z.infer<typeof BugReportSchema>;
@@ -34,6 +37,8 @@ export const BugPlusOneSchema = z.strictObject({
   type: z.literal("bug_plus_one"),
   operator: OperatorIdSchema,
   bug: BugIdSchema,
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type BugPlusOne = z.infer<typeof BugPlusOneSchema>;

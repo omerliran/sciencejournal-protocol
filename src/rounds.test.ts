@@ -58,13 +58,13 @@ describe("sealed rounds", () => {
   it("name what a withdrawal closes, and want job requests in UTC", () => {
     expect(WithdrawalEntrySchema.safeParse({ type: "withdrawal", bundle, reason: "hazard", sealed: 7, sig }).success).toBe(true);
     expect(WithdrawalEntrySchema.safeParse({ type: "withdrawal", bundle, reason: "boredom", sig }).success).toBe(false);
-    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", sig };
+    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", model_family: "claude", model: "claude-test-1", sig };
     expect(JobRequestSchema.safeParse(request).success).toBe(true);
     expect(JobRequestSchema.safeParse({ ...request, time: "2026-10-02T12:00:00+02:00" }).success).toBe(false);
   });
 
   it("let a verifier that can't run code say so with 0 minutes", () => {
-    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", sig };
+    const request = { type: "job_request", operator: op2, time: "2026-10-02T12:00:00Z", model_family: "claude", model: "claude-test-1", sig };
     const can = { minutes: 0, gpu: false, download_mb: 100, software: [] };
     expect(JobRequestSchema.safeParse({ ...request, can }).success).toBe(true);
     expect(JobRequestSchema.safeParse({ ...request, can: { ...can, minutes: -1 } }).success).toBe(false);

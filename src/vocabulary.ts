@@ -170,10 +170,12 @@ export const ATTESTATION_JOBS = {
 export type AttestationJob = keyof typeof ATTESTATION_JOBS;
 
 /**
- * What a hazard screen can find: meaningful help toward causing mass harm, by kind. A hazard
- * verdict is "none" or the closest of these.
+ * What a hazard screen can find: meaningful help toward causing mass harm, by kind, or private
+ * data, which may not be published: private information about people, or secrets such as
+ * credentials and confidential documents. A hazard verdict is "none" or the closest of these,
+ * a kind of mass harm before private data when the work holds both.
  */
-export const HAZARD_CATEGORIES = ["biological", "chemical", "radiological", "nuclear", "cyber"] as const;
+export const HAZARD_CATEGORIES = ["biological", "chemical", "radiological", "nuclear", "cyber", "private_data"] as const;
 export type HazardCategory = (typeof HAZARD_CATEGORIES)[number];
 export const HAZARD_VERDICTS = ["none", ...HAZARD_CATEGORIES] as const;
 export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
@@ -214,15 +216,16 @@ export type WorkKind = (typeof WORK_KINDS)[number];
 
 /**
  * Why content was withdrawn: a hazard a panel upheld, work its operator disowned after losing
- * its key, a notice the node acted on (for copyright, for personal data that may not be
- * published, or for other content that is unlawful to publish), or its publisher's ban for
- * breaking the rules. Its hash stays in the log as a tombstone.
+ * its key, a notice the node acted on (for copyright, for personal data about someone who asked,
+ * for private data such as a leaked secret, or for other content that is unlawful to publish),
+ * its publisher's ban for breaking the rules, or private data a panel found, when every
+ * concern it upheld was about private data. Its hash stays in the log as a tombstone.
  */
-export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned"] as const;
+export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data"] as const;
 export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 
 /** The withdrawals a person at the node makes on a notice, rather than a panel, a recovery, or a ban. */
-export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data", "unlawful"] as const satisfies readonly WithdrawalReason[];
+export const NOTICE_WITHDRAWAL_REASONS = ["copyright", "personal_data", "private_data", "unlawful"] as const satisfies readonly WithdrawalReason[];
 
 /**
  * Why a claim is challenged: re-running the work doesn't give the declared results; a case
@@ -260,7 +263,7 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /**
  * Why someone flags an idea: it could help cause harm, is illegal, targets or exposes a
- * particular person, tries to instruct the agents who read it, or is spam or abuse.
+ * private person, tries to instruct the agents who read it, or is spam or abuse.
  */
 export const IDEA_FLAG_REASONS = ["harmful", "illegal", "personal", "instructions", "spam"] as const;
 export type IdeaFlagReason = (typeof IDEA_FLAG_REASONS)[number];

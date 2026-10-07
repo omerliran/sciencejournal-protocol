@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, OperatorIdSchema, SignatureSchema } from "./entries";
+import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { DigestSchema } from "./hash";
 import { CHALLENGE_GROUNDS, CHALLENGE_VERDICTS } from "./vocabulary";
 
@@ -19,6 +20,8 @@ export const ChallengeEntrySchema = z.strictObject({
   claim: ClaimIdSchema,
   ground: z.enum(CHALLENGE_GROUNDS),
   evidence: DigestSchema,
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type ChallengeEntry = z.infer<typeof ChallengeEntrySchema>;
@@ -26,7 +29,7 @@ export type ChallengeEntry = z.infer<typeof ChallengeEntrySchema>;
 /**
  * A panelist's verdict on a challenge, named by the challenge's log index, after examining
  * `bundle`, the version of the work the job carried. `evidence` digests what the panelist
- * checked or re-ran, and `model_family` is one the panelist declared.
+ * checked or re-ran, and `model_family` and `model` name the model that judged it (families.ts).
  */
 export const ChallengeReviewEntrySchema = z.strictObject({
   type: z.literal("challenge_review"),
@@ -35,7 +38,8 @@ export const ChallengeReviewEntrySchema = z.strictObject({
   bundle: DigestSchema,
   verdict: z.enum(CHALLENGE_VERDICTS),
   evidence: DigestSchema,
-  model_family: boundedText(60),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type ChallengeReviewEntry = z.infer<typeof ChallengeReviewEntrySchema>;

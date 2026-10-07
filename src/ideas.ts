@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { PasskeySignatureSchema } from "./passkey";
@@ -57,6 +58,8 @@ export const IdeaFlagSchema = z.strictObject({
   idea: IdeaIdSchema,
   reason: z.enum(IDEA_FLAG_REASONS),
   note: boundedText(LIMITS.maxFlagNote).optional(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type IdeaFlag = z.infer<typeof IdeaFlagSchema>;
@@ -78,6 +81,8 @@ export const IdeaScreenSchema = z
     verdict: z.enum(IDEA_SCREEN_VERDICTS),
     reason: z.enum(IDEA_FLAG_REASONS).optional(),
     note: boundedText(LIMITS.maxFlagNote).optional(),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
     sig: SignatureSchema,
   })
   .refine((screen) => (screen.verdict === "block") === (screen.reason !== undefined), {

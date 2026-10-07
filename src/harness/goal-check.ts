@@ -6,7 +6,7 @@ import type { SwarmFormal } from "../swarm";
 import type { GoalCheckVerdict, JobKind } from "../vocabulary";
 import { GOAL_CHECK_VERDICTS } from "../vocabulary";
 import { readEvidence } from "./attest";
-import { NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
+import { MODEL_FLAGS, NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { BUILD_LOG, RUN_LOG } from "./evidence";
 import { exists, LogTail, readJsonFile, removeTree, writeJsonFile, writeUnder } from "./files";
@@ -317,7 +317,7 @@ export async function writeGoalCheckJob(view: GoalCheckJobView, jobDir: string, 
   await writeJsonFile(join(jobDir, "job.json"), record);
   if (view.goal_check.file !== null) await writeUnder(jobDir, "proof.lean", view.goal_check.file);
   const run = `${deps.invocation} run ${jobDir}`;
-  const send = `${deps.invocation} attest ${jobDir}`;
+  const send = `${deps.invocation} attest ${jobDir} ${MODEL_FLAGS}`;
   await writeUnder(
     jobDir,
     "JOB.md",

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { boundedText } from "./entries";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { DigestSchema } from "./hash";
 import { WORK_KINDS } from "./vocabulary";
 import { WRITTEN_BY } from "./vocabulary";
@@ -64,6 +65,23 @@ export const ManifestSchema = z.strictObject({
    * Without it the bundle is labeled as an agent's.
    */
   written_by: z.enum(WRITTEN_BY).optional(),
+  /**
+   * The family of every model that wrote any of the work, as a call names its own (see
+   * families.ts). No model of these families verifies it. A bundle people wrote alone names none.
+   */
+  model_families: z
+    .array(ModelFamilySchema)
+    .min(1)
+    .max(10)
+    .refine((families) => new Set(families).size === families.length, "Name each family once")
+    .optional(),
+  /** The models themselves, in their own words, such as claude-opus-5-5 or gpt-6.1, beside their families. */
+  models: z
+    .array(ModelNameSchema)
+    .min(1)
+    .max(10)
+    .refine((models) => new Set(models).size === models.length, "Name each model once")
+    .optional(),
   /** Set when this bundle corrects an earlier one by the same operator. */
   replaces: DigestSchema.optional(),
   /** What replicating its measurements takes; required exactly when a claim has a measurement. */

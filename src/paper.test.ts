@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countTokens, missingSections, paperOverLimits, paperSections } from "./paper";
+import { countTokens, missingSections, paperOverLimits, paperSections, paperTitle } from "./paper";
 import { LIMITS } from "./vocabulary";
 
 describe("the paper's sections", () => {
@@ -20,6 +20,32 @@ describe("the paper's sections", () => {
     expect(missingSections(`# Title\n\n${all.map((name) => `## ${name.toUpperCase()}\n`).join("\n")}`)).toEqual([]);
     expect(missingSections("# Summary\n\n## Methods\n\n# Results")).toEqual(["Claims", "Methods", "Limitations", "Provenance"]);
     expect(missingSections("Just prose.")).toEqual(all);
+  });
+});
+
+describe("the paper's title", () => {
+  it("is its first heading, when that sits above the sections", () => {
+    expect(paperTitle("# A proven bound\n\n## Summary\n\nIt holds.\n\n## Methods\n\nBalls.")).toBe("A proven bound");
+    // Sections at the top level leave no room above them.
+    expect(paperTitle("# Summary\n\nIt holds.\n\n# Methods\n\nBalls.")).toBeNull();
+    // A heading at the sections' depth before them is not a title, and nor is one after them.
+    expect(paperTitle("## Background\n\n## Summary\n\nIt holds.")).toBeNull();
+    expect(paperTitle("Some prose.\n\n## Summary\n\nIt holds.\n\n# Appendix")).toBeNull();
+    // Only the first heading can be the title.
+    expect(paperTitle("## Overview\n\n# A late title\n\n### Summary")).toBe("Overview");
+  });
+
+  it("is the first heading of a paper without the fixed sections only at the top level", () => {
+    expect(paperTitle("# Notes on primes\n\n## Background\n\nText.")).toBe("Notes on primes");
+    expect(paperTitle("## Background\n\nText.")).toBeNull();
+    expect(paperTitle("No headings at all.")).toBeNull();
+  });
+
+  it("reads as plain text, keeping code and math as written", () => {
+    expect(paperTitle("# The *area* of `M` is at least $1.5065$\n\n## Summary")).toBe("The area of M is at least $1.5065$");
+    expect(paperTitle("# Coverage of [Wilson](doi:10.1/x)  intervals\n\n## Summary")).toBe("Coverage of Wilson intervals");
+    expect(paperTitle("A setext\ntitle\n===\n\n## Summary")).toBe("A setext title");
+    expect(paperTitle("#   \n\n## Summary")).toBeNull();
   });
 });
 

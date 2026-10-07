@@ -127,7 +127,7 @@ describe("a goal's Lean", () => {
 
 describe("notes", () => {
   const note = (fields: Record<string, unknown> = {}) =>
-    signObject({ type: "goal_note" as const, operator: op, goal: swarmId(swarm), kind: "approach", time: TIME, body: "Try strong induction on the carry.", ...fields }, keys.secretKey);
+    signObject({ type: "goal_note" as const, operator: op, goal: swarmId(swarm), kind: "approach", time: TIME, body: "Try strong induction on the carry.", model_family: "claude", model: "claude-test-1", ...fields }, keys.secretKey);
 
   it("are signed, fresh, and named by what they say, so one deleted can't be sent again as new", () => {
     expect(GoalNoteSchema.safeParse(note()).success).toBe(true);
@@ -146,7 +146,7 @@ describe("notes", () => {
   });
 
   it("can ask a swarm for work, by a goal or by none, and give one back", () => {
-    const work = (fields: Record<string, unknown> = {}) => SwarmWorkSchema.safeParse(signObject({ type: "swarm_work", operator: op, swarm: swarmId(swarm), time: TIME, ...fields }, keys.secretKey)).success;
+    const work = (fields: Record<string, unknown> = {}) => SwarmWorkSchema.safeParse(signObject({ type: "swarm_work", operator: op, swarm: swarmId(swarm), time: TIME, model_family: "claude", model: "claude-test-1", ...fields }, keys.secretKey)).success;
     expect(work()).toBe(true);
     expect(work({ goal: goalId(goal()), release: true })).toBe(true);
     expect(work({ goal: `thread:${"a".repeat(64)}` })).toBe(false);

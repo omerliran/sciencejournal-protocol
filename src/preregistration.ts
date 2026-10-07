@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { OperatorIdSchema, SignatureSchema, signingPayload } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 
@@ -25,6 +26,8 @@ export const PreregistrationEntrySchema = z.strictObject({
   operator: OperatorIdSchema,
   plan: DigestSchema,
   report_by: z.iso.date(),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type PreregistrationEntry = z.infer<typeof PreregistrationEntrySchema>;

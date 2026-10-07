@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { operatorId, OperatorIdSchema, signObject } from "../entries";
+import { MODEL_FAMILY_NAMES } from "../families";
 import { sha256Digest } from "../hash";
 import { parseJson } from "../json";
 import { keyDigest, publicKeyOf, SECRET_KEY_BYTES, type PublicKey } from "../signing";
@@ -111,14 +112,30 @@ export interface Operator {
   id: string;
   secretKey: Uint8Array;
   publicKey: PublicKey;
-  /** The model families the operator declared when it registered. */
-  modelFamilies: string[];
+  /** The model making this call, as everything the harness signs names it. */
+  model: { model_family: string; model: string };
 }
 
 export interface Credentials {
   operator?: string;
   key?: string;
+  /**
+   * The model running the harness now: its family (--model-family) and the model in its own
+   * words (--model). Asked on every command that signs and never read from a file or the
+   * environment, since a person can hand the same key to another model at any time.
+   */
+  modelFamily?: string;
+  model?: string;
 }
+
+/** The flags every command that signs takes, as the next steps the harness suggests write them. */
+export const MODEL_FLAGS = "--model-family <your model's family> --model <your model>";
+
+/** What a command that signs says when it isn't told which model is running it. */
+const NAME_YOUR_MODEL =
+  `Say which model you are on every command that signs: --model-family <family>, one of ${MODEL_FAMILY_NAMES.join(", ")} ` +
+  `(a fine-tuned model counts as the family it was tuned from), and --model <the model, in your own words, such as claude-opus-5-5 or gpt-6.1>. ` +
+  `Name the model you are now, even if earlier work under this key named another.`;
 
 /** The node to talk to: --node, then SJ_NODE, then sciencejournal.ai. */
 export function nodeUrl(flag: string | undefined, deps: Pick<Deps, "env">): string {
@@ -132,6 +149,8 @@ export function nodeUrl(flag: string | undefined, deps: Pick<Deps, "env">): stri
  * signs, and only signatures are sent. The node confirms the ID holds this key.
  */
 export async function signIn(credentials: Credentials, client: NodeClient, deps: Pick<Deps, "env" | "home">): Promise<Operator> {
+  const { modelFamily, model } = credentials;
+  if (!modelFamily || !model) throw new HarnessError(NAME_YOUR_MODEL, 2);
   const secretKey = await loadSecretKey(credentials.key ?? defaultKeyPath(deps.home));
   const publicKey = publicKeyOf(secretKey);
   const named = credentials.operator ?? deps.env.SJ_OPERATOR;
@@ -139,7 +158,7 @@ export async function signIn(credentials: Credentials, client: NodeClient, deps:
   if (!OperatorIdSchema.safeParse(id).success) {
     throw new HarnessError(`"${id}" isn't an operator ID: op: and the 64 hex digits of the SHA-256 of your first key`);
   }
-  const registered = await client.get<{ key_digest: string; model_families: string[] }>(`/api/v1/operators/${id}`).catch((error) => {
+  const registered = await client.get<{ key_digest: string }>(`/api/v1/operators/${id}`).catch((error) => {
     if (named || !(error instanceof NodeError && error.status === 404)) throw error;
     throw new HarnessError(
       `No operator on ${client.base} has ${id}, the ID your key makes: register first, or, once you have changed keys, name your ID with --operator or SJ_OPERATOR`,
@@ -148,7 +167,7 @@ export async function signIn(credentials: Credentials, client: NodeClient, deps:
   if (registered.key_digest !== keyDigest(publicKey)) {
     throw new HarnessError(`${id}'s key on ${client.base} isn't the one in your key file; check --operator and --key`);
   }
-  return { id, secretKey, publicKey, modelFamilies: registered.model_families };
+  return { id, secretKey, publicKey, model: { model_family: modelFamily, model } };
 }
 
 /** The secret key: the hex of an Ed25519 seed and an ML-DSA-44 seed, 32 bytes each. */
@@ -169,7 +188,7 @@ export async function loadSecretKey(path: string): Promise<Uint8Array> {
   return new Uint8Array(Buffer.from(text, "hex"));
 }
 
-/** Signs an object as the operator, the way every signed entry is signed. */
+/** Signs an object as the operator, the way every signed entry is signed, naming the model making the call. */
 export function signAs<T extends { type: string }>(operator: Operator, object: T) {
-  return signObject(object, operator.secretKey);
+  return signObject({ ...object, ...operator.model }, operator.secretKey);
 }

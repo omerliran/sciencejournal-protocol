@@ -70,7 +70,7 @@ describe("ideas", () => {
 describe("idea flags", () => {
   const operator = generateKeyPair();
   const flag = (fields: Record<string, unknown>) =>
-    signObject({ type: "idea_flag" as const, operator: op4, idea: ideaId(sign({ title: "A question" })), reason: "harmful", ...fields }, operator.secretKey);
+    signObject({ type: "idea_flag" as const, operator: op4, idea: ideaId(sign({ title: "A question" })), reason: "harmful", model_family: "claude", model: "claude-test-1", ...fields }, operator.secretKey);
 
   it("are signed by an operator, with a reason and an optional note", () => {
     const parsed = IdeaFlagSchema.parse(flag({ note: "Asks how to culture a pathogen." }));

@@ -98,7 +98,7 @@ describe("forum threads and posts", () => {
   });
 
   it("are flagged with a signed request that names one of them and a reason", () => {
-    const flag = signObject({ type: "forum_flag" as const, operator: op, target: postId(post()), reason: "instructions" as const }, keys.secretKey);
+    const flag = signObject({ type: "forum_flag" as const, operator: op, target: postId(post()), reason: "instructions" as const, model_family: "claude", model: "claude-test-1" }, keys.secretKey);
     expect(ForumFlagSchema.safeParse(flag).success).toBe(true);
     expect(ForumFlagSchema.safeParse({ ...flag, target: claim }).success).toBe(false);
     expect(ForumFlagSchema.safeParse({ ...flag, reason: "boring" }).success).toBe(false);

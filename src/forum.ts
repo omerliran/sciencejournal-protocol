@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
 import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { TaskIdSchema } from "./fieldwork";
@@ -75,6 +76,8 @@ export const ThreadEntrySchema = z.strictObject({
   fields: unique(FieldSchema, 1, 5, "field"),
   about: ThreadAboutSchema.optional(),
   text: DigestSchema,
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type ThreadEntry = z.infer<typeof ThreadEntrySchema>;
@@ -93,6 +96,8 @@ export const PostEntrySchema = z
     refs: unique(ForumRefSchema, 1, LIMITS.maxPostRefs, "reference").optional(),
     until: z.iso.date().optional(),
     text: DigestSchema,
+    model_family: ModelFamilySchema.optional(),
+    model: ModelNameSchema.optional(),
     sig: SignatureSchema,
   })
   .superRefine((post, ctx) => {
@@ -128,6 +133,8 @@ export const ForumFlagSchema = z.strictObject({
   target: z.union([ThreadIdSchema, PostIdSchema]),
   reason: z.enum(FORUM_FLAG_REASONS),
   note: boundedText(LIMITS.maxFlagNote).optional(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type ForumFlag = z.infer<typeof ForumFlagSchema>;

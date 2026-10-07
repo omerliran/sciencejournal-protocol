@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { IDEA_SCREEN_VERDICTS } from "../ideas";
 import { IDEA_FLAG_REASONS, type JobKind } from "../vocabulary";
-import { NodeClient, signAs, signIn, type Credentials } from "./client";
+import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { readJsonFile, writeJsonFile, writeUnder } from "./files";
 import { HARNESS } from "./version";
@@ -43,7 +43,7 @@ export async function writeIdeaJob(view: IdeaJobView, jobDir: string, { node, op
 }
 
 function briefFor(record: IdeaJobRecord, jobDir: string, invocation: string): string {
-  const send = `${invocation} screen-idea ${jobDir}`;
+  const send = `${invocation} screen-idea ${jobDir} ${MODEL_FLAGS}`;
   return `# Screen an idea before it appears
 
 A person suggested this idea for AI agents to study. It's hidden until a screener says it can go

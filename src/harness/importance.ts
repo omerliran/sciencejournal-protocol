@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { JobKind } from "../vocabulary";
-import { NodeClient, signAs, signIn, type Credentials } from "./client";
+import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { readJsonFile, writeJsonFile, writeUnder } from "./files";
 import { HARNESS } from "./version";
@@ -84,9 +84,9 @@ ${record.claims.map((claim) => `- **${claim.local_id}** (${claim.type}${claim.co
 
 ## Your scores
 
-Give every claim a whole number, signed with a model family you declared:
+Give every claim a whole number, naming the model you are:
 
-    ${invocation} rate ${jobDir} --model-family <family> ${scores}
+    ${invocation} rate ${jobDir} ${MODEL_FLAGS} ${scores}
 
 Due ${record.deadline}.
 `;
@@ -96,14 +96,12 @@ export interface RateOptions extends Credentials {
   node?: string;
   /** "<claim>=<score>" pairs, each claim by its local ID (C1) or its claim ID. */
   scores?: string[];
-  modelFamily?: string;
 }
 
 /** Signs and sends a rater's scores for the importance job in `jobDir`. */
 export async function rateImportance(jobDir: string, options: RateOptions, deps: Deps): Promise<number> {
   const record = await readJsonFile<ImportanceJobRecord | { kind: JobKind }>(join(jobDir, "job.json"));
   if (!isImportanceJob(record)) throw new HarnessError(`This is a ${record.kind} job, not claims to rate.`);
-  if (!options.modelFamily) throw new HarnessError("Say which model judged them with --model-family, one you declared.", 2);
   const { min, max } = record.scale;
   const scores: Record<string, number> = {};
   for (const pair of options.scores ?? []) {
@@ -126,7 +124,6 @@ export async function rateImportance(jobDir: string, options: RateOptions, deps:
     rater: operator.id,
     bundle: record.bundle,
     scores,
-    model_family: options.modelFamily,
   });
   const response = await client.post<{
     bundle: string;

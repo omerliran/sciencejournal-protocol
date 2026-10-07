@@ -31,7 +31,6 @@ const REVIEWS: readonly string[] = REVIEW_JOBS;
 export interface AttestOptions extends Credentials {
   node?: string;
   hazard?: string;
-  modelFamily?: string;
   /** Verdicts the verifier sets, as "<claim>=<verdict>", by local ID or claim ID. */
   verdicts?: string[];
   /** Why, as "<claim>=<reason>". */
@@ -73,9 +72,6 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   } else if (options.hazard) {
     throw new HarnessError(`A ${job} attestation carries no hazard screen: the work was screened before it opened. Leave out --hazard.`);
   }
-  if (!options.modelFamily) {
-    throw new HarnessError("Say which model family did this work with --model-family: one you declared when you registered.");
-  }
   if (reviewing) await requireReport(jobDir, "review");
   else if (options.significance?.length) {
     throw new HarnessError(`Only a review rates significance; leave out --significance for a ${job}.`);
@@ -89,9 +85,6 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   const overBudget = job === "reproduction" && (options.overBudget === true || stored?.over_budget === true);
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
-  if (!operator.modelFamilies.includes(options.modelFamily)) {
-    throw new HarnessError(`${options.modelFamily} isn't a model family ${operator.id} declared; it declared ${operator.modelFamilies.join(", ")}`);
-  }
 
   // The verdicts as sent go into verdicts.json and the evidence, so the evidence says them: into
   // the harness's report, or beside a reviewer's own report, which the harness never touches.
@@ -125,7 +118,6 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     claims: Object.fromEntries(claims.map((claim) => [claim.claim_id, claim.verdict])),
     ...(reviewing && { significance: Object.fromEntries(claims.map((claim) => [claim.claim_id, claim.significance!])) }),
     evidence: evidence.digest,
-    model_family: options.modelFamily,
     harness: HARNESS,
     ...(job === "reproduction" && { hazard: options.hazard }),
     ...(overBudget && { over_budget: true as const }),
@@ -299,7 +291,6 @@ export async function hazard(jobDir: string, options: HazardOptions, deps: Deps)
 export interface ChallengeReviewOptions extends Credentials {
   node?: string;
   verdict?: string;
-  modelFamily?: string;
 }
 
 /**
@@ -314,15 +305,9 @@ export async function challengeReview(jobDir: string, options: ChallengeReviewOp
   if (!options.verdict || !(CHALLENGE_VERDICTS as readonly string[]).includes(options.verdict)) {
     throw new HarnessError(`Give your verdict on the challenge with --verdict: ${CHALLENGE_VERDICTS.join(", ")}.`);
   }
-  if (!options.modelFamily) {
-    throw new HarnessError("Say which model family did this work with --model-family: one you declared and neither party to the challenge did.");
-  }
   await requireReport(jobDir, "review of the challenge");
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
-  if (!operator.modelFamilies.includes(options.modelFamily)) {
-    throw new HarnessError(`${options.modelFamily} isn't a model family ${operator.id} declared; it declared ${operator.modelFamilies.join(", ")}`);
-  }
   const evidence = await readEvidence(jobDir, client);
   const entry = signAs(operator, {
     type: "challenge_review" as const,
@@ -331,7 +316,6 @@ export async function challengeReview(jobDir: string, options: ChallengeReviewOp
     bundle: record.bundle,
     verdict: options.verdict,
     evidence: evidence.digest,
-    model_family: options.modelFamily,
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
   const response = await client.post<{ review: number; challenge: string }>("/api/v1/challenge-reviews", { entry, evidence: { files } });
@@ -346,7 +330,6 @@ export interface CitationCheckOptions extends Credentials {
   node?: string;
   /** A verdict on each citation, as "<reference>=<verdict>". */
   verdicts?: string[];
-  modelFamily?: string;
 }
 
 /**
@@ -382,15 +365,9 @@ export async function citationCheck(jobDir: string, options: CitationCheckOption
       `Give a verdict on every citation the job lists, with --verdict ${shellQuote(`${missing[0]}=<verdict>`)} and so on, each one of ${CITATION_VERDICTS.join(", ")}. ${plural(missing.length, "citation")} ${missing.length === 1 ? "has" : "have"} none: ${named}.`,
     );
   }
-  if (!options.modelFamily) {
-    throw new HarnessError("Say which model family did this work with --model-family: one you declared and the publisher didn't.");
-  }
   await requireReport(jobDir, "citation check");
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
-  if (!operator.modelFamilies.includes(options.modelFamily)) {
-    throw new HarnessError(`${options.modelFamily} isn't a model family ${operator.id} declared; it declared ${operator.modelFamilies.join(", ")}`);
-  }
 
   // The verdicts go into the evidence beside the checker's report, which the harness never touches.
   const localId = new Map(record.claims.map((claim) => [claim.claim_id, claim.local_id]));
@@ -413,7 +390,6 @@ export async function citationCheck(jobDir: string, options: CitationCheckOption
     bundle: record.bundle,
     citations: Object.fromEntries(citations.map((citation) => [citation.reference, given.get(citation.reference)!])),
     evidence: evidence.digest,
-    model_family: options.modelFamily,
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
   const response = await client.post<{ citation_check: number }>("/api/v1/citation-checks", { entry, evidence: { files } });
@@ -432,7 +408,6 @@ export interface DuplicateCheckOptions extends Credentials {
   node?: string;
   /** A verdict on each pair, as "<pair number>=<verdict>", numbered as JOB.md lists them. */
   verdicts?: string[];
-  modelFamily?: string;
 }
 
 /**
@@ -464,15 +439,9 @@ export async function duplicateCheck(jobDir: string, options: DuplicateCheckOpti
       `Give a verdict on every pair the job lists, with --verdict ${missing[0]}=<verdict> and so on, each one of ${DUPLICATE_VERDICTS.join(", ")}. ${plural(missing.length, "pair")} ${missing.length === 1 ? "has" : "have"} none: ${missing.join(", ")}.`,
     );
   }
-  if (!options.modelFamily) {
-    throw new HarnessError("Say which model family did this work with --model-family: one you declared and the publisher didn't.");
-  }
   await requireReport(jobDir, "duplicate check");
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
-  if (!operator.modelFamilies.includes(options.modelFamily)) {
-    throw new HarnessError(`${options.modelFamily} isn't a model family ${operator.id} declared; it declared ${operator.modelFamilies.join(", ")}`);
-  }
 
   const judged = pairs.map((pair, i) => ({ claim: pair.claim, earlier: pair.earlier, verdict: given.get(i + 1)! }));
   // The verdicts go into the evidence beside the checker's report, which the harness never touches.
@@ -490,7 +459,6 @@ export async function duplicateCheck(jobDir: string, options: DuplicateCheckOpti
     bundle: record.bundle,
     pairs: judged,
     evidence: evidence.digest,
-    model_family: options.modelFamily,
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
   const response = await client.post<{ duplicate_check: number }>("/api/v1/duplicate-checks", { entry, evidence: { files } });

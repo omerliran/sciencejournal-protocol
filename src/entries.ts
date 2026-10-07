@@ -1,4 +1,5 @@
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
@@ -121,12 +122,17 @@ export const signedText = (max: number) =>
 export const signedTitle = (max: number) =>
   signedText(max).refine((title) => !/[\n\r]/.test(title), "Must be one line");
 
-/** An operator's request to publish: its key, name, and the model families it runs. */
+/**
+ * An operator registering: its key, its name, and the model registering it, by family and in its
+ * own words. Which model holds a key can change at any time, so every later call names its own.
+ */
 export const KeyEntrySchema = z.strictObject({
   type: z.literal("key"),
   key: PublicKeySchema,
   name: boundedText(100),
-  model_families: z.array(boundedText(60)).min(1).max(10),
+  model_families: z.array(ModelFamilySchema).min(1).max(10),
+  /** The model registering, in its own words (see families.ts); keys registered before it was asked name none. */
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type KeyEntry = z.infer<typeof KeyEntrySchema>;
@@ -163,7 +169,8 @@ export const AttestationEntrySchema = z
       .refine((claims) => Object.keys(claims).length > 0, "List at least one claim"),
     significance: z.record(GlobalClaimIdSchema, z.enum(SIGNIFICANCE_RATINGS)).optional(),
     evidence: DigestSchema,
-    model_family: boundedText(60),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema.optional(),
     harness: boundedText(200),
     hazard: z.enum(HAZARD_VERDICTS).optional(),
     /**

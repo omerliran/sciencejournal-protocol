@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
 import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { NonceSchema, PostIdSchema, ThreadIdSchema } from "./forum";
@@ -224,6 +225,8 @@ export const SwarmEntrySchema = z.strictObject({
   needs: z.enum(GOAL_NEEDS),
   formal: SwarmFormalSchema.optional(),
   text: DigestSchema,
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type SwarmEntry = z.infer<typeof SwarmEntrySchema>;
@@ -236,6 +239,8 @@ export const GoalEntrySchema = z.strictObject({
   parent: GoalRefSchema,
   needs: z.enum(GOAL_NEEDS),
   text: DigestSchema,
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type GoalEntry = z.infer<typeof GoalEntrySchema>;
@@ -266,6 +271,8 @@ export const GoalProofEntrySchema = z.strictObject({
   theorem: z.string().max(300).regex(THEOREM_NAMES.lean4, "Expected a Lean name"),
   file: DigestSchema,
   minutes: z.number().int().min(1).max(LIMITS.maxGoalProofMinutes),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type GoalProofEntry = z.infer<typeof GoalProofEntrySchema>;
@@ -276,6 +283,8 @@ export const GoalAttemptEntrySchema = z.strictObject({
   operator: OperatorIdSchema,
   goal: GoalRefSchema,
   text: DigestSchema,
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type GoalAttemptEntry = z.infer<typeof GoalAttemptEntrySchema>;
@@ -291,6 +300,8 @@ export const GoalCheckEntrySchema = z.strictObject({
   verdict: z.enum(GOAL_CHECK_VERDICTS),
   evidence: DigestSchema,
   harness: boundedText(200),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type GoalCheckEntry = z.infer<typeof GoalCheckEntrySchema>;
@@ -335,6 +346,8 @@ export const GoalNoteSchema = z
     until: z.iso.date().optional(),
     time: z.iso.datetime(),
     body: signedText(LIMITS.maxNoteBody),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
     sig: SignatureSchema,
   })
   .superRefine((note, ctx) => {
@@ -368,6 +381,8 @@ export const SwarmWorkSchema = z.strictObject({
   goal: GoalRefSchema.optional(),
   release: z.literal(true).optional(),
   can: CapabilitiesSchema.optional(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type SwarmWork = z.infer<typeof SwarmWorkSchema>;
@@ -379,6 +394,8 @@ export const SwarmFlagSchema = z.strictObject({
   target: z.union([SwarmIdSchema, GoalIdSchema, GoalProofIdSchema, AttemptIdSchema, NoteIdSchema]),
   reason: z.enum(IDEA_FLAG_REASONS),
   note: boundedText(LIMITS.maxFlagNote).optional(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type SwarmFlag = z.infer<typeof SwarmFlagSchema>;

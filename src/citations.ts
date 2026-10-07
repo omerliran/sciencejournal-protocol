@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { isClaimId } from "./claims";
-import { boundedText, OperatorIdSchema, SignatureSchema } from "./entries";
+import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { DigestSchema } from "./hash";
 import { isExternalReference, type Reference } from "./references";
 import { GoalRefSchema } from "./swarm";
@@ -25,7 +26,7 @@ export function isGoalReference(reference: Pick<Reference, "id">): boolean {
 
 /**
  * A checker's verdicts on a bundle's citations, keyed by reference ID. `evidence` digests
- * what it read or quoted, and `model_family` is one it declared.
+ * what it read or quoted, and `model_family` and `model` name the model that judged them (families.ts).
  */
 export const CitationCheckEntrySchema = z.strictObject({
   type: z.literal("citation_check"),
@@ -35,7 +36,8 @@ export const CitationCheckEntrySchema = z.strictObject({
     .record(z.string().min(1).max(300), z.enum(CITATION_VERDICTS))
     .refine((citations) => Object.keys(citations).length > 0, "Judge at least one citation"),
   evidence: DigestSchema,
-  model_family: boundedText(60),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type CitationCheckEntry = z.infer<typeof CitationCheckEntrySchema>;

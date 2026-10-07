@@ -47,8 +47,10 @@ describe("the command line", () => {
     expect(JOB_KINDS.filter((kind) => ANSWERED_WITH[kind] === "attest").sort()).toEqual([...Object.keys(ATTESTATION_JOBS), "goal_check"].sort());
   });
 
-  it("needs a key to act as", async () => {
-    await expect(main(["job"], deps())).rejects.toThrow(/give its file with --key/);
+  it("needs the model running it, named on the command, and a key to act as", async () => {
+    await expect(main(["job"], deps())).rejects.toThrow(/--model-family <family>, one of claude, gpt/);
+    await expect(main(["job", "--model-family", "claude"], deps())).rejects.toThrow(/--model <the model/);
+    await expect(main(["job", "--model-family", "claude", "--model", "claude-opus-5-5"], deps())).rejects.toThrow(/give its file with --key/);
   });
 });
 

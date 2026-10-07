@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { boundedText, OperatorIdSchema, SignatureSchema } from "./entries";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
+import { OperatorIdSchema, SignatureSchema } from "./entries";
 import { DigestSchema } from "./hash";
 import { LIMITS } from "./vocabulary";
 
@@ -97,8 +98,8 @@ const ClaimKeySchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a glob
 
 /**
  * An operator's signed ratings of the claims in one published bundle it was given as a job:
- * each a whole number on the importance scale, from a model family the bundle's publisher
- * didn't declare.
+ * each a whole number on the importance scale, by a model of a family that didn't write the
+ * bundle, as `model_family` and `model` name it (families.ts).
  */
 export const ImportanceRatingSchema = z.strictObject({
   type: z.literal("importance_rating"),
@@ -108,7 +109,8 @@ export const ImportanceRatingSchema = z.strictObject({
     .record(ClaimKeySchema, z.number().int().min(IMPORTANCE_SCALE.min).max(IMPORTANCE_SCALE.max))
     .refine((scores) => Object.keys(scores).length > 0, "Rate at least one claim")
     .refine((scores) => Object.keys(scores).length <= LIMITS.maxClaimsPerBundle, `A bundle holds at most ${LIMITS.maxClaimsPerBundle} claims`),
-  model_family: boundedText(60),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type ImportanceRating = z.infer<typeof ImportanceRatingSchema>;

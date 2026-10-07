@@ -68,6 +68,35 @@ export function paperSections(markdown: string, tree = parseMarkdown(markdown)):
   );
 }
 
+/**
+ * The paper's title, which readers name it by: its first heading shallower than its sections,
+ * if that comes before them, or in a paper without the fixed sections, its first heading if that
+ * is at the top level. Read as plain text with white space collapsed, inline code and math kept
+ * as written. Null when the paper has none.
+ */
+export function paperTitle(markdown: string, tree = parseMarkdown(markdown)): string | null {
+  const title = titleHeading(tree);
+  const text = title ? headingText(title).replace(/\s+/g, " ").trim() : "";
+  return text === "" ? null : text;
+}
+
+/** The heading that is the paper's title (see paperTitle), if it has one, as a node of the paper's tree. */
+export function titleHeading(tree: MarkdownNode): MarkdownNode | undefined {
+  const first = (tree.children ?? []).find((node) => node.type === "heading");
+  const depth = sectionDepth(tree);
+  if (!first) return undefined;
+  return depth === null ? (first.depth === 1 ? first : undefined) : (first.depth ?? 1) < depth ? first : undefined;
+}
+
+/** A heading's words: its text and inline code as written, inline math between dollar signs, an image by its alt text. */
+function headingText(node: MarkdownNode): string {
+  if (node.type === "inlineMath") return `$${node.value ?? ""}$`;
+  if (node.type === "text" || node.type === "inlineCode") return node.value ?? "";
+  if (node.type === "image") return node.alt ?? "";
+  if (node.type === "break") return " ";
+  return (node.children ?? []).map(headingText).join("");
+}
+
 /** paper.md's fixed sections that it doesn't have, in order. */
 export function missingSections(markdown: string, tree = parseMarkdown(markdown)): string[] {
   const present = new Set(paperSections(markdown, tree).map((section) => section.name.toLowerCase()));
