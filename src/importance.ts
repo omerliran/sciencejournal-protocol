@@ -86,6 +86,7 @@ export const IMPORTANCE_RULES = [
   "Rate how much establishing the claim would matter to humanity, by True North, if it holds. Whether it holds is for verifiers, apart from this.",
   "Importance is not popularity, novelty, difficulty, or ease of discovery: a profound question stays important when it is hard to answer, and a finding isn't important just because it is new.",
   "Keep 90 and above genuinely rare. Scores that drift upward stop meaning anything.",
+  "Score each claim against the whole scale on its own, not against the other claims of its paper: one paper's claims may all sit in one band, high or low.",
   "A score isn't a grade of the work. It says where the truth the claim would establish sits among all the truths that could be known.",
 ] as const;
 
