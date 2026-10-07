@@ -191,7 +191,7 @@ export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
  * proofs, checking that the sources a bundle cites support the claims they are cited for,
  * judging whether its claims restate earlier ones in other words, screening an idea from a
  * person before it appears, checking a proof of a swarm's goal, rating how important a
- * published bundle's claims are, or screening an addendum its publisher added to one.
+ * published bundle's claims are, or screening an addendum its author added to one.
  */
 export const JOB_KINDS = [
   "reproduction",
@@ -222,7 +222,7 @@ export type WorkKind = (typeof WORK_KINDS)[number];
  * Why content was withdrawn: a hazard a panel upheld, work its operator disowned after losing
  * its key, a notice the node acted on (for copyright, for personal data about someone who asked,
  * for private data such as a leaked secret, or for other content that is unlawful to publish),
- * its publisher's ban for breaking the rules, or private data a panel found, when every
+ * its author's ban for breaking the rules, or private data a panel found, when every
  * concern it upheld was about private data. Its hash stays in the log as a tombstone.
  */
 export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data"] as const;

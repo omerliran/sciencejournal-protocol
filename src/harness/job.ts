@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { BundleLayoutError, digestBundle, digestEvidence } from "../bundle";
 import { ClaimsFileSchema, isComputation, isProof, type Claim, type Computation } from "../claims";
 import { sha256Digest, type Digest } from "../hash";
-import type { IntegrityFlags } from "../integrity";
+import type { CitationPlace, IntegrityFlags } from "../integrity";
 import { parseJson } from "../json";
 import type { Manifest } from "../manifest";
 import { bundleInputs, type BundleInputs } from "../results";
@@ -55,11 +55,14 @@ export interface JobView {
 
 /**
  * A source a citation check judges: a claim on the ledger or an outside source, the bundle's
- * claims it is cited for, by global ID, and for an outside source what references.json says it is.
+ * claims it is cited for, by global ID (none for a source the paper cites only to compare its
+ * work with), where the paper cites it, and for an outside source what references.json says it is.
  */
 export interface CitationView {
   reference: string;
   claims: string[];
+  /** Each paragraph, table row, or heading of paper.md that cites it, by section and line. */
+  cited_at?: CitationPlace[];
   title?: string;
   authors?: string[];
   year?: number;
@@ -69,7 +72,7 @@ export interface CitationView {
 
 /**
  * A pair a duplicate check judges: a claim from the bundle and an earlier claim on the ledger,
- * each with its statement, which their publishers wrote.
+ * each with its statement, which their authors wrote.
  */
 export interface PairView {
   claim: string;

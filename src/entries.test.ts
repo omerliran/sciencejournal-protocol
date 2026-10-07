@@ -122,8 +122,15 @@ describe("attestations", () => {
 
   it("let only a review say the work told it whose it was", () => {
     const review = { job: "methods_review", claims: { [one]: "sound" }, significance: { [one]: "minor" } };
+    expect(parses({ ...review, knew_author: true })).toBe(true);
+    expect(parses({ ...review, knew_author: false })).toBe(false);
+    expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none", knew_author: true })).toBe(false);
+  });
+
+  it("still read knew_publisher, the field's earlier name, which reviews on the ledger carry", () => {
+    const review = { job: "methods_review", claims: { [one]: "sound" }, significance: { [one]: "minor" } };
     expect(parses({ ...review, knew_publisher: true })).toBe(true);
-    expect(parses({ ...review, knew_publisher: false })).toBe(false);
+    expect(parses({ ...review, knew_author: true, knew_publisher: true })).toBe(false);
     expect(parses({ job: "reproduction", claims: { [one]: "reproduced" }, hazard: "none", knew_publisher: true })).toBe(false);
   });
 });

@@ -80,9 +80,17 @@ export function digestEvidence(files: ReadonlyMap<string, Uint8Array>): {
   files: Record<string, Digest>;
   evidence: Digest;
 } {
-  checkPaths([...files.keys()], false);
   const digests = Object.fromEntries([...files].map(([path, bytes]) => [path, sha256Digest(bytes)]));
-  return { files: digests, evidence: canonicalDigest(digests) };
+  return { files: digests, evidence: evidenceDigest(digests) };
+}
+
+/**
+ * The evidence digest of files already digested, path by path, as `digestEvidence` makes it
+ * from their bytes. Throws BundleLayoutError for a path the rules refuse.
+ */
+export function evidenceDigest(files: Readonly<Record<string, Digest>>): Digest {
+  checkPaths(Object.keys(files), false);
+  return canonicalDigest(files);
 }
 
 /**

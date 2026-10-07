@@ -19,7 +19,7 @@ const pointer = (overrides: Partial<ExternalFile> = {}): ExternalFile => ({
 
 /** A data host: each URL's answer, and every URL asked for, with how each request was made. */
 function host(answers: Record<string, () => Response>) {
-  const asked: { url: string; redirect?: RequestRedirect }[] = [];
+  const asked: { url: string; redirect?: RequestInit["redirect"] }[] = [];
   const fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     asked.push({ url, redirect: init?.redirect });

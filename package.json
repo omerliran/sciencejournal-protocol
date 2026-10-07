@@ -21,7 +21,8 @@
     "typecheck": "tsc --noEmit",
     "conformance": "tsx conformance/generate.ts",
     "harness": "tsx src/harness/cli.ts",
-    "monitor": "tsx src/monitor/cli.ts"
+    "monitor": "tsx src/monitor/cli.ts",
+    "mirror": "tsx src/mirror/cli.ts"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",

@@ -70,7 +70,7 @@ it("reads materials.json from a job's files, and nothing that doesn't fit its sc
   expect(readMaterials(undefined)).toBeNull();
 });
 
-it("tells a publisher, before it submits, what verifiers will see about repeating the work", async () => {
+it("tells an author, before it submits, what verifiers will see about repeating the work", async () => {
   const root = join(await mkdtemp(join(tmpdir(), "sj-materials-")), "bundle");
   const files: Record<string, unknown> = {
     "manifest.json": {

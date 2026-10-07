@@ -54,7 +54,7 @@ import {
 import { HARNESS } from "./version";
 
 /**
- * What a run checks: a job's bundle or a publisher's own, by re-running its computations or by
+ * What a run checks: a job's bundle or an author's own, by re-running its computations or by
  * running the proof checker on its proofs.
  */
 export interface Subject {

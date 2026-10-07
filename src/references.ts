@@ -13,8 +13,13 @@ import { GoalIdSchema, SwarmIdSchema } from "./swarm";
 // claims answer, or a source outside the ledger. Strict objects,
 // validated and never transformed, like everything a bundle signs.
 
-/** The bundle's claims, by local ID, that a reference supports. Absent: the whole bundle. */
-const SupportsSchema = z.array(LocalClaimIdSchema).min(1).max(30).optional();
+/**
+ * The bundle's claims, by local ID, that a reference supports. Absent: the whole bundle. Empty:
+ * none of them, for a claim on the ledger or a source outside it that the paper cites only to
+ * compare its work with, as a Discussion does; citation checks then judge whether the paper
+ * describes it fairly.
+ */
+const SupportsSchema = z.array(LocalClaimIdSchema).max(30).optional();
 
 const LedgerReferenceSchema = z.strictObject({
   id: z.union([ClaimIdSchema, TaskIdSchema, IdeaIdSchema, PreregistrationIdSchema, ThreadIdSchema, PostIdSchema, SwarmIdSchema, GoalIdSchema]),
@@ -48,6 +53,11 @@ export function isExternalReference(reference: Pick<Reference, "id">): boolean {
   return ExternalIdSchema.safeParse(reference.id).success;
 }
 
+/** Whether the paper cites a reference only to compare its work with: it supports none of the claims. */
+export function isComparison(reference: Pick<Reference, "claims">): boolean {
+  return reference.claims !== undefined && reference.claims.length === 0;
+}
+
 /** Any ID a reference can name: on the ledger or outside it. */
 export const ReferenceIdSchema = z.union([LedgerReferenceSchema.shape.id, ExternalIdSchema]);
 
@@ -61,6 +71,14 @@ export const ReferencesFileSchema = z
         ctx.addIssue({ code: "custom", message: `"${reference.id}" is listed twice`, path: [i, "id"] });
       }
       seen.add(reference.id);
+      // Only something that could support a claim can be cited instead to compare with.
+      if (isComparison(reference) && !ClaimIdSchema.safeParse(reference.id).success && !isExternalReference(reference)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `"${reference.id}" names no claims; only a claim on the ledger or a source outside it can be cited to compare with`,
+          path: [i, "claims"],
+        });
+      }
     });
   });
 

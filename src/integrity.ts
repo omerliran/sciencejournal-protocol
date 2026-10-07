@@ -105,6 +105,8 @@ export interface IntegrityFlags {
 export const INTEGRITY_LIMITS = {
   /** Flags listed per file; the rest are counted in the totals they come with. */
   orphanNumbersShown: 100,
+  /** Places listed for each source a paper cites (see citationPlaces). */
+  citationPlacesShown: 10,
   /** The largest table checked, in bytes. */
   maxTableBytes: 8 * 1024 * 1024,
   /** Values a column needs before its first digits are compared with Benford's law. */
@@ -228,6 +230,61 @@ export function citations(tree: MarkdownNode): string[] {
   };
   visit(tree);
   return [...cited];
+}
+
+/** Where a paper cites a source: the section, and the line its paragraph, table row, or heading starts on. */
+export interface CitationPlace {
+  section: string | null;
+  line: number;
+}
+
+/** The parts of a paper a citation sits in, whose words say what it says the source says. */
+const CITING_PARTS = new Set(["paragraph", "tableRow", "heading"]);
+
+/**
+ * Where a paper cites each reference ID, in order: each paragraph, table row, or heading that
+ * links to it, inline, automatically, or by reference, by the section it sits in (null above
+ * the sections) and the line it starts on, at most INTEGRITY_LIMITS.citationPlacesShown for
+ * each. A checker reads the paper there to see what it says each source says.
+ */
+export function citationPlaces(markdown: string, tree = parseMarkdown(markdown)): Map<string, CitationPlace[]> {
+  // A reference-style link names its target by label, and its definition holds the ID.
+  const defined = new Map<string, string>();
+  const define = (node: MarkdownNode) => {
+    if (node.type === "definition" && node.identifier !== undefined && node.url !== undefined) defined.set(node.identifier, node.url);
+    node.children?.forEach(define);
+  };
+  define(tree);
+  const targets = (node: MarkdownNode, found: Set<string>) => {
+    const id = node.type === "link" ? node.url : node.type === "linkReference" ? defined.get(node.identifier ?? "") : undefined;
+    if (id !== undefined && ReferenceIdSchema.safeParse(id).success) found.add(id);
+    node.children?.forEach((child) => targets(child, found));
+  };
+  const places = new Map<string, CitationPlace[]>();
+  const visit = (node: MarkdownNode, section: string | null) => {
+    if (!CITING_PARTS.has(node.type)) {
+      node.children?.forEach((child) => visit(child, section));
+      return;
+    }
+    const found = new Set<string>();
+    targets(node, found);
+    const line = node.position?.start.line;
+    for (const id of found) {
+      const listed = places.get(id) ?? [];
+      if (line !== undefined && listed.length < INTEGRITY_LIMITS.citationPlacesShown) listed.push({ section, line });
+      places.set(id, listed);
+    }
+  };
+  const depth = sectionDepth(tree);
+  let section: string | null = null;
+  for (const node of tree.children ?? []) {
+    // A heading at the sections' depth starts one; a shallower one, such as a title, ends it.
+    if (node.type === "heading" && depth !== null && (node.depth ?? 1) <= depth) {
+      section = node.depth === depth ? plainText(node).trim() : null;
+    }
+    visit(node, section);
+  }
+  return places;
 }
 
 function parsed(text: string): unknown {

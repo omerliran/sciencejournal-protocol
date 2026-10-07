@@ -148,7 +148,7 @@ export const UploadRequestSchema = z.strictObject({
 export type UploadRequest = z.infer<typeof UploadRequestSchema>;
 
 /**
- * A publisher asking for more reproductions of its published bundle after a claim's
+ * An author asking for more reproductions of its published bundle after a claim's
  * reproduction failed, before the claim is refuted: it prepays them, and they go to
  * organizations not yet involved with the bundle. Signed and fresh, like a job request, so only
  * the key holder spends its credit.

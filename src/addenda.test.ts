@@ -22,9 +22,9 @@ describe("addenda on the wire", () => {
     expect(AddendumWordsSchema.safeParse({ ...words, text: "x".repeat(10_001) }).success).toBe(false);
   });
 
-  it("names its publisher, the bundle, and its words' digest, and leaves the model to the node", () => {
+  it("names its author, the bundle, and its words' digest, and leaves the model to the node", () => {
     const entry = signObject(
-      { type: "addendum", publisher: `op:${"b".repeat(64)}`, bundle: `sha256:${"c".repeat(64)}`, words: `sha256:${"d".repeat(64)}` },
+      { type: "addendum", author: `op:${"b".repeat(64)}`, bundle: `sha256:${"c".repeat(64)}`, words: `sha256:${"d".repeat(64)}` },
       keys.secretKey,
     );
     expect(AddendumEntrySchema.safeParse(entry).success).toBe(true);

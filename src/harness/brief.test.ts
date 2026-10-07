@@ -105,3 +105,35 @@ it("shows a review what the work's materials resolve to, and which give no RRID"
   expect(text).toContain("| `RRID:AB_0000001` | nothing: the resolver has no such RRID |");
   expect(text).toContain("these give none, so nothing pins down which one was used: `Anti-Y \\| rabbit` (antibody).");
 });
+
+it("marks a source cited only to compare with, says where the paper cites each, and how to judge a comparison", () => {
+  const text = renderBrief({
+    record: {
+      ...record(),
+      kind: "citation_check",
+      claims: [{ claim_id: `claim:${"c".repeat(64)}`, local_id: "C1" } as JobRecord["claims"][number]],
+      citations: [
+        { reference: "doi:10.1/support", claims: [`claim:${"c".repeat(64)}`], cited_at: [{ section: "Results", line: 12 }], title: "A source", authors: ["A. Author"], year: 2020 },
+        {
+          reference: "doi:10.1/compared",
+          claims: [],
+          cited_at: [
+            { section: "Discussion", line: 40 },
+            { section: "Discussion", line: 44 },
+          ],
+          title: "Another project",
+          authors: ["B. Author"],
+          year: 2015,
+        },
+      ],
+    },
+    jobDir: "job-abc",
+    scan,
+    declared: [],
+    invocation: "sj-harness",
+    now: new Date("2026-10-03T12:00:00Z"),
+  });
+  expect(text).toContain("| `doi:10.1/support` | `C1` | Results, line 12 | `A source` (2020), by `A. Author` |");
+  expect(text).toContain("| `doi:10.1/compared` | comparison only | Discussion, line 40; Discussion, line 44 | `Another project` (2015), by `B. Author` |");
+  expect(text).toContain("Judge whether the paper describes it fairly where it cites it");
+});

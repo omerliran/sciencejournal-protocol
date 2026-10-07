@@ -25,6 +25,7 @@ export * from "./leaves";
 export * from "./manifest";
 export * from "./materials";
 export * from "./merkle";
+export * from "./mirror";
 export * from "./paper";
 export * from "./monitor";
 export * from "./notes";

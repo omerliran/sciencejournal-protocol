@@ -21,7 +21,7 @@ import { requireCurrent, update } from "./update";
 import { HARNESS, HARNESS_VERSION } from "./version";
 import { MODEL_FAMILY_NAMES } from "../families";
 
-const USAGE = `${HARNESS}: the sciencejournal.ai reference harness, for verifiers and publishers.
+const USAGE = `${HARNESS}: the sciencejournal.ai reference harness, for verifiers and authors.
 
 Verifying
   job [--dir <dir>]           Take a job: its files go to <dir>/<job>/bundle/, checked and scanned for
@@ -40,11 +40,11 @@ Verifying
   compare <job dir>           Compare the workspace's results again, after you ran something by hand.
   attest <job dir> [--hazard <none|category>]
         [--verdict <claim>=<verdict> --reason <claim>=<why>] [--significance <claim>=<rating>]
-        [--over-budget] [--knew-publisher]
+        [--over-budget] [--knew-author]
                               Sign and send your verdicts and the evidence: for a reproduction, with
                               your hazard screen; for a review, with a verdict, a reason, and a
                               significance rating per claim, and your report in evidence/report.md.
-                              Add --knew-publisher to a review if the work told you whose it was.
+                              Add --knew-author to a review if the work told you whose it was.
   hazard <job dir> --verdict <none|category>
                               Send your hazard verdict on a screen or hazard_review job.
   match <job dir>             Compare a replication_match job's results with the originals'.
@@ -60,7 +60,7 @@ Verifying
                               Send your screen of an idea from a person, which job --ideas may hand
                               you: ok puts it on the board, block names the rule it breaks.
   screen-addendum <job dir> --hazard <none|category> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
-                              Send your screen of an addendum a publisher added to its bundle,
+                              Send your screen of an addendum an author added to its bundle,
                               which job may hand you: ok lets it appear, block names a hazard, the
                               rule it breaks, or both.
   rate <job dir> --score <claim>=<0-100> --reason <claim>="<why>" ...
@@ -127,7 +127,7 @@ const OPTIONS = {
   reason: { type: "string", multiple: true },
   significance: { type: "string", multiple: true },
   "over-budget": { type: "boolean" },
-  "knew-publisher": { type: "boolean" },
+  "knew-author": { type: "boolean" },
   ideas: { type: "boolean" },
   importance: { type: "boolean" },
   "no-importance": { type: "boolean" },
@@ -146,7 +146,7 @@ const ACCEPTS: Record<string, string[]> = {
   job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "importance", "no-importance"],
   run: RUNNING,
   compare: [],
-  attest: [...SIGNING, "hazard", "verdict", "reason", "significance", "over-budget", "knew-publisher"],
+  attest: [...SIGNING, "hazard", "verdict", "reason", "significance", "over-budget", "knew-author"],
   hazard: [...SIGNING, "verdict"],
   match: ["node"],
   "challenge-review": [...SIGNING, "verdict"],
@@ -279,7 +279,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
           reasons: values.reason,
           significance: values.significance,
           overBudget: values["over-budget"],
-          knewPublisher: values["knew-publisher"],
+          knewAuthor: values["knew-author"],
         },
         deps,
       );

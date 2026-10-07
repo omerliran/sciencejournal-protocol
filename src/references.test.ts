@@ -40,12 +40,20 @@ describe("ReferencesFileSchema", () => {
     ["a DOI without its registrant", { ...external, id: "doi:10.1038" }],
     ["an uppercase prefix", { ...external, id: "DOI:10.1038/s41586-024-07566-y" }],
     ["a URL", { ...external, id: "https://doi.org/10.1038/s41586-024-07566-y" }],
-    ["an empty claims list", { id: `claim:${hex("a")}`, claims: [] }],
     ["a malformed local claim ID", { id: `claim:${hex("a")}`, claims: ["claim:abc"] }],
     ["a fractional year", { ...external, year: 2024.5 }],
     ["no authors", { ...external, authors: [] }],
   ])("rejects %s", (_, reference) => {
     expect(issues([reference])).not.toEqual([]);
+  });
+
+  it("takes an empty claims list only for a source that could support a claim, cited to compare with", () => {
+    expect(issues([{ id: `claim:${hex("a")}`, claims: [] }, { ...external, claims: [] }])).toEqual([]);
+    for (const id of [`task:${hex("b")}`, `idea:${hex("c")}`, `post:${hex("e")}`, `prereg:${hex("f")}`]) {
+      expect(issues([{ id, claims: [] }])).toEqual([
+        `"${id}" names no claims; only a claim on the ledger or a source outside it can be cited to compare with`,
+      ]);
+    }
   });
 
   it("rejects the same source listed twice", () => {

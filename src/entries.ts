@@ -48,6 +48,29 @@ export function operatorId(firstKey: string): string {
 }
 
 /**
+ * Where a retraction or an addendum names the operator that wrote the bundle: `author`, or
+ * `publisher`, the field's earlier name, which entries signed before the rename carry and
+ * which means the same. An entry names it once, in one of them.
+ */
+export const AUTHOR_FIELDS = { author: OperatorIdSchema.optional(), publisher: OperatorIdSchema.optional() };
+
+/** Refines a schema built with AUTHOR_FIELDS so the entry names its author exactly once. */
+export function namesOneAuthor(entry: { author?: string; publisher?: string }, ctx: z.RefinementCtx) {
+  if (entry.author === undefined && entry.publisher === undefined) {
+    ctx.addIssue({ code: "custom", path: ["author"], message: "Name the bundle's author, your operator ID, as author" });
+  } else if (entry.author !== undefined && entry.publisher !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["publisher"], message: "Say author alone; publisher is its earlier name" });
+  }
+}
+
+/** The operator an entry built with AUTHOR_FIELDS names as the bundle's author, and the field it uses. */
+export function namedAuthor(entry: { author?: string; publisher?: string }): { field: "author" | "publisher"; operator: string } {
+  if (entry.author !== undefined) return { field: "author", operator: entry.author };
+  if (entry.publisher !== undefined) return { field: "publisher", operator: entry.publisher };
+  throw new Error("The entry names no author");
+}
+
+/**
  * An entry's digest as signed: the SHA-256 of its canonical JSON, signatures included. Every
  * log that holds an entry gives it the same digest, whatever its index there, so two logs are
  * compared entry by entry through it.
@@ -156,7 +179,8 @@ const GlobalClaimIdSchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a
  * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
  * the verifier's hazard screen of the bundle; attestations from assigned jobs must give it.
  * A review also rates each claim it judges for `significance`, and no other job does; a review
- * says `knew_publisher` when something in the work told the reviewer whose it was.
+ * says `knew_author` when something in the work told the reviewer whose it was, or
+ * `knew_publisher`, its earlier name, which reviews already on the ledger carry.
  */
 export const AttestationEntrySchema = z
   .strictObject({
@@ -175,13 +199,14 @@ export const AttestationEntrySchema = z
     hazard: z.enum(HAZARD_VERDICTS).optional(),
     /**
      * The work took more than the bundle declared, so the verifier stopped. If two
-     * organizations say so, the publisher pays again and they are paid for their time.
+     * organizations say so, the author pays again and they are paid for their time.
      */
     over_budget: z.literal(true).optional(),
     /**
-     * Something in the work told the reviewer who published it, such as a byline, an address,
-     * or a repository, so the review wasn't blind.
+     * Something in the work told the reviewer who wrote it, such as a byline, an address, or a
+     * repository, so the review wasn't blind.
      */
+    knew_author: z.literal(true).optional(),
     knew_publisher: z.literal(true).optional(),
     sig: SignatureSchema,
   })
@@ -198,10 +223,15 @@ export const AttestationEntrySchema = z
       if (entry.significance !== undefined) {
         ctx.addIssue({ code: "custom", path: ["significance"], message: `Only a review rates significance, not a ${entry.job}` });
       }
-      if (entry.knew_publisher !== undefined) {
-        ctx.addIssue({ code: "custom", path: ["knew_publisher"], message: `Only a review says whether it knew whose work it judged, not a ${entry.job}` });
+      for (const knew of ["knew_author", "knew_publisher"] as const) {
+        if (entry[knew] !== undefined) {
+          ctx.addIssue({ code: "custom", path: [knew], message: `Only a review says whether it knew whose work it judged, not a ${entry.job}` });
+        }
       }
       return;
+    }
+    if (entry.knew_author !== undefined && entry.knew_publisher !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["knew_publisher"], message: "Say knew_author alone; knew_publisher is its earlier name" });
     }
     if (entry.significance === undefined) {
       ctx.addIssue({ code: "custom", path: ["significance"], message: "A review rates the significance of each claim it gives a verdict on" });

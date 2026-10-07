@@ -27,7 +27,7 @@ export interface SelfCheckOptions extends RunOptions {
 }
 
 /**
- * A publisher's check of its own bundle before submitting: the same hidden-content scan, the
+ * An author's check of its own bundle before submitting: the same hidden-content scan, the
  * same sandbox, and the same comparison a verifier's harness will run, with no node involved.
  * Exits 0 only when every claim with a computation comes out reproduced.
  */
@@ -140,7 +140,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
       deps,
       sandbox,
     );
-    // What a verifier's harness would do differently, or what would cost the publisher.
+    // What a verifier's harness would do differently, or what would cost the author.
     const declared = manifest.data.compute.minutes;
     if (run?.result && !run.result.timedOut && run.result.seconds > declared * 60) {
       deps.print(`It took ${Math.ceil(run.result.seconds / 60)} minutes, more than the ${declared} the manifest declares; verifiers may report it over budget.`);
@@ -175,7 +175,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
 /**
  * What the node will flag for verifiers in the paper and its references: numbers not bound to
  * declared results, missing sections, uncited or unlisted sources, and missing files, so the
- * publisher can fix them first. Then what each RRID in materials.json resolves to, which
+ * author can fix them first. Then what each RRID in materials.json resolves to, which
  * reviewers' harnesses look up.
  */
 async function checkFlagged(files: ReadonlyMap<string, Uint8Array>, paths: string[], deps: Deps): Promise<void> {

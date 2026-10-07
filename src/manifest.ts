@@ -13,7 +13,7 @@ const LicenseIdSchema = z
 /**
  * What one independent replication of the work's measurements takes: hands-on hours of each
  * kind of work, and how many days it takes from start to finish. A wet-lab replication might
- * be 40 lab hours over 30 days. Its publisher prepays a bounty for it.
+ * be 40 lab hours over 30 days. Its author prepays a bounty for it.
  */
 export const ReplicationSchema = z.strictObject({
   needs: z
@@ -39,7 +39,7 @@ export const FieldSchema = z
 
 /**
  * manifest.json: who publishes the bundle, under what licenses, and what reproducing it takes.
- * The publisher is named by the digest of its public key, which is the same on every log,
+ * The author is named by the digest of its public key, which is the same on every log,
  * where operator IDs are not.
  */
 export const ManifestSchema = z.strictObject({
@@ -87,8 +87,8 @@ export const ManifestSchema = z.strictObject({
   /** What replicating its measurements takes; required exactly when a claim has a measurement. */
   replication: ReplicationSchema.optional(),
   /**
-   * The publisher's own hazard screen: the digest of the rubric it applied and the model that
-   * applied it. A publisher submits only work its screen answered "none" for.
+   * The author's own hazard screen: the digest of the rubric it applied and the model that
+   * applied it. An author submits only work its screen answered "none" for.
    */
   hazard_screen: z
     .strictObject({ rubric: DigestSchema, model: boundedText(100) })

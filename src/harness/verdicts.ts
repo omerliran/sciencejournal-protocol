@@ -45,7 +45,7 @@ export interface ClaimVerdict {
 }
 
 /**
- * What verdicts.json is about: a job's kind; a publisher's own check of its bundle; or, for a
+ * What verdicts.json is about: a job's kind; an author's own check of its bundle; or, for a
  * challenge review, the harness re-running the challenged claim.
  */
 export type VerdictsKind = JobKind | "self_check" | "challenge_rerun";

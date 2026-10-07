@@ -39,7 +39,7 @@ export interface AttestOptions extends Credentials {
   significance?: string[];
   overBudget?: boolean;
   /** For a review: something in the work told the reviewer who published it. */
-  knewPublisher?: boolean;
+  knewAuthor?: boolean;
 }
 
 /**
@@ -75,8 +75,8 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   if (reviewing) await requireReport(jobDir, "review");
   else if (options.significance?.length) {
     throw new HarnessError(`Only a review rates significance; leave out --significance for a ${job}.`);
-  } else if (options.knewPublisher) {
-    throw new HarnessError(`Only a review says whether it knew whose work it judged; leave out --knew-publisher for a ${job}.`);
+  } else if (options.knewAuthor) {
+    throw new HarnessError(`Only a review says whether it knew whose work it judged; leave out --knew-author for a ${job}.`);
   }
 
   const path = join(jobDir, "verdicts.json");
@@ -121,7 +121,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     harness: HARNESS,
     ...(job === "reproduction" && { hazard: options.hazard }),
     ...(overBudget && { over_budget: true as const }),
-    ...(reviewing && options.knewPublisher && { knew_publisher: true as const }),
+    ...(reviewing && options.knewAuthor && { knew_author: true as const }),
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
   const response = await client.post<{ attestation: number }>("/api/v1/attestations", { entry, evidence: { files } });
@@ -131,7 +131,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     deps.print(`  ${claim.local_id}: ${claim.verdict}${claim.significance ? `, significance ${claim.significance}` : ""}`);
   }
   if (overBudget) deps.print(options.overBudget ? "Reported over budget." : "Reported over budget, since the run passed its time limit.");
-  if (reviewing && options.knewPublisher) deps.print("Said the work told you whose it was, so this review isn't marked blind.");
+  if (reviewing && options.knewAuthor) deps.print("Said the work told you whose it was, so this review isn't marked blind.");
   const sealed =
     job === "reproduction"
       ? " For work still sealed, that entry is a commitment the log opens when the round closes."

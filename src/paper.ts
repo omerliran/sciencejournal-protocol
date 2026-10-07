@@ -16,9 +16,11 @@ export type MarkdownNode = {
   type: string;
   depth?: number;
   url?: string;
+  /** A reference-style link's label, or a definition's, normalized as Markdown matches them. */
+  identifier?: string;
   alt?: string | null;
   value?: string;
-  position?: { start: { offset?: number }; end: { offset?: number } };
+  position?: { start: { line?: number; offset?: number }; end: { offset?: number } };
   children?: MarkdownNode[];
 };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BENFORD, integrityFlags, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
+import { BENFORD, citationPlaces, INTEGRITY_LIMITS, integrityFlags, orphanNumbers, parseDelimited, tableFlags } from "./integrity";
 
 const numbers = (markdown: string) => orphanNumbers(markdown).map((found) => found.number);
 
@@ -293,5 +293,52 @@ describe("a bundle's integrity flags", () => {
   it("skip tables too large to check, and say so", () => {
     const large = new Uint8Array(8 * 1024 * 1024 + 1).fill(0x31);
     expect(integrityFlags([["data/big.tsv", large]]).skipped).toEqual([{ path: "data/big.tsv", bytes: large.length }]);
+  });
+});
+
+describe("where a paper cites each source", () => {
+  const doi = "doi:10.1126/science.aac4716";
+  const claim = `claim:${"a".repeat(64)}`;
+  const paper = [
+    "# Title citing nothing",
+    "",
+    "## Results",
+    "",
+    `We confirm [the earlier bound](${claim}).`,
+    "",
+    "| Project | Rate |",
+    "| --- | --- |",
+    `| [Psychology][osc] | 36% |`,
+    "",
+    "## Discussion",
+    "",
+    `Projects that collected new data found less ([Open Science Collaboration (2015)](${doi})),`,
+    `and so did <${claim}>, which [it cites again](${doi}) in the same paragraph.`,
+    "",
+    `- A list item citing [the project](${doi}).`,
+    "",
+    "`[not a link](doi:10.1/x)` and [a web page](https://example.org).",
+    "",
+    `[osc]: ${doi}`,
+  ].join("\n");
+
+  it("gives the section and line of each paragraph, table row, or list item that links to it, once each", () => {
+    const places = citationPlaces(paper);
+    expect([...places.keys()].sort()).toEqual([claim, doi].sort());
+    expect(places.get(claim)).toEqual([
+      { section: "Results", line: 5 },
+      { section: "Discussion", line: 13 },
+    ]);
+    // A reference-style link counts where it is used, not where it is defined.
+    expect(places.get(doi)).toEqual([
+      { section: "Results", line: 9 },
+      { section: "Discussion", line: 13 },
+      { section: "Discussion", line: 16 },
+    ]);
+  });
+
+  it("lists at most a bounded number of places for a source", () => {
+    const many = Array.from({ length: 30 }, (_, i) => `Paragraph ${i} cites [it](${doi}).`).join("\n\n");
+    expect(citationPlaces(`## Discussion\n\n${many}`).get(doi)).toHaveLength(INTEGRITY_LIMITS.citationPlacesShown);
   });
 });

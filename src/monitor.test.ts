@@ -32,7 +32,7 @@ import { generateKeyPair, keyDigest, sign } from "./signing";
 import { virtualPasskey } from "./virtual-passkey";
 
 // Operators and a volunteer, made once: keys take a while to generate.
-const alice = generateKeyPair(); // a publisher
+const alice = generateKeyPair(); // an author
 const aliceNext = generateKeyPair(); // alice's key after its recovery
 const bob = generateKeyPair(); // a verifier
 const bobNext = generateKeyPair(); // bob's key after it rotates
@@ -56,17 +56,17 @@ const CLAIM = `claim:${"c".repeat(64)}` as const;
 const keyEntry = (keys: Keys, name = "Agent") =>
   signObject({ type: "key" as const, key: keys.publicKey, name, model_families: ["family-a"] }, keys.secretKey);
 
-/** A retraction of `bundle`: its publisher's when `publisher` is named, else one a person at the node made, which the log signs. */
-const retraction = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, publisher?: string) =>
+/** A retraction of `bundle`: its author's when `author` is named, else one a person at the node made, which the log signs. */
+const retraction = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, author?: string) =>
   signObject(
-    { type: "retraction" as const, ...(publisher && { publisher }), bundle, reason: "error" as const, notice: sha256Digest("notice words") },
+    { type: "retraction" as const, ...(author && { author }), bundle, reason: "error" as const, notice: sha256Digest("notice words") },
     keys.secretKey,
   );
 
-/** An addendum `publisher` adds to `bundle`, signed with `keys`. */
-const addendum = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, publisher: string) =>
+/** An addendum `author` adds to `bundle`, signed with `keys`. */
+const addendum = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, author: string) =>
   signObject(
-    { type: "addendum" as const, publisher, bundle, words: sha256Digest("addendum words"), model_family: "family-a", model: "test-model" },
+    { type: "addendum" as const, author, bundle, words: sha256Digest("addendum words"), model_family: "family-a", model: "test-model" },
     keys.secretKey,
   );
 
@@ -195,7 +195,7 @@ async function seal(log: MemoryLog, entry: { type: string }) {
 /** A log with every kind of entry the protocol defines, as a node writes them. */
 async function realisticLog(): Promise<MemoryLog> {
   const log = new MemoryLog();
-  await log.append({ operator: aliceId, entry: keyEntry(alice, "Publisher") });
+  await log.append({ operator: aliceId, entry: keyEntry(alice, "Author") });
   await log.append({
     operator: aliceId,
     entry: signObject({ type: "identity" as const, kind: "invited" as const, operator: aliceId }, log.secretKey),
@@ -589,7 +589,7 @@ describe("monitorLog", () => {
 
   it("catches an entry served as signed that isn't the one its leaf holds", async () => {
     const log = await logOf([
-      { operator: aliceId, entry: keyEntry(alice, "Publisher") },
+      { operator: aliceId, entry: keyEntry(alice, "Author") },
       { operator: bobId, entry: keyEntry(bob, "Verifier") },
     ]);
     await log.append(invited(log, aliceId));
@@ -908,7 +908,7 @@ describe("monitorLog", () => {
     ]);
   });
 
-  it("retracts a paper once, signed by the publisher its leaf names or by the log", async () => {
+  it("retracts a paper once, signed by the author its leaf names or by the log", async () => {
     const log = await logOf([
       { operator: aliceId, entry: keyEntry(alice) },
       { operator: bobId, entry: keyEntry(bob) },
@@ -950,7 +950,7 @@ describe("monitorLog", () => {
     ]);
   });
 
-  it("takes any number of addenda, each signed by the publisher its leaf names, with an identity", async () => {
+  it("takes any number of addenda, each signed by the author its leaf names, with an identity", async () => {
     const log = await logOf([
       { operator: aliceId, entry: keyEntry(alice) },
       { operator: bobId, entry: keyEntry(bob) },

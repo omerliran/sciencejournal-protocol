@@ -32,7 +32,7 @@ export type ExternalFile = z.infer<typeof ExternalFileSchema>;
 /**
  * data/external.json: the public files a bundle points at. Only data that was public before
  * the bundle belongs here; data the work collected travels with the bundle, so verifiers can
- * screen it while it is sealed. A pointer at a deposit of the publisher's own would also tell
+ * screen it while it is sealed. A pointer at a deposit of the author's own would also tell
  * a verifier whose sealed work it is.
  */
 export const ExternalDataSchema = z

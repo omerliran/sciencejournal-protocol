@@ -24,7 +24,7 @@ import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
 import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema, sha256Hex } from "./hash";
 import { IdeaEntrySchema } from "./ideas";
-import { NodeRetractionEntrySchema, PublisherRetractionEntrySchema } from "./retractions";
+import { NodeRetractionEntrySchema, AuthorRetractionEntrySchema } from "./retractions";
 import {
   CanaryEntrySchema,
   HazardFlagEntrySchema,
@@ -110,7 +110,7 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: GoalCheckEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
-  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: PublisherRetractionEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: AuthorRetractionEntrySchema }),
   z.strictObject({ timestamp, entry: NodeRetractionEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: AddendumEntrySchema }),
 ]);

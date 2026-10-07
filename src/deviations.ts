@@ -8,7 +8,7 @@ import { DEVIATION_KINDS, LIMITS } from "./vocabulary";
 // from, says whether the work did something other than what was stated (changed) or something
 // that was never stated (unstated), and says what. When a replication doesn't match, these
 // tell a real difference in the world from a detail the original left out, and an unstated one
-// shows the original's publisher what its Methods should have said. An empty list says the work
+// shows the original's author what its Methods should have said. An empty list says the work
 // followed exactly. Validated and never transformed, and not a verification input, like
 // materials.json.
 

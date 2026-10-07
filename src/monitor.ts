@@ -175,7 +175,7 @@ export const AuditStateSchema = z.strictObject({
   /** The bundles retracted, each of which can be retracted only once. Audits saved before retractions have none. */
   retracted: z.array(DigestSchema).default([]),
   /**
-   * Who signed each publisher's retraction, and where: one a key recovery later disowns is void,
+   * Who signed each author's retraction, and where: one a key recovery later disowns is void,
    * and its bundle may be retracted again. Audits saved before recoveries voided retractions have none.
    */
   retractedBy: z.record(DigestSchema, z.strictObject({ operator: OperatorIdSchema, index: z.number().int().nonnegative() })).default({}),
@@ -319,8 +319,8 @@ export const NOT_CHECKED = {
   canary: "A canary leaf's claim IDs come from the canary bundle's files, which the monitor doesn't fetch.",
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
-  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the publisher it names signed it, or the log, and that no bundle is retracted twice unless a key recovery disowned the first.",
-  addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Who published the bundle it names, whether that bundle opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the publisher it names signed it, with an identity.",
+  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the author it names signed it, or the log, and that no bundle is retracted twice unless a key recovery disowned the first.",
+  addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Who published the bundle it names, whether that bundle opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the author it names signed it, with an identity.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
   vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired identity's consent is the operator's to sign, which the monitor checks, along with each pairing completing one identity; that the person who vouched, or named a domain, brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
@@ -592,7 +592,7 @@ export class LogAuditor {
         return;
       }
       case "retraction": {
-        // A publisher retracts its own paper, signing as itself; a person at the node retracts
+        // An author retracts its own paper, signing as itself; a person at the node retracts
         // any paper, signing as the log, and then the leaf names no one.
         this.notes.add("retraction");
         const bundle = entry.bundle as Digest;
@@ -600,14 +600,14 @@ export class LogAuditor {
         this.retracted.add(bundle);
         if (leaf.operator === undefined) return this.signedByLog(index, entry.type, signed);
         this.retractedBy.set(bundle, { operator, index });
-        this.names(index, "publisher", entry.publisher, operator);
+        this.namesAuthor(index, entry, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       case "addendum":
-        // Only the publisher adds to its bundle, which the node checks; here, that it signed.
+        // Only the author adds to its bundle, which the node checks; here, that it signed.
         this.notes.add("addendum");
-        this.names(index, "publisher", entry.publisher, operator);
+        this.namesAuthor(index, entry, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       default: {
@@ -950,6 +950,12 @@ export class LogAuditor {
     if (named !== attributed) {
       this.problem(index, "signer", `The entry's ${field} is ${String(named)}, but the leaf attributes it to ${attributed}`);
     }
+  }
+
+  /** That a retraction or an addendum names its signer as its author, in either field's name. */
+  private namesAuthor(index: number, entry: Record<string, unknown>, attributed: string): void {
+    const field = entry.author === undefined ? "publisher" : "author";
+    this.names(index, field, entry[field], attributed);
   }
 
   /** The key `operator` held at log position `at`: the last one an entry before it gave it. */
