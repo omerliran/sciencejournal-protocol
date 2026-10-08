@@ -109,6 +109,8 @@ export const PROBLEMS = {
   identity: "An identity the protocol doesn't allow, or an entry from an operator without the identity it needs",
   withdrawal: "A bundle withdrawn twice",
   retraction: "A bundle retracted twice",
+  author: "A correction, retraction, or addendum signed by someone other than the bundle's author",
+  correction: "A bundle corrected again while its earlier correction is still up",
   challenge: "A challenge review that names no earlier challenge",
   checkpoint: "A checkpoint isn't the log's signed tree head, its keys aren't signed by the log's key, or a signature on it doesn't verify",
 } as const;
@@ -183,6 +185,15 @@ export const AuditStateSchema = z.strictObject({
   invites: z.array(InviteCodeSchema).default([]),
   /** The pairings paired vouches completed, each of which completes only one. */
   pairings: z.array(DigestSchema).default([]),
+  /**
+   * Who published each bundle, by its hash: only its author corrects it, retracts it, or adds
+   * to it. Kept from full bundle leaves only, since a log that only logs holds leaves without
+   * what a bundle replaces; such a log keeps none, and audits saved before authors were kept
+   * have none for the bundles before.
+   */
+  authors: z.record(DigestSchema, OperatorIdSchema).default({}),
+  /** Each corrected bundle's latest correction: a version takes another only once that one is withdrawn. */
+  corrections: z.record(DigestSchema, DigestSchema).default({}),
 });
 export type AuditState = z.infer<typeof AuditStateSchema>;
 
@@ -214,6 +225,8 @@ export function emptyAuditState(): AuditState {
     retractedBy: {},
     invites: [],
     pairings: [],
+    authors: {},
+    corrections: {},
   };
 }
 
@@ -315,12 +328,12 @@ function entryTypeOf(schema: z.ZodType): string {
 
 /** What the log attests that only content kept off the log can show, so no monitor checks it. */
 export const NOT_CHECKED = {
-  bundle: "A bundle leaf's claim IDs, field tags, and the bundle it replaces come from the bundle's files, which the monitor doesn't fetch.",
+  bundle: "A bundle leaf's claim IDs, field tags, and the bundle it replaces come from the bundle's files, which the monitor doesn't fetch. Given what a leaf says it replaces, the monitor checks that the same operator published that bundle and that no correction of it is still up; which version of a paper a correction had to name, the latest still up when it was signed, depends on when versions were withdrawn and is the node's to check.",
   canary: "A canary leaf's claim IDs come from the canary bundle's files, which the monitor doesn't fetch.",
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
-  retraction: "A retraction names one version of a paper and covers its whole line. Who published that bundle, which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the author it names signed it, or the log, and that no bundle is retracted twice unless a key recovery disowned the first.",
-  addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Who published the bundle it names, whether that bundle opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the author it names signed it, with an identity.",
+  retraction: "A retraction names one version of a paper and covers its whole line. Which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the author it names signed it, or the log, that the author published the bundle when the log holds full bundle leaves, and that no bundle is retracted twice unless a key recovery disowned the first.",
+  addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Whether the bundle it names opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the author it names signed it, with an identity, and that the author published the bundle when the log holds full bundle leaves.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
   vouch: "A vouch, and a vouched recovery's approval, rest on a GitHub account's holder signing in on the node's site, or a card paying there, which the log attests in voucher_sig but no monitor can repeat, so neither is rechecked; nor is whether a payment was later disputed, which ends the vouch's standing. A paired identity's consent is the operator's to sign, which the monitor checks, along with each pairing completing one identity; that the person who vouched, or named a domain, brought the pairing code is the log's word.",
   invite: "A sponsored identity's invite is the sponsor's to sign and the operator's to countersign, which the monitor checks, along with the organization it counts as; how many invites the sponsor's organization made, and whether the code had expired, are the node's records.",
@@ -339,6 +352,9 @@ interface Leaf {
   observer?: string;
   organization?: string;
   sealed?: SealReveal;
+  /** A full bundle leaf's claims, which a log that only logs leaves out. */
+  claims?: string[];
+  replaces?: Digest;
   entry: { type: string } & Record<string, unknown>;
 }
 type Signed = { type: string; sig: string } & Record<string, unknown>;
@@ -372,6 +388,8 @@ export class LogAuditor {
   private readonly retractedBy: Map<string, { operator: string; index: number }>;
   private readonly invites: Set<string>;
   private readonly pairings: Set<string>;
+  private readonly authors: Map<string, string>;
+  private readonly corrections: Map<string, string>;
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
 
@@ -398,6 +416,8 @@ export class LogAuditor {
     this.retractedBy = new Map(Object.entries(state.retractedBy));
     this.invites = new Set(state.invites);
     this.pairings = new Set(state.pairings);
+    this.authors = new Map(Object.entries(state.authors));
+    this.corrections = new Map(Object.entries(state.corrections));
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
   }
 
@@ -438,6 +458,8 @@ export class LogAuditor {
       retractedBy: Object.fromEntries([...this.retractedBy].sort(([a], [b]) => (a < b ? -1 : 1))) as AuditState["retractedBy"],
       invites: [...this.invites].sort(),
       pairings: [...this.pairings].sort() as Digest[],
+      authors: record(this.authors) as AuditState["authors"],
+      corrections: record(this.corrections) as AuditState["corrections"],
     };
   }
 
@@ -495,6 +517,7 @@ export class LogAuditor {
       // Publishing, every job, a flag, and a challenge each need an identity on the log first.
       case "bundle":
         this.notes.add("bundle");
+        this.published(index, leaf, operator);
         this.requireIdentity(index, entry.type, operator, signedAt);
         return this.signedByOperator(index, entry.type, signed, operator, signedAt);
       case "attestation":
@@ -614,6 +637,7 @@ export class LogAuditor {
         if (leaf.operator === undefined) return this.signedByLog(index, entry.type, signed);
         this.retractedBy.set(bundle, { operator, index });
         this.namesAuthor(index, entry, operator);
+        this.byAuthor(index, "retracts", bundle, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       }
@@ -621,6 +645,7 @@ export class LogAuditor {
         // Only the author adds to its bundle, which the node checks; here, that it signed.
         this.notes.add("addendum");
         this.namesAuthor(index, entry, operator);
+        this.byAuthor(index, "adds to", entry.bundle as Digest, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
       default: {
@@ -969,6 +994,34 @@ export class LogAuditor {
   private namesAuthor(index: number, entry: Record<string, unknown>, attributed: string): void {
     const field = entry.author === undefined ? "publisher" : "author";
     this.names(index, field, entry[field], attributed);
+  }
+
+  /**
+   * Keeps who published a bundle from its full leaf, and checks a correction: the same
+   * operator published the bundle it replaces, and no other correction of that bundle is still
+   * up, so each paper's history stays a single line. A withdrawn correction no longer stands,
+   * and the version it corrected takes another.
+   */
+  private published(index: number, leaf: Leaf, operator: string): void {
+    if (leaf.claims === undefined) return;
+    const bundle = leaf.entry.bundle as Digest;
+    this.authors.set(bundle, operator);
+    const replaces = leaf.replaces;
+    if (replaces === undefined) return;
+    this.byAuthor(index, "corrects", replaces, operator);
+    const earlier = this.corrections.get(replaces);
+    if (earlier !== undefined && !this.withdrawn.has(earlier)) {
+      this.problem(index, "correction", `${replaces} was corrected by ${earlier}, which is still up; a version takes one correction`);
+    }
+    this.corrections.set(replaces, bundle);
+  }
+
+  /** Only the operator that published `bundle` `does` it (corrects, retracts, adds to), when the audit knows who did. */
+  private byAuthor(index: number, does: string, bundle: Digest, operator: string): void {
+    const author = this.authors.get(bundle);
+    if (author !== undefined && author !== operator) {
+      this.problem(index, "author", `Only a bundle's author ${does} it: ${author} published ${bundle}, and this entry is ${operator}'s`);
+    }
   }
 
   /** The key `operator` held at log position `at`: the last one an entry before it gave it. */

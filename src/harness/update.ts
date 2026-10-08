@@ -50,7 +50,11 @@ export async function update(node: string | undefined, deps: Deps): Promise<numb
   const latest = await served(client, deps);
   if (!latest) throw new HarnessError(`${client.base} doesn't say which harness it serves.`);
   if (`sha256:${await sha256File(deps.self)}` === latest.digest) {
-    deps.print("sj-harness is up to date.");
+    // While a node deploys, `job` can reach a new server and `update` an old one, so a harness
+    // told it was out of date can find itself current: the new one is minutes from serving.
+    deps.print(
+      `sj-harness is up to date. If job said it wasn't a moment ago, ${client.base} is starting a new one: ask for a job again in a few minutes, and run update again if job still says so.`,
+    );
     return 0;
   }
   let bytes: Uint8Array;

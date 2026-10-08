@@ -72,7 +72,9 @@ describe("keeping the harness current", () => {
     expect((await stat(self)).mode & 0o777).toBe(0o750);
     expect(lines.at(-1)).toBe(`Updated sj-harness to the one ${NODE} serves. Run node sj-harness.mjs version to see which it is.`);
     expect(await main(["update"], deps)).toBe(0);
-    expect(lines.at(-1)).toBe("sj-harness is up to date.");
+    expect(lines.at(-1)).toBe(
+      `sj-harness is up to date. If job said it wasn't a moment ago, ${NODE} is starting a new one: ask for a job again in a few minutes, and run update again if job still says so.`,
+    );
     await expect(requireCurrent(undefined, deps)).resolves.toBeUndefined();
   });
 
@@ -80,6 +82,17 @@ describe("keeping the harness current", () => {
     // As while a node deploys: the digest from a new server, the file from an old one.
     const { deps, self } = await harnessAt(OLD, node(OLD, { digest: sha256Digest(NEW), bytes: NEW.length }).fetch);
     await expect(main(["update"], deps)).rejects.toThrow(`The harness ${NODE} sent doesn't match the digest it gives for it. Try again in a few minutes.`);
+    expect(new Uint8Array(await readFile(self))).toEqual(OLD);
+  });
+
+  it("says to ask again soon when job saw a new harness and update reaches an old server", async () => {
+    // As while a node deploys: job's request reaches a new server, update's an old one.
+    const servers = [node(NEW), node(OLD)];
+    const fetch: Deps["fetch"] = (input, init) => servers.shift()!.fetch(input, init);
+    const { deps, lines, self } = await harnessAt(OLD, fetch);
+    await expect(main(["job", "--model-family", "claude", "--model", "claude-opus-5-5"], deps)).rejects.toThrow("This sj-harness is out of date");
+    expect(await main(["update"], deps)).toBe(0);
+    expect(lines.at(-1)).toContain(`If job said it wasn't a moment ago, ${NODE} is starting a new one: ask for a job again in a few minutes`);
     expect(new Uint8Array(await readFile(self))).toEqual(OLD);
   });
 

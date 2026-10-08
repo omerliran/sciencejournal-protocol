@@ -973,6 +973,64 @@ describe("monitorLog", () => {
     ]);
   });
 
+  it("holds a correction, a retraction, and an addendum to the bundle's author, and a version to one correction still up", async () => {
+    const log = await logOf([
+      { operator: aliceId, entry: keyEntry(alice) },
+      { operator: bobId, entry: keyEntry(bob) },
+    ]);
+    await log.append(invited(log, aliceId));
+    await log.append(invited(log, bobId));
+    const version = (operator: string, keys: Keys, name: string, replaces: string) => ({
+      ...bundleLeaf(operator, bundleEntry(keys, name)),
+      replaces: sha256Digest(replaces),
+    });
+    const withdrawal = (name: string) =>
+      ({ entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest(name), reason: "copyright" as const }, log.secretKey) });
+    const paper = sha256Digest("paper");
+    await log.append(bundleLeaf(aliceId, bundleEntry(alice, "paper")));
+    await log.append(version(aliceId, alice, "v2", "paper"));
+    // A second correction of the paper while the first is up would fork its history.
+    await log.append(version(aliceId, alice, "v2b", "paper"));
+    // Once both are withdrawn, neither stands, and the paper takes a correction again.
+    await log.append(withdrawal("v2"));
+    await log.append(withdrawal("v2b"));
+    await log.append(version(aliceId, alice, "v3", "paper"));
+    // Bob corrects, retracts, and adds to alice's paper, each signed with his own key.
+    await log.append(version(bobId, bob, "taken", "paper"));
+    await log.append({ operator: bobId, entry: retraction(bob, paper, bobId) });
+    await log.append({ operator: bobId, entry: addendum(bob, paper, bobId) });
+    // Alice's own retraction and addendum stand, as does a correction of a bundle the audit never saw.
+    await log.append({ operator: aliceId, entry: retraction(alice, sha256Digest("v3"), aliceId) });
+    await log.append({ operator: aliceId, entry: addendum(alice, sha256Digest("v3"), aliceId) });
+    await log.append(version(aliceId, alice, "elsewhere", "unseen"));
+    // A log that only logs holds bundle leaves without claims or what they replace, so it learns no author from one.
+    await log.append({ operator: aliceId, entry: bundleEntry(alice, "short") });
+    await log.append({ operator: bobId, entry: addendum(bob, sha256Digest("short"), bobId) });
+
+    const { report } = await monitorLog(log.source(), null);
+    const v = (name: string) => sha256Digest(name);
+    expect(report.problems).toEqual([
+      { check: "correction", index: 6, reason: `${paper} was corrected by ${v("v2")}, which is still up; a version takes one correction` },
+      { check: "author", index: 10, reason: `Only a bundle's author corrects it: ${aliceId} published ${paper}, and this entry is ${bobId}'s` },
+      { check: "correction", index: 10, reason: `${paper} was corrected by ${v("v3")}, which is still up; a version takes one correction` },
+      { check: "author", index: 11, reason: `Only a bundle's author retracts it: ${aliceId} published ${paper}, and this entry is ${bobId}'s` },
+      { check: "author", index: 12, reason: `Only a bundle's author adds to it: ${aliceId} published ${paper}, and this entry is ${bobId}'s` },
+    ]);
+
+    // A log with no problems keeps each author and each paper's latest correction for the next run.
+    const clean = await logOf([{ operator: aliceId, entry: keyEntry(alice) }]);
+    await clean.append(invited(clean, aliceId));
+    await clean.append(bundleLeaf(aliceId, bundleEntry(alice, "paper")));
+    await clean.append(version(aliceId, alice, "v2", "paper"));
+    await clean.append({ operator: aliceId, entry: bundleEntry(alice, "short") });
+    const { state } = await monitorLog(clean.source(), null);
+    expect(MonitorStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
+    const { authors, corrections, ...older } = state!.audit;
+    expect([authors, corrections]).toEqual([{ [paper]: aliceId, [v("v2")]: aliceId }, { [paper]: v("v2") }]);
+    // An audit saved before authors were kept reads as knowing none.
+    expect(MonitorStateSchema.parse({ ...state, audit: older }).audit).toMatchObject({ authors: {}, corrections: {} });
+  });
+
   it("lists a swarm's backers only as the log signed them, each with a passkey logged before", async () => {
     const log = new MemoryLog();
     const backers = (people: string[], signer = log.secretKey) =>
