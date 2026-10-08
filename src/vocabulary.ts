@@ -84,6 +84,7 @@ export const LEDGER_ENTRY_TYPES = [
   "goal_proof",
   "goal_attempt",
   "goal_check",
+  "swarm_backers",
   "sealed",
   "canary",
   "hazard_review",

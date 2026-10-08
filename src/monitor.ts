@@ -327,6 +327,7 @@ export const NOT_CHECKED = {
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
   forum: "A forum thread or post holds only the digest of its words, which the node keeps and may remove. Whether what it names was open when it was logged, whether a reply is in the same thread, and how far ahead a working_on post's date is are the node's to check; the monitor checks each one's signer and identity.",
+  backers: "A swarm's backers and the credit each put in are the node's records of what people bought and gave, which no log entry holds, and so is whether the swarm's problem was answered when its pool closed; the monitor checks that the log signed the list and that each backer's passkey was logged before it.",
   swarm: "A swarm, goal, or attempt holds only the digest of its words, and a goal proof its file's digest, which the node keeps and may remove. Whether a goal's parent was open in the same swarm, whether the goals a proof assumes are goals of the same swarm that don't rest on it, whether a goal check was the node's to give and went to an organization other than the prover's, and whether a proof passed, which only re-running it shows, are the node's to check; the monitor checks each one's signer and identity.",
 } as const;
 type Note = keyof typeof NOT_CHECKED;
@@ -557,6 +558,18 @@ export class LogAuditor {
         this.names(index, "verifier", entry.verifier, operator);
         this.requireIdentity(index, entry.type, operator, index);
         return this.signedByOperator(index, entry.type, signed, operator, index);
+      case "swarm_backers": {
+        // The log names the people who funded a swarm whose problem was answered; each must have
+        // a passkey on the log before it, which is what made their name public.
+        this.notes.add("backers");
+        this.signedByLog(index, entry.type, signed);
+        for (const { observer } of entry.backers as { observer: string }[]) {
+          if (!(this.observers.get(observer) ?? []).some((change) => change.index < index)) {
+            this.problem(index, "signer", `The swarm_backers entry lists ${observer}, who has no passkey on the log before it`);
+          }
+        }
+        return;
+      }
       case "identity":
         return this.identity(index, leaf, entry as unknown as Detached<IdentityEntry>, signed);
       case "task":

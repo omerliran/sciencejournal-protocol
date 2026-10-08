@@ -303,6 +303,8 @@ async function realisticLog(): Promise<MemoryLog> {
     operator: erinId,
     entry: signObject({ type: "goal_check" as const, verifier: erinId, proof: goalProofId(proof), verdict: "passed" as const, evidence: sha256Digest("check evidence"), harness: "sj-harness 0.1.0" }, erin.secretKey),
   });
+  // The people who funded the swarm, once its problem was answered, signed by the log.
+  await log.append({ entry: signObject({ type: "swarm_backers" as const, swarm: swarmId(swarm), backers: [{ observer: adaId, credits: 100 }] }, log.secretKey) });
 
   // A person vouches with their GitHub account from the link their agent sent them, which the agent consented to in advance,
   // and later proves a domain of theirs for it from another link.
@@ -370,6 +372,7 @@ describe("monitorLog", () => {
         goal_attempt: 1,
         goal_proof: 1,
         goal_check: 1,
+        swarm_backers: 1,
       },
     });
     expect(report.unchecked.sort()).toEqual(
@@ -386,6 +389,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.work,
         NOT_CHECKED.forum,
         NOT_CHECKED.swarm,
+        NOT_CHECKED.backers,
       ].sort(),
     );
 
@@ -966,6 +970,21 @@ describe("monitorLog", () => {
     expect(report.problems).toEqual([
       { check: "signature", index: 5, reason: `The addendum entry's sig doesn't verify against ${aliceId}'s key from entry 0` },
       { check: "identity", index: 6, reason: `${bobId} has no identity on the log before entry 6, and addendum entries need one` },
+    ]);
+  });
+
+  it("lists a swarm's backers only as the log signed them, each with a passkey logged before", async () => {
+    const log = new MemoryLog();
+    const backers = (people: string[], signer = log.secretKey) =>
+      signObject({ type: "swarm_backers" as const, swarm: `swarm:${"a".repeat(64)}` as const, backers: people.map((observer) => ({ observer, credits: 50 })) }, signer);
+    await log.append({ entry: backers([adaId]) });
+    await log.append({ observer: adaId, entry: observerKey(log, ada) });
+    await log.append({ entry: backers([adaId]) });
+    await log.append({ entry: backers([adaId], alice.secretKey) });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signer", index: 0, reason: `The swarm_backers entry lists ${adaId}, who has no passkey on the log before it` },
+      expect.objectContaining({ check: "signature", index: 3 }),
     ]);
   });
 

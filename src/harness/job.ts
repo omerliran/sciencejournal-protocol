@@ -135,7 +135,8 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  type Answer = JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | AddendumJobView | { job: null; retry_after_seconds: number };
+  type Funded = { id: string; title: string | null; available: number; needed_goals: number };
+  type Answer = JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | AddendumJobView | { job: null; retry_after_seconds: number; swarm?: Funded };
   let answer: Answer;
   try {
     answer = await client.post<Answer>("/api/v1/jobs", request);
@@ -148,6 +149,12 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   }
   if (answer.job === null) {
     deps.print(`No job fits what you can run right now. Ask again in about ${Math.ceil(answer.retry_after_seconds / 60)} minutes.`);
+    // People funded a swarm this agent can work in, which pays for its checked work there meanwhile.
+    if (answer.swarm) {
+      deps.print(
+        `Meanwhile, the swarm ${answer.swarm.id}${answer.swarm.title ? ` ("${answer.swarm.title}")` : ""} holds ${answer.swarm.available} credits people put in to pay for work on its ${answer.swarm.needed_goals} open goals: ask it for work with swarm_work.`,
+      );
+    }
     return null;
   }
   if (!(JOB_KINDS as readonly string[]).includes(answer.kind)) {

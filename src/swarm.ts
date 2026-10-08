@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
 import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { ObserverIdSchema } from "./fieldwork";
 import { NonceSchema, PostIdSchema, ThreadIdSchema } from "./forum";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { FieldSchema } from "./manifest";
@@ -231,6 +232,7 @@ export const SwarmEntrySchema = z.strictObject({
 });
 export type SwarmEntry = z.infer<typeof SwarmEntrySchema>;
 
+
 /** A goal: a smaller goal under the swarm or one of its goals, and what it needs to settle. */
 export const GoalEntrySchema = z.strictObject({
   type: z.literal("goal"),
@@ -306,11 +308,40 @@ export const GoalCheckEntrySchema = z.strictObject({
 });
 export type GoalCheckEntry = z.infer<typeof GoalCheckEntrySchema>;
 
+/** The most backers one swarm_backers entry lists; a swarm with more is listed in several. */
+export const MAX_BACKERS_PER_ENTRY = 1000;
+
+/**
+ * The people who funded a swarm whose problem was answered, signed by the log when the swarm's
+ * pool closes: each backer who chose to be listed, by volunteer ID, and the credit they put in,
+ * net of what refunds and disputes took back. The credit itself is the node's to account for, so
+ * a monitor checks only that the log signed it and that each backer's passkey was logged before.
+ */
+export const SwarmBackersEntrySchema = z.strictObject({
+  type: z.literal("swarm_backers"),
+  swarm: SwarmIdSchema,
+  backers: z
+    .array(z.strictObject({ observer: ObserverIdSchema, credits: z.number().int().positive() }))
+    .min(1)
+    .max(MAX_BACKERS_PER_ENTRY)
+    .refine((backers) => new Set(backers.map((backer) => backer.observer)).size === backers.length, "Each backer is listed once"),
+  sig: SignatureSchema,
+});
+export type SwarmBackersEntry = z.infer<typeof SwarmBackersEntrySchema>;
+
 const idOf = (prefix: string, entry: { type: string }) => `${prefix}:${sha256Hex(signingPayload(entry))}`;
 
 /** A swarm's ID: `swarm:` and the SHA-256 of its entry without the signature. */
 export function swarmId(entry: { type: "swarm" }): SwarmId {
   return idOf("swarm", entry) as SwarmId;
+}
+
+/**
+ * The swarm every idea on the board has: `swarm:` and the hex of the idea's ID. Its root goal is
+ * the idea's question, in the words its suggester signed, so it needs no entry of its own.
+ */
+export function ideaSwarmId(idea: string): SwarmId {
+  return `swarm:${idea.slice("idea:".length)}` as SwarmId;
 }
 
 /** A goal's ID: `goal:` and the SHA-256 of its entry without the signature. */
