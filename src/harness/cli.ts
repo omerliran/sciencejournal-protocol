@@ -18,7 +18,7 @@ import { compareAgain, jobSubject, runSubject, type RunOptions } from "./reprodu
 import { findEngine } from "./sandbox";
 import { selfCheck } from "./self-check";
 import { requireCurrent, update } from "./update";
-import { HARNESS, HARNESS_VERSION } from "./version";
+import { HARNESS, HARNESS_VERSION, USER_AGENT } from "./version";
 import { MODEL_FAMILY_NAMES } from "../families";
 
 const USAGE = `${HARNESS}: the sciencejournal.ai reference harness, for verifiers and authors.
@@ -356,7 +356,12 @@ export function processDeps(): Deps {
     reading = false;
   });
   return {
-    fetch: (input, init) => globalThis.fetch(input, init),
+    // Every request names the harness, the node's and every data host's alike, unless it names something else.
+    fetch: (input, init) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      if (!headers.has("user-agent")) headers.set("user-agent", USER_AGENT);
+      return globalThis.fetch(input, { ...init, headers });
+    },
     now: () => new Date(),
     print: (line) => {
       if (reading) process.stdout.write(`${line}\n`);

@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generateKeyPair } from "../signing";
 import { ATTESTATION_JOBS, JOB_KINDS } from "../vocabulary";
-import { COMMANDS, main } from "./cli";
+import { COMMANDS, main, processDeps } from "./cli";
 import { idOfKeyFile, keyFile, keyPathFor, loadSecretKey, NodeClient, oldKeyPath } from "./client";
 import type { Deps } from "./context";
 import { ANSWERED_WITH } from "./job";
-import { HARNESS } from "./version";
+import { HARNESS, HARNESS_VERSION, USER_AGENT } from "./version";
 
 function deps(fetch: Deps["fetch"] = async () => Response.json({})): Deps & { lines: string[] } {
   const lines: string[] = [];
@@ -51,6 +51,29 @@ describe("the command line", () => {
     await expect(main(["job"], deps())).rejects.toThrow(/--model-family <family>, one of claude, gpt/);
     await expect(main(["job", "--model-family", "claude"], deps())).rejects.toThrow(/--model <the model/);
     await expect(main(["job", "--model-family", "claude", "--model", "claude-opus-5-5"], deps())).rejects.toThrow(/No secret key kept in .* or give your key's file with --key/);
+  });
+
+  it("names itself to every host it asks, as data hosts that turn away Node's own name need", async () => {
+    const sent: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      sent.push({ url: String(input), init });
+      return new Response("ok");
+    });
+    try {
+      const { fetch } = processDeps();
+      await fetch("https://zenodo.org/records/1/files/table.csv", { redirect: "manual" });
+      await fetch("https://bucket.example/upload", { method: "PUT", headers: { "content-type": "text/csv" } });
+      await fetch("https://data.example/", { headers: { "user-agent": "its-own" } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const named = sent.map(({ init }) => new Headers(init?.headers).get("user-agent"));
+    expect(named).toEqual([USER_AGENT, USER_AGENT, "its-own"]);
+    expect(USER_AGENT).toBe(`sj-harness/${HARNESS_VERSION} (+https://sciencejournal.ai)`);
+    // The rest of each request goes as it was asked.
+    expect(sent[0].init?.redirect).toBe("manual");
+    expect(sent[1].init?.method).toBe("PUT");
+    expect(new Headers(sent[1].init?.headers).get("content-type")).toBe("text/csv");
   });
 });
 

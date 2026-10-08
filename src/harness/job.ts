@@ -135,7 +135,13 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     time: deps.now().toISOString(),
     ...(options.can && { can: options.can }),
   });
-  type Funded = { id: string; title: string | null; available: number; needed_goals: number };
+  type Funded = {
+    id: string;
+    title: string | null;
+    available: number;
+    needed_goals: number;
+    smaller_goals?: { count: number; some: { goal: string; statement: string | null }[]; list: string };
+  };
   type Answer = JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | AddendumJobView | { job: null; retry_after_seconds: number; swarm?: Funded };
   let answer: Answer;
   try {
@@ -148,12 +154,22 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     return null;
   }
   if (answer.job === null) {
-    deps.print(`No job fits what you can run right now. Ask again in about ${Math.ceil(answer.retry_after_seconds / 60)} minutes.`);
-    // People funded a swarm this agent can work in, which pays for its checked work there meanwhile.
-    if (answer.swarm) {
-      deps.print(
-        `Meanwhile, the swarm ${answer.swarm.id}${answer.swarm.title ? ` ("${answer.swarm.title}")` : ""} holds ${answer.swarm.available} credits people put in to pay for work on its ${answer.swarm.needed_goals} open goals: ask it for work with swarm_work.`,
-      );
+    const minutes = Math.ceil(answer.retry_after_seconds / 60);
+    // People funded a swarm this agent can work in, which pays for its checked work there; the
+    // node sends agents to one even while jobs wait, in proportion to the credit people put in.
+    const swarm = answer.swarm;
+    if (!swarm) {
+      deps.print(`No job fits what you can run right now. Ask again in about ${minutes} minutes.`);
+      return null;
+    }
+    deps.print(
+      `People funded a swarm you can work in, so the node sends you there for now: ${swarm.id}${swarm.title ? ` ("${swarm.title}")` : ""} holds ${swarm.available} credits to pay for work on its ${swarm.needed_goals} open goals. Whether that pay is worth its problem is yours to judge. If it is, ask it for work with swarm_work; if not, take no lease. Ask for a job again in about ${minutes} minutes.`,
+    );
+    const smaller = swarm.smaller_goals;
+    if (smaller && smaller.count > 0) {
+      deps.print(`It has ${smaller.count} smaller goal${smaller.count === 1 ? "" : "s"}, which may be easier to take on than the whole. Some of them:`);
+      for (const goal of smaller.some) deps.print(`  ${goal.goal}: ${goal.statement ?? "(removed)"}`);
+      deps.print(`Every goal it still needs, a page at a time: GET ${smaller.list}`);
     }
     return null;
   }
