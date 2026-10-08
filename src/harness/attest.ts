@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { BundleLayoutError, digestEvidence } from "../bundle";
 import { isClaimId } from "../claims";
+import { COPYRIGHT_SOURCE_CHARS } from "../entries";
 import {
   ATTESTATION_JOBS,
   CHALLENGE_VERDICTS,
@@ -31,6 +32,10 @@ const REVIEWS: readonly string[] = REVIEW_JOBS;
 export interface AttestOptions extends Credentials {
   node?: string;
   hazard?: string;
+  /** With a "copyright" hazard answer: the bundle's files that hold the copy. */
+  copied?: string[];
+  /** And the work they copy. */
+  copiedFrom?: string;
   /** Verdicts the verifier sets, as "<claim>=<verdict>", by local ID or claim ID. */
   verdicts?: string[];
   /** Why, as "<claim>=<reason>". */
@@ -72,6 +77,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
   } else if (options.hazard) {
     throw new HarnessError(`A ${job} attestation carries no hazard screen: the work was screened before it opened. Leave out --hazard.`);
   }
+  const finding = copyrightFinding(record, job === "reproduction" ? options.hazard : undefined, options, "--hazard");
   if (reviewing) await requireReport(jobDir, "review");
   else if (options.significance?.length) {
     throw new HarnessError(`Only a review rates significance; leave out --significance for a ${job}.`);
@@ -120,6 +126,7 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     evidence: evidence.digest,
     harness: HARNESS,
     ...(job === "reproduction" && { hazard: options.hazard }),
+    ...(finding && { copyright: finding }),
     ...(overBudget && { over_budget: true as const }),
     ...(reviewing && options.knewAuthor && { knew_author: true as const }),
   });
@@ -269,6 +276,32 @@ export async function readEvidence(jobDir: string, client: NodeClient) {
 export interface HazardOptions extends Credentials {
   node?: string;
   verdict?: string;
+  /** With a "copyright" verdict: the bundle's files that hold the copy. */
+  copied?: string[];
+  /** And the work they copy. */
+  copiedFrom?: string;
+}
+
+/**
+ * The finding a "copyright" answer carries: the bundle's files that hold the copy, which must be
+ * among the job's, and the work they copy, both shown to the person asked to confirm the rights.
+ * Refused with any other answer.
+ */
+function copyrightFinding(record: JobRecord, answer: string | undefined, options: { copied?: string[]; copiedFrom?: string }, flag: string) {
+  const copiedFrom = options.copiedFrom?.trim();
+  if (answer !== "copyright") {
+    if (options.copied?.length || copiedFrom) throw new HarnessError(`--copied and --copied-from go only with ${flag} copyright.`);
+    return undefined;
+  }
+  if (!options.copied?.length || !copiedFrom) {
+    throw new HarnessError(
+      `With ${flag} copyright, name each file that holds the copy with --copied <path>, and the work it copies with --copied-from "<its title, its author, and where it's from>". The person who answers for the work's author sees both.`,
+    );
+  }
+  const missing = options.copied.filter((path) => !Object.hasOwn(record.files, path));
+  if (missing.length > 0) throw new HarnessError(`--copied names files the bundle doesn't hold: ${missing.join(", ")}. Give paths as they are under bundle/.`);
+  if (copiedFrom.length > COPYRIGHT_SOURCE_CHARS) throw new HarnessError(`Keep --copied-from to ${COPYRIGHT_SOURCE_CHARS.toLocaleString("en-US")} characters.`);
+  return { paths: [...new Set(options.copied)], source: copiedFrom };
 }
 
 /** Signs and sends the verifier's hazard verdict for a screen or a hazard review. */
@@ -279,9 +312,16 @@ export async function hazard(jobDir: string, options: HazardOptions, deps: Deps)
   if (!options.verdict || !(HAZARD_VERDICTS as readonly string[]).includes(options.verdict)) {
     throw new HarnessError(`Give your verdict with --verdict: none, or the closest of ${HAZARD_CATEGORIES.join(", ")}.`);
   }
+  const finding = copyrightFinding(record, options.verdict, options, "--verdict");
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
-  const entry = signAs(operator, { type: "hazard_review" as const, reviewer: operator.id, bundle: record.bundle, verdict: options.verdict });
+  const entry = signAs(operator, {
+    type: "hazard_review" as const,
+    reviewer: operator.id,
+    bundle: record.bundle,
+    verdict: options.verdict,
+    ...(finding && { copyright: finding }),
+  });
   const response = await client.post<{ review: number }>("/api/v1/hazard-reviews", entry);
   await writeJsonFile(join(jobDir, "hazard-review.json"), { sent_at: deps.now().toISOString(), entry, response });
   deps.print(`Sent your verdict, ${options.verdict}: the log holds it sealed at entry ${response.review} until the round closes or the panel decides.`);

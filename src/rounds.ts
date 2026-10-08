@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
-import { OperatorIdSchema, SignatureSchema } from "./entries";
+import { CopyrightFindingSchema, OperatorIdSchema, requireFindingWithCopyright, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { SoftwareTagSchema } from "./manifest";
-import { HAZARD_CATEGORIES, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
+import { FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
 
 // Sealed rounds. A new bundle isn't public at first: the log records only a commitment to it,
 // which fixes priority without revealing anything, and blind verification jobs run while it
@@ -53,24 +53,33 @@ export const CanaryEntrySchema = z.strictObject({
 });
 export type CanaryEntry = z.infer<typeof CanaryEntrySchema>;
 
-/** A panelist's signed verdict on a hazard concern about a bundle. */
-export const HazardReviewEntrySchema = z.strictObject({
-  type: z.literal("hazard_review"),
-  reviewer: OperatorIdSchema,
-  bundle: DigestSchema,
-  verdict: z.enum(HAZARD_VERDICTS),
-  model_family: ModelFamilySchema.optional(),
-  model: ModelNameSchema.optional(),
-  sig: SignatureSchema,
-});
+/**
+ * A screener's or panelist's signed hazard verdict on a bundle, with the files and the work they
+ * copy when the verdict is "copyright".
+ */
+export const HazardReviewEntrySchema = z
+  .strictObject({
+    type: z.literal("hazard_review"),
+    reviewer: OperatorIdSchema,
+    bundle: DigestSchema,
+    verdict: z.enum(HAZARD_VERDICTS),
+    copyright: CopyrightFindingSchema.optional(),
+    model_family: ModelFamilySchema.optional(),
+    model: ModelNameSchema.optional(),
+    sig: SignatureSchema,
+  })
+  .superRefine((entry, ctx) => requireFindingWithCopyright(entry.verdict, entry.copyright, "verdict", ctx));
 export type HazardReviewEntry = z.infer<typeof HazardReviewEntrySchema>;
 
-/** An operator's signed concern about a published bundle, which sends it to a panel. */
+/**
+ * An operator's signed concern about a published bundle, which sends it to a panel. Copyright
+ * isn't one: its holder sends the node a notice.
+ */
 export const HazardFlagEntrySchema = z.strictObject({
   type: z.literal("hazard_flag"),
   operator: OperatorIdSchema,
   bundle: DigestSchema,
-  concern: z.enum(HAZARD_CATEGORIES),
+  concern: z.enum(FLAG_CONCERNS),
   model_family: ModelFamilySchema.optional(),
   model: ModelNameSchema.optional(),
   sig: SignatureSchema,

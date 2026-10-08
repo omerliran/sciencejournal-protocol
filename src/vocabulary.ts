@@ -174,13 +174,21 @@ export const ATTESTATION_JOBS = {
 export type AttestationJob = keyof typeof ATTESTATION_JOBS;
 
 /**
- * What a hazard screen can find: meaningful help toward causing mass harm, by kind, or private
+ * What a hazard screen can find: meaningful help toward causing mass harm, by kind; private
  * data, which may not be published: private information about people, or secrets such as
- * credentials and confidential documents. A hazard verdict is "none" or the closest of these,
- * a kind of mass harm before private data when the work holds both.
+ * credentials and confidential documents; or a copy of someone else's work with nothing
+ * showing it may be shared, which opens only once the author's person confirms the rights. A
+ * hazard verdict is "none" or the closest of these, in this order when the work holds more
+ * than one.
  */
-export const HAZARD_CATEGORIES = ["biological", "chemical", "radiological", "nuclear", "cyber", "private_data"] as const;
+export const HAZARD_CATEGORIES = ["biological", "chemical", "radiological", "nuclear", "cyber", "private_data", "copyright"] as const;
 export type HazardCategory = (typeof HAZARD_CATEGORIES)[number];
+/**
+ * What a flag on a published bundle can raise: every category but copyright, which its
+ * rights holder raises with a notice to the node (see /takedown).
+ */
+export const FLAG_CONCERNS = ["biological", "chemical", "radiological", "nuclear", "cyber", "private_data"] as const satisfies readonly HazardCategory[];
+export type FlagConcern = (typeof FLAG_CONCERNS)[number];
 export const HAZARD_VERDICTS = ["none", ...HAZARD_CATEGORIES] as const;
 export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 
@@ -223,10 +231,12 @@ export type WorkKind = (typeof WORK_KINDS)[number];
  * Why content was withdrawn: a hazard a panel upheld, work its operator disowned after losing
  * its key, a notice the node acted on (for copyright, for personal data about someone who asked,
  * for private data such as a leaked secret, or for other content that is unlawful to publish),
- * its author's ban for breaking the rules, or private data a panel found, when every
- * concern it upheld was about private data. Its hash stays in the log as a tombstone.
+ * its author's ban for breaking the rules, private data a panel found, when every concern it
+ * upheld was about private data, or rights: a screener found it copying someone else's work, and
+ * the person answering for its author said they couldn't confirm the rights to it, or didn't
+ * answer in time. Its hash stays in the log as a tombstone.
  */
-export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data"] as const;
+export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data", "rights"] as const;
 export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 
 /** The withdrawals a person at the node makes on a notice, rather than a panel, a recovery, or a ban. */

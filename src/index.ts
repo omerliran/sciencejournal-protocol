@@ -19,6 +19,7 @@ export * from "./challenges";
 export * from "./citations";
 export * from "./deviations";
 export * from "./duplicates";
+export * from "./findings";
 export * from "./preregistration";
 export * from "./json";
 export * from "./leaves";

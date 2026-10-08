@@ -45,8 +45,11 @@ Verifying
                               your hazard screen; for a review, with a verdict, a reason, and a
                               significance rating per claim, and your report in evidence/report.md.
                               Add --knew-author to a review if the work told you whose it was.
-  hazard <job dir> --verdict <none|category>
-                              Send your hazard verdict on a screen or hazard_review job.
+                              With --hazard copyright, add --copied <path> for each file that holds
+                              the copy and --copied-from "<the work it copies>".
+  hazard <job dir> --verdict <none|category> [--copied <path> ... --copied-from "<work>"]
+                              Send your hazard verdict on a screen or hazard_review job; with
+                              copyright, the files that hold the copy and the work it copies.
   match <job dir>             Compare a replication_match job's results with the originals'.
   challenge-review <job dir> --verdict <upheld|rejected|could_not_judge>
                               Send your verdict on a challenge, with your report in evidence/report.md.
@@ -121,6 +124,8 @@ const OPTIONS = {
   engine: { type: "string" },
   out: { type: "string" },
   hazard: { type: "string" },
+  copied: { type: "string", multiple: true },
+  "copied-from": { type: "string" },
   "model-family": { type: "string" },
   model: { type: "string" },
   verdict: { type: "string", multiple: true },
@@ -146,8 +151,8 @@ const ACCEPTS: Record<string, string[]> = {
   job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "importance", "no-importance"],
   run: RUNNING,
   compare: [],
-  attest: [...SIGNING, "hazard", "verdict", "reason", "significance", "over-budget", "knew-author"],
-  hazard: [...SIGNING, "verdict"],
+  attest: [...SIGNING, "hazard", "copied", "copied-from", "verdict", "reason", "significance", "over-budget", "knew-author"],
+  hazard: [...SIGNING, "verdict", "copied", "copied-from"],
   match: ["node"],
   "challenge-review": [...SIGNING, "verdict"],
   "citation-check": [...SIGNING, "verdict"],
@@ -275,6 +280,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
         {
           ...credentials,
           hazard: values.hazard,
+          copied: values.copied,
+          copiedFrom: values["copied-from"],
           verdicts: values.verdict,
           reasons: values.reason,
           significance: values.significance,
@@ -286,7 +293,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     }
     case "hazard": {
       if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);
-      return hazard(resolve(target!), { ...credentials, verdict: values.verdict?.[0] }, deps);
+      return hazard(resolve(target!), { ...credentials, verdict: values.verdict?.[0], copied: values.copied, copiedFrom: values["copied-from"] }, deps);
     }
     case "challenge-review": {
       if ((values.verdict ?? []).length > 1) throw new HarnessError("Give one --verdict", 2);

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { FINDINGS_NOT_FAULT } from "../findings";
 import type { IntegrityFlags } from "../integrity";
 import { renderBrief } from "./brief";
 import type { JobRecord, ScanRecord } from "./job";
@@ -136,4 +137,13 @@ it("marks a source cited only to compare with, says where the paper cites each, 
   expect(text).toContain("| `doi:10.1/support` | `C1` | Results, line 12 | `A source` (2020), by `A. Author` |");
   expect(text).toContain("| `doi:10.1/compared` | comparison only | Discussion, line 40; Discussion, line 44 | `Another project` (2015), by `B. Author` |");
   expect(text).toContain("Judge whether the paper describes it fairly where it cites it");
+});
+
+it("asks every job that judges another's work to report findings, not fault, and spares screens", () => {
+  const briefOf = (kind: JobRecord["kind"]) =>
+    renderBrief({ record: { ...record(), kind }, jobDir: "job-abc", scan, declared: [], invocation: "sj-harness", now: new Date("2026-10-03T12:00:00Z") });
+  for (const kind of ["reproduction", "methods_review", "adversarial_review", "challenge_review", "citation_check"] as const) {
+    expect(briefOf(kind)).toContain(FINDINGS_NOT_FAULT);
+  }
+  expect(briefOf("screen")).not.toContain(FINDINGS_NOT_FAULT);
 });

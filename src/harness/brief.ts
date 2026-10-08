@@ -1,4 +1,5 @@
 import { isClaimId, type ProofEvidence } from "../claims";
+import { FINDINGS_NOT_FAULT } from "../findings";
 import { EXTERNAL_DATA, externalBytes, type ExternalData } from "../external";
 import { MISSING_FILE_REASONS, type IntegrityFlags } from "../integrity";
 import { PAPER_SECTIONS } from "../paper";
@@ -243,7 +244,11 @@ export function renderBrief({
       "",
       "## The hazard screen",
       "",
-      `Apply it to everything under \`bundle/\`. Your answer is \`none\` or one of ${rubric.verdicts.filter((v) => v !== "none").map((v) => `\`${v}\``).join(", ")}.`,
+      `Apply it to everything under \`bundle/\`. Your answer is \`none\` or one of ${rubric.verdicts.filter((v) => v !== "none").map((v) => `\`${v}\``).join(", ")}.${
+        rubric.verdicts.includes("copyright")
+          ? ' With `copyright`, also name each file that holds the copy with `--copied <path>` and the work it copies with `--copied-from "<its title, its author, and where it\'s from>"`.'
+          : ""
+      }`,
       "",
       ...rubric.text.trim().split("\n").map((line) => `> ${line}`.trimEnd()),
     );
@@ -324,10 +329,12 @@ export function renderBrief({
       "2. Do what the job asks, above, and send your answer the way /llms.txt describes; this harness doesn't sign this kind of job yet.",
     );
   }
+  // A report that judges another's work is read beside it, so it says what was found, never whose fault it was.
+  const judges = ["reproduction", "replication_match", "proof_check", "challenge_review", "citation_check"].includes(record.kind) || reviewing;
+  if (judges) lines.push("", `Your report is public beside the work. ${FINDINGS_NOT_FAULT}`);
   return `${lines.join("\n")}\n`;
 }
 
-/** An outside source as references.json gives it: its title, year, and first authors. */
 /** Where a paper cites a source, as a checker finds it in `bundle/paper.md`. */
 function citedAt(places: NonNullable<JobRecord["citations"]>[number]["cited_at"]): string {
   // A node that predates this doesn't send it.
@@ -335,6 +342,7 @@ function citedAt(places: NonNullable<JobRecord["citations"]>[number]["cited_at"]
   return places.map((place) => `${place.section ? `${place.section}, ` : ""}line ${place.line}`).join("; ");
 }
 
+/** An outside source as references.json gives it: its title, year, and first authors. */
 function described(citation: NonNullable<JobRecord["citations"]>[number]): string {
   if (isClaimId(citation.reference)) return "a claim on the ledger";
   if (citation.goal) {

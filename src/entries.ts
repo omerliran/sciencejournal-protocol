@@ -174,6 +174,31 @@ export type BundleEntry = z.infer<typeof BundleEntrySchema>;
 
 const GlobalClaimIdSchema = z.string().regex(/^claim:[0-9a-f]{64}$/, "Expected a global claim ID (claim:<sha256 hex>)");
 
+/** The most a copyright finding's `source` may say. */
+export const COPYRIGHT_SOURCE_CHARS = 1000;
+
+/**
+ * Where a screener found a copy of someone else's work with nothing showing it may be shared
+ * (the hazard rubric's third question): the bundle's files that hold it, and the work they copy,
+ * in the screener's words. It goes with a "copyright" hazard answer and no other; the node shows
+ * it to the person asked to confirm the rights.
+ */
+export const CopyrightFindingSchema = z.strictObject({
+  paths: z.array(boundedText(500)).min(1).max(20),
+  source: signedText(COPYRIGHT_SOURCE_CHARS),
+});
+export type CopyrightFinding = z.infer<typeof CopyrightFindingSchema>;
+
+/** Checks that a copyright finding comes with a "copyright" answer, and only with one. */
+export function requireFindingWithCopyright(answer: string | undefined, finding: CopyrightFinding | undefined, field: string, ctx: z.RefinementCtx) {
+  if (answer === "copyright" && finding === undefined) {
+    ctx.addIssue({ code: "custom", path: ["copyright"], message: `With "${field}": "copyright", name the files and the work they copy as "copyright": {"paths": [...], "source": "..."}` });
+  }
+  if (answer !== "copyright" && finding !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["copyright"], message: `Give "copyright" only with "${field}": "copyright"` });
+  }
+}
+
 /**
  * A verifier's signed verdicts on claims from one bundle. `evidence` is the digest of the
  * files that back the verdicts (code, outputs, a report), stored next to the log. `hazard` is
@@ -197,6 +222,8 @@ export const AttestationEntrySchema = z
     model: ModelNameSchema.optional(),
     harness: boundedText(200),
     hazard: z.enum(HAZARD_VERDICTS).optional(),
+    /** With a "copyright" hazard answer, the files that copy someone else's work and the work they copy. */
+    copyright: CopyrightFindingSchema.optional(),
     /**
      * The work took more than the bundle declared, so the verifier stopped. If two
      * organizations say so, the author pays again and they are paid for their time.
@@ -211,6 +238,7 @@ export const AttestationEntrySchema = z
     sig: SignatureSchema,
   })
   .superRefine((entry, ctx) => {
+    requireFindingWithCopyright(entry.hazard, entry.copyright, "hazard", ctx);
     // Each job has its own verdicts: a reproduction can't come back "matched".
     const allowed: readonly string[] = ATTESTATION_JOBS[entry.job];
     for (const [claim, verdict] of Object.entries(entry.claims)) {
