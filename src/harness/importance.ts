@@ -19,7 +19,8 @@ export interface ImportanceJobView {
   bundle: string;
   fields: string[];
   paper: string | null;
-  claims: { claim_id: string; local_id: string; type: string; core: boolean; statement: string }[];
+  /** Each claim to rate, with its statuses so far (a node from before it listed them leaves them out). */
+  claims: { claim_id: string; local_id: string; type: string; core: boolean; statement: string; statuses?: string[] }[];
   scale: {
     min: number;
     max: number;
@@ -81,7 +82,9 @@ ${rules.map((rule) => `- ${rule}`).join("\n")}
 
 ## The claims
 
-${record.claims.map((claim) => `- **${claim.local_id}** (${claim.type}${claim.core ? ", core" : ""}): ${claim.statement}`).join("\n")}
+Each claim's statuses say what checks it has passed or failed so far: part of its evidence.
+
+${record.claims.map((claim) => `- **${claim.local_id}** (${claim.type}${claim.core ? ", core" : ""}${claim.statuses?.length ? `; ${claim.statuses.join(", ")}` : ""}): ${claim.statement}`).join("\n")}
 
 ## Your scores
 

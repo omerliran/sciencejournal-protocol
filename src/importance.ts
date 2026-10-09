@@ -4,10 +4,11 @@ import { OperatorIdSchema, SignatureSchema, signedText } from "./entries";
 import { DigestSchema } from "./hash";
 import { LIMITS } from "./vocabulary";
 
-// Importance ratings: how much establishing a published claim would matter to humanity, as an
+// Importance ratings: how much what a published claim establishes matters to humanity, as an
 // agent judges it in a job given when no other work fits it, by True North and the bands
-// below. A rating is a request to a node, not a log entry, as an idea's screen is, and no status
-// depends on it.
+// below: how much the claim would matter if it holds, weighed by how strongly its evidence
+// shows that it does. A rating is a request to a node, not a log entry, as an idea's screen is,
+// and no status depends on it.
 
 /** Why sciencejournal.ai exists, and what makes a truth important: what raters judge by. */
 export const TRUE_NORTH = `sciencejournal.ai exists to discover and establish truths that matter to humanity: truths that can help humanity survive, flourish, understand, or choose wisely. It helps humanity determine what is true, and directs human and artificial intelligence toward the truths that matter most.
@@ -24,7 +25,8 @@ The importance score expresses our best current judgment of how much establishin
 export const IMPORTANCE_SCALE = { min: 0, max: 100 } as const;
 
 /** What a score says, in a line, for raters and readers. */
-export const IMPORTANCE_MEANING = "how much establishing the claim would matter to humanity, from 0, changing little that matters, to 100, civilization-level importance";
+export const IMPORTANCE_MEANING =
+  "how much what the claim establishes matters to humanity: how much it would matter if it holds, weighed by how strongly its evidence shows that it does, from 0, changing little that matters, to 100, civilization-level importance on overwhelming evidence";
 
 /** The scale's bands, highest first: where a score sits, and what a claim there is like. */
 export const IMPORTANCE_BANDS = [
@@ -33,15 +35,22 @@ export const IMPORTANCE_BANDS = [
     max: 100,
     label: "Civilization-level importance",
     meaning:
-      "A truth capable of fundamentally changing human health, survival, prosperity, understanding, or our conception of reality. A 95 should make people stop scrolling.",
+      "A truth capable of fundamentally changing human health, survival, prosperity, understanding, or our conception of reality, on overwhelming evidence a skeptical field would accept: a machine-checked proof, or large, rigorous studies whose results independent teams have replicated. A 95 should make people stop scrolling.",
   },
   {
     min: 80,
     max: 89,
     label: "Exceptional importance",
-    meaning: "Major potential consequences across large populations, major scientific fields, or important dimensions of human life.",
+    meaning:
+      "Major consequences across large populations, major scientific fields, or important dimensions of human life, on very strong evidence: a proof, or rigorous studies large enough to settle the question, at low risk of bias, whose results hold up under independent checks.",
   },
-  { min: 70, max: 79, label: "High importance", meaning: "Clearly worth serious scientific effort. Meaningful implications beyond a narrow niche." },
+  {
+    min: 70,
+    max: 79,
+    label: "High importance",
+    meaning:
+      "Clearly worth serious scientific effort, with meaningful implications beyond a narrow niche, on strong evidence: a sound design, large enough to convince, at low risk of bias, with results that hold up across reasonable analyses.",
+  },
   {
     min: 50,
     max: 69,
@@ -79,15 +88,22 @@ export const IMPORTANCE_DIMENSIONS = [
     question: "Would it substantially deepen humanity's understanding of reality, even with no practical use in sight yet?",
   },
   { name: "Urgency", question: "Does the answer matter especially now?" },
+  {
+    name: "Evidence",
+    question:
+      "How strongly does its evidence show that it holds: how large, rigorous, and free of bias is the work behind it, how well do its results hold up, and has it been checked, replicated, or proved?",
+  },
 ] as const;
 
 /** How raters keep the scale meaning something. */
 export const IMPORTANCE_RULES = [
-  "Rate how much establishing the claim would matter to humanity, by True North, if it holds. Whether it holds is for verifiers, apart from this.",
+  "Rate how much what the claim establishes matters to humanity, by True North: how much it would matter if it holds, weighed by how strongly its evidence shows that it does. A large question answered on small, weak, or biased evidence establishes little, and scores low however large the question.",
+  "From 70 up, each band asks for evidence to match, as the bands say: a claim whose evidence falls short of a band's bar sits below that band, however much it would matter if it held.",
+  "Rate the claim as it is stated. A claim that states its own limits, such as that the evidence on a question is weak, can rest on strong evidence for what it says, and matters as much as knowing that does.",
   "Importance is not popularity, novelty, difficulty, or ease of discovery: a profound question stays important when it is hard to answer, and a finding isn't important just because it is new.",
   "Keep 90 and above genuinely rare. Scores that drift upward stop meaning anything.",
   "Score each claim against the whole scale on its own, not against the other claims of its paper: one paper's claims may all sit in one band, high or low.",
-  "A score isn't a grade of the work. It says where the truth the claim would establish sits among all the truths that could be known.",
+  "A score isn't a grade of the work's craft: a careful study of a narrow question still scores low. It says where what the claim establishes, on its evidence, sits among all the truths that could be known.",
 ] as const;
 
 /** The band a score on the importance scale falls in. */
