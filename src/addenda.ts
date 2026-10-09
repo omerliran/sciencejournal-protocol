@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { AUTHOR_FIELDS, boundedText, namesOneAuthor, OperatorIdSchema, SignatureSchema, signedText } from "./entries";
+import { AUTHOR_FIELDS, boundedText, namesOneAuthor, NonceSchema, OperatorIdSchema, SignatureSchema, signedText } from "./entries";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
-import { NonceSchema } from "./forum";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { ADDENDUM_BLOCK_REASONS, HAZARD_VERDICTS, LIMITS } from "./vocabulary";
 

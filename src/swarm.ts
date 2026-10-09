@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { ObserverIdSchema } from "./fieldwork";
-import { NonceSchema, PostIdSchema, ThreadIdSchema } from "./forum";
+import { PostIdSchema, ThreadIdSchema } from "./forum";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { FieldSchema } from "./manifest";
 import { leanTokens, THEOREM_NAMES } from "./proofs";

@@ -248,7 +248,7 @@ export function renderBrief({
         rubric.verdicts.includes("copyright")
           ? ' With `copyright`, also name each file that holds the copy with `--copied <path>` and the work it copies with `--copied-from "<its title, its author, and where it\'s from>"`.'
           : ""
-      }`,
+      }${rubric.verdicts.includes("csam") ? " Once it sends `csam`, the harness deletes this job's folder, keeping only a receipt of what you sent." : ""}`,
       "",
       ...rubric.text.trim().split("\n").map((line) => `> ${line}`.trimEnd()),
     );

@@ -141,6 +141,12 @@ export const boundedText = (max: number) => z.string().max(max).regex(/\S/, "Mus
 export const signedText = (max: number) =>
   boundedText(max).refine((text) => text === text.trim(), "Must not start or end with whitespace");
 
+/**
+ * 16 random bytes a writer adds to words the log keeps only the digest of. Without them short
+ * words a node removed could be recovered by guessing until their digest matched the log's.
+ */
+export const NonceSchema = z.string().regex(/^[0-9a-f]{32}$/, "Expected 16 random bytes as 32 lowercase hex digits");
+
 /** A signed title: one line of signed text. */
 export const signedTitle = (max: number) =>
   signedText(max).refine((title) => !/[\n\r]/.test(title), "Must be one line");
@@ -179,20 +185,32 @@ export const COPYRIGHT_SOURCE_CHARS = 1000;
 
 /**
  * Where a screener found a copy of someone else's work with nothing showing it may be shared
- * (the hazard rubric's third question): the bundle's files that hold it, and the work they copy,
- * in the screener's words. It goes with a "copyright" hazard answer and no other; the node shows
- * it to the person asked to confirm the rights.
+ * (the hazard rubric's fourth question): the bundle's files that hold it, the work they copy in
+ * the screener's words, and a nonce. It goes with a "copyright" hazard answer and no other. The
+ * screener's signed entry names only its digest (`copyrightFindingDigest`) and the finding goes
+ * beside it, so the log keeps no words of the screener's: the node keeps them and shows them to
+ * the person asked to confirm the rights.
  */
 export const CopyrightFindingSchema = z.strictObject({
   paths: z.array(boundedText(500)).min(1).max(20),
   source: signedText(COPYRIGHT_SOURCE_CHARS),
+  nonce: NonceSchema,
 });
 export type CopyrightFinding = z.infer<typeof CopyrightFindingSchema>;
 
-/** Checks that a copyright finding comes with a "copyright" answer, and only with one. */
-export function requireFindingWithCopyright(answer: string | undefined, finding: CopyrightFinding | undefined, field: string, ctx: z.RefinementCtx) {
+/** The digest a screener's entry names for its copyright finding: the finding's canonical JSON. */
+export function copyrightFindingDigest(finding: CopyrightFinding): Digest {
+  return canonicalDigest(finding);
+}
+
+/** Checks that a copyright finding's digest comes with a "copyright" answer, and only with one. */
+export function requireFindingWithCopyright(answer: string | undefined, finding: Digest | undefined, field: string, ctx: z.RefinementCtx) {
   if (answer === "copyright" && finding === undefined) {
-    ctx.addIssue({ code: "custom", path: ["copyright"], message: `With "${field}": "copyright", name the files and the work they copy as "copyright": {"paths": [...], "source": "..."}` });
+    ctx.addIssue({
+      code: "custom",
+      path: ["copyright"],
+      message: `With "${field}": "copyright", name your finding's digest as "copyright" and send the finding, {"paths": [...], "source": "...", "nonce": "..."}, beside the entry`,
+    });
   }
   if (answer !== "copyright" && finding !== undefined) {
     ctx.addIssue({ code: "custom", path: ["copyright"], message: `Give "copyright" only with "${field}": "copyright"` });
@@ -222,8 +240,8 @@ export const AttestationEntrySchema = z
     model: ModelNameSchema.optional(),
     harness: boundedText(200),
     hazard: z.enum(HAZARD_VERDICTS).optional(),
-    /** With a "copyright" hazard answer, the files that copy someone else's work and the work they copy. */
-    copyright: CopyrightFindingSchema.optional(),
+    /** With a "copyright" hazard answer, the digest of the finding sent beside it: the files that copy someone else's work and the work they copy. */
+    copyright: DigestSchema.optional(),
     /**
      * The work took more than the bundle declared, so the verifier stopped. If two
      * organizations say so, the author pays again and they are paid for their time.

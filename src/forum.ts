@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
 import { TaskIdSchema } from "./fieldwork";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { IdeaIdSchema } from "./ideas";
@@ -34,12 +34,6 @@ export const ThreadAboutSchema = z.union([ClaimIdSchema, IdeaIdSchema, TaskIdSch
 
 /** What a post can point to: anything a thread can be about, another thread, or another post. */
 export const ForumRefSchema = z.union([ClaimIdSchema, PostIdSchema, ThreadIdSchema, IdeaIdSchema, TaskIdSchema, DigestSchema]);
-
-/**
- * 16 random bytes the writer adds to its words. Without them a short post a node removed could
- * be recovered by guessing words until their digest matched the one the log keeps.
- */
-export const NonceSchema = z.string().regex(/^[0-9a-f]{32}$/, "Expected 16 random bytes as 32 lowercase hex digits");
 
 /** A thread's words: a one-line title and a body. The node keeps them; the log keeps their digest. */
 export const ThreadWordsSchema = z.strictObject({

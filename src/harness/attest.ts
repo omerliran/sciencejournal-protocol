@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BundleLayoutError, digestEvidence } from "../bundle";
 import { isClaimId } from "../claims";
-import { COPYRIGHT_SOURCE_CHARS } from "../entries";
+import { COPYRIGHT_SOURCE_CHARS, copyrightFindingDigest, type CopyrightFinding } from "../entries";
 import {
   ATTESTATION_JOBS,
   CHALLENGE_VERDICTS,
@@ -126,13 +128,14 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     evidence: evidence.digest,
     harness: HARNESS,
     ...(job === "reproduction" && { hazard: options.hazard }),
-    ...(finding && { copyright: finding }),
+    ...(finding && { copyright: copyrightFindingDigest(finding) }),
     ...(overBudget && { over_budget: true as const }),
     ...(reviewing && options.knewAuthor && { knew_author: true as const }),
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
-  const response = await client.post<{ attestation: number }>("/api/v1/attestations", { entry, evidence: { files } });
-  await writeJsonFile(join(jobDir, "attestation.json"), { sent_at: deps.now().toISOString(), entry, response });
+  const response = await client.post<{ attestation: number }>("/api/v1/attestations", { entry, evidence: { files }, ...(finding && { copyright: finding }) });
+  const receipt = { sent_at: deps.now().toISOString(), entry, ...(finding && { copyright: finding }), response };
+  await writeJsonFile(join(jobDir, "attestation.json"), receipt);
 
   for (const claim of claims) {
     deps.print(`  ${claim.local_id}: ${claim.verdict}${claim.significance ? `, significance ${claim.significance}` : ""}`);
@@ -146,7 +149,24 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
         ? " Reviews stay sealed until a bundle's three are in, so that entry is a commitment the log opens then."
         : "";
   deps.print(`Attested: the log holds it at entry ${response.attestation}.${sealed}`);
+  if (options.hazard === "csam") await forget(jobDir, "attestation.json", receipt, deps);
   return 0;
+}
+
+/**
+ * Deletes a job's folder once its verifier has answered that the work holds child sexual abuse
+ * material, as the rubric asks, keeping only the receipt of what it sent: no copy of the work,
+ * its runs, or the evidence stays on the verifier's computer.
+ */
+async function forget(jobDir: string, receipt: string, sent: unknown, deps: Deps) {
+  try {
+    await rm(jobDir, { recursive: true, force: true });
+  } catch {
+    deps.print(`The harness couldn't delete ${jobDir}: delete it yourself, since the rubric asks you to keep no copy of this work.`);
+    return;
+  }
+  await writeJsonFile(join(jobDir, receipt), sent);
+  deps.print(`Deleted your copy of the work, its runs, and your evidence, as the rubric asks. ${join(jobDir, receipt)} keeps what you sent.`);
 }
 
 /** The verdict on each claim the job asks about: the stored proposals, with the verifier's changes. */
@@ -287,7 +307,12 @@ export interface HazardOptions extends Credentials {
  * among the job's, and the work they copy, both shown to the person asked to confirm the rights.
  * Refused with any other answer.
  */
-function copyrightFinding(record: JobRecord, answer: string | undefined, options: { copied?: string[]; copiedFrom?: string }, flag: string) {
+function copyrightFinding(
+  record: JobRecord,
+  answer: string | undefined,
+  options: { copied?: string[]; copiedFrom?: string },
+  flag: string,
+): CopyrightFinding | undefined {
   const copiedFrom = options.copiedFrom?.trim();
   if (answer !== "copyright") {
     if (options.copied?.length || copiedFrom) throw new HarnessError(`--copied and --copied-from go only with ${flag} copyright.`);
@@ -301,7 +326,8 @@ function copyrightFinding(record: JobRecord, answer: string | undefined, options
   const missing = options.copied.filter((path) => !Object.hasOwn(record.files, path));
   if (missing.length > 0) throw new HarnessError(`--copied names files the bundle doesn't hold: ${missing.join(", ")}. Give paths as they are under bundle/.`);
   if (copiedFrom.length > COPYRIGHT_SOURCE_CHARS) throw new HarnessError(`Keep --copied-from to ${COPYRIGHT_SOURCE_CHARS.toLocaleString("en-US")} characters.`);
-  return { paths: [...new Set(options.copied)], source: copiedFrom };
+  // The nonce keeps the words from being guessed back from the digest the log keeps.
+  return { paths: [...new Set(options.copied)], source: copiedFrom, nonce: randomBytes(16).toString("hex") };
 }
 
 /** Signs and sends the verifier's hazard verdict for a screen or a hazard review. */
@@ -320,11 +346,13 @@ export async function hazard(jobDir: string, options: HazardOptions, deps: Deps)
     reviewer: operator.id,
     bundle: record.bundle,
     verdict: options.verdict,
-    ...(finding && { copyright: finding }),
+    ...(finding && { copyright: copyrightFindingDigest(finding) }),
   });
-  const response = await client.post<{ review: number }>("/api/v1/hazard-reviews", entry);
-  await writeJsonFile(join(jobDir, "hazard-review.json"), { sent_at: deps.now().toISOString(), entry, response });
+  const response = await client.post<{ review: number }>("/api/v1/hazard-reviews", { entry, ...(finding && { copyright: finding }) });
+  const receipt = { sent_at: deps.now().toISOString(), entry, ...(finding && { copyright: finding }), response };
+  await writeJsonFile(join(jobDir, "hazard-review.json"), receipt);
   deps.print(`Sent your verdict, ${options.verdict}: the log holds it sealed at entry ${response.review} until the round closes or the panel decides.`);
+  if (options.verdict === "csam") await forget(jobDir, "hazard-review.json", receipt, deps);
   return 0;
 }
 

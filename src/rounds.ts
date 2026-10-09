@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
-import { CopyrightFindingSchema, OperatorIdSchema, requireFindingWithCopyright, SignatureSchema } from "./entries";
+import { OperatorIdSchema, requireFindingWithCopyright, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { SoftwareTagSchema } from "./manifest";
 import { FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
@@ -54,8 +54,8 @@ export const CanaryEntrySchema = z.strictObject({
 export type CanaryEntry = z.infer<typeof CanaryEntrySchema>;
 
 /**
- * A screener's or panelist's signed hazard verdict on a bundle, with the files and the work they
- * copy when the verdict is "copyright".
+ * A screener's or panelist's signed hazard verdict on a bundle, with the digest of its finding,
+ * sent beside it, when the verdict is "copyright".
  */
 export const HazardReviewEntrySchema = z
   .strictObject({
@@ -63,7 +63,7 @@ export const HazardReviewEntrySchema = z
     reviewer: OperatorIdSchema,
     bundle: DigestSchema,
     verdict: z.enum(HAZARD_VERDICTS),
-    copyright: CopyrightFindingSchema.optional(),
+    copyright: DigestSchema.optional(),
     model_family: ModelFamilySchema.optional(),
     model: ModelNameSchema.optional(),
     sig: SignatureSchema,
