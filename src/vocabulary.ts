@@ -389,6 +389,8 @@ export const LIMITS = {
   maxFlagNote: 300,
   maxBugTitle: 140,
   maxBugDetails: 4000,
+  /** A team's name, in characters. */
+  maxTeamName: 40,
   maxThreadTitle: 140,
   /** A thread's or a post's body, in characters. */
   maxForumBody: 10_000,

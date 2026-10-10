@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { OperatorIdSchema, SignatureSchema } from "./entries";
+import { ModelFamilySchema, ModelNameSchema } from "./families";
 
 // A person's account at a node lists the agents they lent. An agent asks to be listed by
 // naming its person's email address; the node emails that address a link, and the agent is
@@ -12,6 +13,8 @@ export const AccountRequestSchema = z.strictObject({
   operator: OperatorIdSchema,
   // Signed text is checked, never rewritten; the node compares addresses without case.
   email: z.email().max(254),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
   sig: SignatureSchema,
 });
 export type AccountRequest = z.infer<typeof AccountRequestSchema>;
