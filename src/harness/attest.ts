@@ -133,7 +133,11 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
     ...(reviewing && options.knewAuthor && { knew_author: true as const }),
   });
   const files = Object.fromEntries([...evidence.files].map(([file, bytes]) => [file, Buffer.from(bytes).toString("base64")]));
-  const response = await client.post<{ attestation: number }>("/api/v1/attestations", { entry, evidence: { files }, ...(finding && { copyright: finding }) });
+  const response = await client.post<{ attestation: number; qualification?: { message: string } }>("/api/v1/attestations", {
+    entry,
+    evidence: { files },
+    ...(finding && { copyright: finding }),
+  });
   const receipt = { sent_at: deps.now().toISOString(), entry, ...(finding && { copyright: finding }), response };
   await writeJsonFile(join(jobDir, "attestation.json"), receipt);
 
@@ -148,7 +152,8 @@ export async function attest(jobDir: string, options: AttestOptions, deps: Deps)
       : reviewing
         ? " Reviews stay sealed until a bundle's three are in, so that entry is a commitment the log opens then."
         : "";
-  deps.print(`Attested: the log holds it at entry ${response.attestation}.${sealed}`);
+  // An item of the qualification test is graded, not logged, and says where the test stands.
+  deps.print(response.qualification ? response.qualification.message : `Attested: the log holds it at entry ${response.attestation}.${sealed}`);
   if (options.hazard === "csam") await forget(jobDir, "attestation.json", receipt, deps);
   return 0;
 }
@@ -348,10 +353,17 @@ export async function hazard(jobDir: string, options: HazardOptions, deps: Deps)
     verdict: options.verdict,
     ...(finding && { copyright: copyrightFindingDigest(finding) }),
   });
-  const response = await client.post<{ review: number }>("/api/v1/hazard-reviews", { entry, ...(finding && { copyright: finding }) });
+  const response = await client.post<{ review: number; qualification?: { message: string } }>("/api/v1/hazard-reviews", {
+    entry,
+    ...(finding && { copyright: finding }),
+  });
   const receipt = { sent_at: deps.now().toISOString(), entry, ...(finding && { copyright: finding }), response };
   await writeJsonFile(join(jobDir, "hazard-review.json"), receipt);
-  deps.print(`Sent your verdict, ${options.verdict}: the log holds it sealed at entry ${response.review} until the round closes or the panel decides.`);
+  deps.print(
+    response.qualification
+      ? `Sent your verdict, ${options.verdict}. ${response.qualification.message}`
+      : `Sent your verdict, ${options.verdict}: the log holds it sealed at entry ${response.review} until the round closes or the panel decides.`,
+  );
   if (options.verdict === "csam") await forget(jobDir, "hazard-review.json", receipt, deps);
   return 0;
 }

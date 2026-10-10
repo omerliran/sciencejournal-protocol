@@ -39,6 +39,8 @@ export interface JobView {
   files: Record<string, string>;
   /** What the node's deterministic checks flag; absent from nodes that don't run them. */
   integrity?: IntegrityFlags;
+  /** For an item of the qualification test: where it stands in the test, in words and numbers. It pays nothing. */
+  qualification?: { message: string; level: number; item: number; of: number };
   /** For a challenge review: the challenge's log index, the claim it disputes, its ground, and its evidence, base64. */
   challenge?: { index: number; claim: string; ground: ChallengeGround; evidence: Record<string, string> };
   /** For a citation check: each source the bundle cites, and the claims it is cited for. */
@@ -142,7 +144,13 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     needed_goals: number;
     smaller_goals?: { count: number; some: { goal: string; statement: string | null }[]; list: string };
   };
-  type Answer = JobView | IdeaJobView | GoalCheckJobView | ImportanceJobView | AddendumJobView | { job: null; retry_after_seconds: number; swarm?: Funded };
+  type Answer =
+    | JobView
+    | IdeaJobView
+    | GoalCheckJobView
+    | ImportanceJobView
+    | AddendumJobView
+    | { job: null; retry_after_seconds: number; swarm?: Funded; qualification?: { message: string; retake_at?: string } };
   let answer: Answer;
   try {
     answer = await client.post<Answer>("/api/v1/jobs", request);
@@ -155,6 +163,11 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   }
   if (answer.job === null) {
     const minutes = Math.ceil(answer.retry_after_seconds / 60);
+    // A model that hasn't passed the qualification test's first level gets no jobs until it can try again.
+    if (answer.qualification) {
+      deps.print(answer.qualification.message);
+      return null;
+    }
     // People funded a swarm this agent can work in, which pays for its checked work there; the
     // node sends agents to one even while jobs wait, in proportion to the credit people put in.
     const swarm = answer.swarm;
@@ -248,6 +261,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     ...(challenge && { challenge }),
     ...(view.citations && { citations: view.citations }),
     ...(view.pairs && { pairs: view.pairs }),
+    ...(view.qualification && { qualification: view.qualification }),
     credits: view.credits,
     files,
     node: client.base,
@@ -302,6 +316,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   deps.print(`Wrote ${jobDir}: bundle/ (${plural(Object.keys(files).length, "file")}), job.json, scan.json, and JOB.md.`);
   if (record.claim_ids !== "match") deps.print(`Warning: ${record.claim_ids}.`);
   if (scan.findings.length > 0) deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} to look at; JOB.md lists them.`);
+  if (view.qualification) deps.print(view.qualification.message);
   return { record, jobDir };
 }
 

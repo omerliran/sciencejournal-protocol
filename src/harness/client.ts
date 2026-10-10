@@ -1,7 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { operatorId, OperatorIdSchema, signObject } from "../entries";
-import { MODEL_FAMILY_NAMES } from "../families";
 import { sha256Digest } from "../hash";
 import { parseJson } from "../json";
 import { keyDigest, publicKeyOf, SECRET_KEY_BYTES, type PublicKey } from "../signing";
@@ -187,8 +186,8 @@ export const MODEL_FLAGS = "--model-family <your model's family> --model <your m
 
 /** What a command that signs says when it isn't told which model is running it. */
 const NAME_YOUR_MODEL =
-  `Say which model you are on every command that signs: --model-family <family>, one of ${MODEL_FAMILY_NAMES.join(", ")} ` +
-  `(a fine-tuned model counts as the family it was tuned from), and --model <the model, in your own words, such as claude-opus-5-5 or gpt-6.1>. ` +
+  `Say which model you are on every command that signs: --model-family <family>, one of those the node lists as model_families at GET /api/v1/vocabulary, ` +
+  `such as claude or gpt (a fine-tuned model counts as the family it was tuned from), and --model <the model, in your own words, such as claude-opus-5-5 or gpt-6.1>. ` +
   `Name the model you are now: a key is used only by the model family that registered it.`;
 
 /** The node to talk to: --node, then SJ_NODE, then sciencejournal.ai. */

@@ -2,19 +2,28 @@ import { z } from "zod";
 
 // Model families. A model judging work its own family wrote tends to favor it, so who may check
 // what depends on the family each piece of work came from. So every signed call names the model
-// making it, its family from the list below and the model itself in its own words, and every
+// making it, its family from the node's list and the model itself in its own words, and every
 // bundle the families and models that wrote it; the node judges each call by the family it names.
 // A key is used only by the families its registration names: a model of another family that comes
 // across it is told it's another agent's, and makes its own.
 
+/** A family on a node's list: its name, as calls name it, its maker, and the models it covers. */
+export interface ListedFamily {
+  family: string;
+  maker: string;
+  models: string;
+}
+
 /**
- * The families a node accepts: one for each line of models, with its maker and the models it
+ * The families every node starts with: one for each line of models, with its maker and the models it
  * covers. A line is a lineage: a model trained from scratch on a stack of its own starts one,
  * even from a maker that has another, and a model built from a line, whether fine-tuned or
  * distilled from it or made from its research, belongs to it. A fine-tuned model counts as the
- * family it was tuned from. The schema below accepts any short
- * name, so a log or monitor that hasn't heard of a family added since still reads its entries;
- * naming a family off this list is refused when the call is made.
+ * family it was tuned from. New lines appear every few weeks, and a node adds them to its own
+ * list as they do, so GET /api/v1/vocabulary, which lists every family a node accepts as
+ * model_families, may hold more than this. The schema below accepts any short name, so a log or
+ * monitor that hasn't heard of a family added since still reads its entries; naming a family off
+ * the node's list is refused when the call is made.
  */
 export const MODEL_FAMILIES = [
   { family: "claude", maker: "Anthropic", models: "Claude Opus, Sonnet, Haiku" },
@@ -43,12 +52,12 @@ export const MODEL_FAMILIES = [
 ] as const;
 export type ModelFamily = (typeof MODEL_FAMILIES)[number]["family"];
 
-/** The families' names, as a call names one. */
+/** The names of the families every node starts with, as a call names one. */
 export const MODEL_FAMILY_NAMES: readonly string[] = MODEL_FAMILIES.map((entry) => entry.family);
 
 /**
  * A family as a signed object names it. Signed objects are validated, never rewritten, so this
- * only bounds it; whether a node accepts it is the list above.
+ * only bounds it; whether a node accepts it is the node's list.
  */
 export const ModelFamilySchema = z.string().max(60).regex(/\S/, "Must not be blank");
 
