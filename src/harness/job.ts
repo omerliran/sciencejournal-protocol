@@ -10,7 +10,7 @@ import { bundleInputs, type BundleInputs } from "../results";
 import type { Capabilities } from "../rounds";
 import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
-import { JOB_KINDS, REVIEW_JOBS, type ChallengeGround, type JobKind } from "../vocabulary";
+import { JOB_KINDS, REVIEW_JOBS, type ChallengeGround, type FilterArea, type JobKind } from "../vocabulary";
 import { renderBrief, type BriefProof, type Rubric } from "./brief";
 import { NodeClient, NodeError, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
@@ -100,6 +100,22 @@ export interface JobRecord extends Omit<JobView, "files" | "downloads" | "challe
   claim_ids: string;
 }
 
+/**
+ * How many times the node has handed a job to its verifier, the first included, since when, and
+ * the areas in which content filters stopped models of the verifier's family on its work; absent from a node
+ * that doesn't say.
+ */
+export interface Handed {
+  served: number;
+  since: string;
+  filtered: FilterArea[];
+}
+
+function handedOut(answer: object): Handed | undefined {
+  const { served, assigned_at, filtered } = answer as { served?: number; assigned_at?: string; filtered?: FilterArea[] };
+  return served === undefined || assigned_at === undefined ? undefined : { served, since: assigned_at, filtered: filtered ?? [] };
+}
+
 /** Files larger than this aren't scanned for hidden content; no model reads them whole. */
 export const SCAN_LIMIT = 64 * 1024 * 1024;
 
@@ -128,7 +144,7 @@ export interface TakeJobOptions extends Credentials {
  * <dir>/<job>/bundle/, fetches and checks every large file, scans everything for hidden
  * content, and writes job.json, scan.json, and the brief, JOB.md.
  */
-export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ record: JobRecord; jobDir: string } | null> {
+export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ record: JobRecord; jobDir: string; handed?: Handed } | null> {
   const client = new NodeClient(nodeUrl(options.node, deps), deps);
   const operator = await signIn(options, client, deps);
   const request = signAs(operator, {
@@ -192,25 +208,26 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
       `The node handed you a job of a kind this harness doesn't know, ${answer.kind}. Run ${deps.invocation} update, then ask for a job again: the node hands you the same one.`,
     );
   }
+  const handed = handedOut(answer);
   if (isIdeaJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeIdeaJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
-    return { record: { kind: answer.kind } as JobRecord, jobDir };
+    return { record: { kind: answer.kind } as JobRecord, jobDir, handed };
   }
   if (isGoalCheckJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeGoalCheckJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
-    return { record: { kind: answer.kind } as JobRecord, jobDir };
+    return { record: { kind: answer.kind } as JobRecord, jobDir, handed };
   }
   if (isImportanceJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeImportanceJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
-    return { record: { kind: answer.kind } as JobRecord, jobDir };
+    return { record: { kind: answer.kind } as JobRecord, jobDir, handed };
   }
   if (isAddendumJob(answer)) {
     const jobDir = join(options.dir, jobDirectoryName(answer.job));
     await writeAddendumJob(answer, jobDir, { node: client.base, operator: operator.id }, deps);
-    return { record: { kind: answer.kind } as JobRecord, jobDir };
+    return { record: { kind: answer.kind } as JobRecord, jobDir, handed };
   }
   const view = answer;
 
@@ -317,7 +334,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
   if (record.claim_ids !== "match") deps.print(`Warning: ${record.claim_ids}.`);
   if (scan.findings.length > 0) deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} to look at; JOB.md lists them.`);
   if (view.qualification) deps.print(view.qualification.message);
-  return { record, jobDir };
+  return { record, jobDir, handed };
 }
 
 /** The kinds of job whose answer includes the verifier's hazard screen. */

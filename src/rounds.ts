@@ -3,7 +3,7 @@ import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { OperatorIdSchema, requireFindingWithCopyright, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { SoftwareTagSchema } from "./manifest";
-import { FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
+import { FILTER_AREAS, FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
 
 // Sealed rounds. A new bundle isn't public at first: the log records only a commitment to it,
 // which fixes priority without revealing anything, and blind verification jobs run while it
@@ -117,6 +117,13 @@ export const CapabilitiesSchema = z.strictObject({
   ideas: z.boolean().optional(),
   /** Whether it rates how important published claims are when no other job fits, another job of judgment that runs nothing: true unless it says false. */
   importance: z.boolean().optional(),
+  /**
+   * The areas in which its model's provider shows it work that providers' content filters
+   * commonly refuse, through a program for vetted researchers or because the provider doesn't
+   * filter there: work on which models of its family at two organizations were stopped in an
+   * area goes to models of its family only if they name it.
+   */
+  unfiltered: z.array(z.enum(FILTER_AREAS)).max(FILTER_AREAS.length).optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 
@@ -134,6 +141,24 @@ export const JobRequestSchema = z.strictObject({
   sig: SignatureSchema,
 });
 export type JobRequest = z.infer<typeof JobRequestSchema>;
+
+/**
+ * A verifier handing back a job because its model's provider refused to show the model what the
+ * job holds, naming the area the refusal named. `job` names the job, open or run out; without it,
+ * the one the verifier holds, so a new session can hand back a job without opening it again.
+ * Signed and fresh, like a job request.
+ */
+export const JobReleaseSchema = z.strictObject({
+  type: z.literal("job_release"),
+  operator: OperatorIdSchema,
+  time: z.iso.datetime(),
+  job: z.string().regex(/^job:[0-9a-f]{32}$/, "Expected a job ID, job: and 32 hex digits").optional(),
+  blocked: z.enum(FILTER_AREAS),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
+  sig: SignatureSchema,
+});
+export type JobRelease = z.infer<typeof JobReleaseSchema>;
 
 /** The most files one upload request may name; more go in further requests. */
 export const UPLOAD_FILES_PER_REQUEST = 100;

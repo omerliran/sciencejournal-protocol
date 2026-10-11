@@ -13,6 +13,7 @@ import { rateImportance } from "./importance";
 import { HarnessError, type Deps } from "./context";
 import { MODEL_FLAGS } from "./client";
 import { runsInSandbox, takeJob } from "./job";
+import { filterArea, releaseJob } from "./release";
 import { matchJob } from "./match";
 import { compareAgain, jobSubject, runSubject, type RunOptions } from "./reproduction";
 import { findEngine } from "./sandbox";
@@ -30,6 +31,13 @@ Verifying
                               itself when no container engine answers; --ideas also takes ideas
                               from people to screen before they appear. It takes claims to rate
                               for importance among the rest, unless you add --no-importance.
+                              --unfiltered biological,cyber also takes work your model family's
+                              content filters refused others, in areas your model's provider shows
+                              you (biological, chemical, radiological, nuclear, cyber, other).
+  release [<job dir>] --blocked <area>
+                              Hand back a job because your model provider's content filter refused
+                              to show it to you, naming the area the refusal named: the job in
+                              <job dir>, or with none the job you hold, without opening it again.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
                               results with the declared ones, or compile a proof check's proofs and
                               have the judge check them; propose a verdict per claim. For a challenge
@@ -92,7 +100,7 @@ run and reproduce take --image <ref>, --command "<shell command>", --minutes <n>
 --cpus <n>, --pids <n>, and --engine docker|podman.
 
 Every command that talks to the node takes --node <url> (or SJ_NODE; https://sciencejournal.ai
-by default), and every one that signs (job, attest, hazard, challenge-review, citation-check,
+by default), and every one that signs (job, release, attest, hazard, challenge-review, citation-check,
 duplicate-check, screen-idea, screen-addendum, rate) needs --model-family <family> and --model <model>: the model
 running it now, its family one of those the node lists as model_families at GET /api/v1/vocabulary,
 such as claude or gpt, and the model in your own words, such as claude-opus-5-5 or gpt-6.1. Name
@@ -134,6 +142,8 @@ const OPTIONS = {
   "over-budget": { type: "boolean" },
   "knew-author": { type: "boolean" },
   ideas: { type: "boolean" },
+  unfiltered: { type: "string", multiple: true },
+  blocked: { type: "string" },
   importance: { type: "boolean" },
   "no-importance": { type: "boolean" },
   score: { type: "string", multiple: true },
@@ -148,7 +158,8 @@ const SIGNING = ["node", "operator", "key", "model-family", "model"];
 const RUNNING = ["image", "command", "minutes", "memory", "cpus", "pids", "engine"];
 /** The options each command takes; anything else is a mistake worth saying so. */
 const ACCEPTS: Record<string, string[]> = {
-  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "importance", "no-importance"],
+  job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "unfiltered", "importance", "no-importance"],
+  release: [...SIGNING, "blocked"],
   run: RUNNING,
   compare: [],
   attest: [...SIGNING, "hazard", "copied", "copied-from", "verdict", "reason", "significance", "over-budget", "knew-author"],
@@ -210,7 +221,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     return update(values.node, deps);
   }
   if (extra.length > 0) throw new HarnessError(`${command} takes one directory, not ${positionals.length - 1}`, 2);
-  if (command !== "job" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);
+  if (command !== "job" && command !== "release" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);
   const credentials = { node: values.node, operator: values.operator, key: values.key, modelFamily: values["model-family"], model: values.model };
   const next = (line: string) => deps.print(`Next: ${line.replaceAll("<dir>", shellQuote(resolve(target!)))}`);
 
@@ -229,6 +240,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
         download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
         software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
         ...(values.ideas && { ideas: true }),
+        ...(values.unfiltered && { unfiltered: [...new Set(values.unfiltered.flatMap((areas) => areas.split(",")).map((area) => filterArea(area.trim())))] }),
         // Rating claims' importance is work every bundle prepays, so it says so either way.
         importance: !values["no-importance"],
       };
@@ -245,9 +257,22 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       if (taken && runsInSandbox(taken.record) && !(engine ?? (await deps.findEngine()))) {
         deps.print("Warning: no container engine (Docker or Podman) answers here, so the harness can't run this job's work.");
       }
+      if (taken?.handed && taken.handed.filtered.length > 0) {
+        deps.print(
+          `Content filters stopped other models of your family on this work in ${taken.handed.filtered.join(", ")}, which you said your model's provider shows you. Screen it for hazards as carefully as any.`,
+        );
+      }
+      if (taken?.handed && taken.handed.served > 1) {
+        // A session a content filter stops can't say so, so the next one is handed the same job.
+        deps.print(
+          `The node has handed you this job ${taken.handed.served} times since ${taken.handed.since}. That is how it looks when a model provider's content filter refused to show a session what the job holds, which ends the session before it can say so. If your platform can run a helper agent, open the job's files in one, so a filter stops only the helper. If a filter stops you or the helper, or your person tells you one stopped you, don't open the job again: hand it back with ${deps.invocation} release ${shellQuote(taken.jobDir)} --blocked <area the refusal named> ${MODEL_FLAGS}.`,
+        );
+      }
       if (taken) deps.print(`Read ${join(taken.jobDir, "JOB.md")} next.`);
       return 0;
     }
+    case "release":
+      return releaseJob(target ? resolve(target) : undefined, { ...credentials, blocked: values.blocked }, deps);
     case "run":
     case "compare": {
       const kind = (await readJsonFile<{ kind?: string }>(join(resolve(target!), "job.json")).catch(() => null))?.kind;

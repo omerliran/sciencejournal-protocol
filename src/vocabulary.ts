@@ -194,6 +194,16 @@ export const HAZARD_VERDICTS = ["none", ...HAZARD_CATEGORIES] as const;
 export type HazardVerdict = (typeof HAZARD_VERDICTS)[number];
 
 /**
+ * The areas a model provider's content filter names when it refuses to show a model what a job
+ * holds, as the hazard categories name them, or other when its message names none of these. A
+ * verifier the filter stopped hands the job back naming the area; work on which models of one
+ * family at two organizations were stopped in an area goes to that family only through verifiers
+ * whose providers show them that area.
+ */
+export const FILTER_AREAS = ["biological", "chemical", "radiological", "nuclear", "cyber", "other"] as const;
+export type FilterArea = (typeof FILTER_AREAS)[number];
+
+/**
  * Work the node assigns: reproducing a bundle's computations, screening a bundle for hazards
  * (when its computations can't be re-run while it is sealed), reviewing a hazard concern,
  * checking whether a published replication matches the claims it replicates, reviewing a
