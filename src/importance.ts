@@ -6,9 +6,9 @@ import { LIMITS } from "./vocabulary";
 
 // Importance ratings: how much what a published claim establishes matters to humanity, as an
 // agent judges it in a job given when no other work fits it, by True North and the bands
-// below: how much the claim would matter if it holds, weighed by how strongly its evidence
-// shows that it does. A rating is a request to a node, not a log entry, as an idea's screen is,
-// and no status depends on it.
+// below: how much the claim would matter if it holds, beyond what was known before it, weighed
+// by how strongly its evidence shows that it does. A rating is a request to a node, not a log
+// entry, as an idea's screen is, and no status depends on it.
 
 /** Why sciencejournal.ai exists, and what makes a truth important: what raters judge by. */
 export const TRUE_NORTH = `sciencejournal.ai exists to discover and establish truths that matter to humanity: truths that can help humanity survive, flourish, understand, or choose wisely. It helps humanity determine what is true, and directs human and artificial intelligence toward the truths that matter most.
@@ -17,7 +17,7 @@ We consider a truth important when knowing it could meaningfully help humanity s
 
 Importance may arise from reducing suffering, improving health or prosperity, protecting people or the planet, expanding human capability, preventing catastrophic harm, deepening our understanding of reality, or unlocking discoveries that make other important advances possible.
 
-Importance is not the same as popularity, novelty, difficulty, or ease of discovery. A profound question remains important even when it is difficult to answer. A novel finding is not necessarily important simply because it is new.
+Importance is not the same as popularity, novelty, difficulty, or ease of discovery. A profound question remains important even when it is difficult to answer. A novel finding is not necessarily important simply because it is new. Nor is a truth important to establish again once it is settled: what counts is what establishing it adds to what humanity knows, or to how surely it knows it.
 
 The importance score expresses our best current judgment of how much establishing a claim would matter to humanity. That judgment is transparent, contestable, and capable of changing as knowledge and the world change.`;
 
@@ -26,7 +26,7 @@ export const IMPORTANCE_SCALE = { min: 0, max: 100 } as const;
 
 /** What a score says, in a line, for raters and readers. */
 export const IMPORTANCE_MEANING =
-  "how much what the claim establishes matters to humanity: how much it would matter if it holds, weighed by how strongly its evidence shows that it does, from 0, changing little that matters, to 100, civilization-level importance on overwhelming evidence";
+  "how much what the claim establishes matters to humanity: how much it would matter if it holds, beyond what was already known, weighed by how strongly its evidence shows that it does, from 0, changing little that matters, to 100, civilization-level importance on overwhelming evidence";
 
 /** The scale's bands, highest first: where a score sits, and what a claim there is like. */
 export const IMPORTANCE_BANDS = [
@@ -63,13 +63,17 @@ export const IMPORTANCE_BANDS = [
     min: 0,
     max: 24,
     label: "Trivial or highly circumscribed",
-    meaning: "May be true and even novel, but establishing it changes little that matters.",
+    meaning: "May be true and even novel, but establishing it changes little that matters, or adds little to what was already known.",
   },
 ] as const;
 export type ImportanceBand = (typeof IMPORTANCE_BANDS)[number];
 
 /** What raters weigh in placing a claim among the bands, each as the question it asks. */
 export const IMPORTANCE_DIMENSIONS = [
+  {
+    name: "What it adds",
+    question: "How much does establishing it change what humanity knows, or how surely it knows it, beyond what was known before this work?",
+  },
   {
     name: "Human consequence",
     question: "How much could knowing it improve lives, reduce suffering, prevent harm, or expand what people can do?",
@@ -97,9 +101,10 @@ export const IMPORTANCE_DIMENSIONS = [
 
 /** How raters keep the scale meaning something. */
 export const IMPORTANCE_RULES = [
-  "Rate how much what the claim establishes matters to humanity, by True North: how much it would matter if it holds, weighed by how strongly its evidence shows that it does. A large question answered on small, weak, or biased evidence establishes little, and scores low however large the question.",
+  "Rate how much what the claim establishes matters to humanity, by True North: how much it would matter if it holds, beyond what was known before it, weighed by how strongly its evidence shows that it does. A large question answered on small, weak, or biased evidence establishes little, and scores low however large the question.",
   "From 70 up, each band asks for evidence to match, as the bands say: a claim whose evidence falls short of a band's bar sits below that band, however much it would matter if it held.",
   "Rate the claim as it is stated. A claim that states its own limits, such as that the evidence on a question is weak, can rest on strong evidence for what it says, and matters as much as knowing that does.",
+  "Rate what establishing the claim adds, not what the truth it states is worth. A truth settled before the work was first submitted adds little when established again, however much it matters: showing today that the earth goes around the sun would score near the bottom. Settling what was open, contested, or resting on weak evidence can add a great deal, whether by a new finding, a replication, or a proof of what was only believed. Judge against what was known then, so later work that builds on it never lowers its score.",
   "Importance is not popularity, novelty, difficulty, or ease of discovery: a profound question stays important when it is hard to answer, and a finding isn't important just because it is new.",
   "Keep 90 and above genuinely rare. Scores that drift upward stop meaning anything.",
   "Score each claim against the whole scale on its own, not against the other claims of its paper: one paper's claims may all sit in one band, high or low.",
