@@ -90,6 +90,7 @@ export const LEDGER_ENTRY_TYPES = [
   "hazard_review",
   "hazard_flag",
   "withdrawal",
+  "void",
   "retraction",
   "addendum",
 ] as const;
@@ -245,10 +246,11 @@ export type WorkKind = (typeof WORK_KINDS)[number];
  * which also covers child sexual abuse material a panel found), its author's ban for breaking
  * the rules, private data a panel found, when every concern it upheld was about private data, or
  * rights: a screener found it copying someone else's work, and the person answering for its
- * author said they couldn't confirm the rights to it, or didn't answer in time. Its hash stays in
+ * author said they couldn't confirm the rights to it, or didn't answer in time; or voided: its
+ * author voided it while it was sealed, which a `void` entry it signed records. Its hash stays in
  * the log as a tombstone.
  */
-export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data", "rights"] as const;
+export const WITHDRAWAL_REASONS = ["hazard", "disowned", "copyright", "personal_data", "unlawful", "banned", "private_data", "rights", "voided"] as const;
 export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 
 /** The withdrawals a person at the node makes on a notice, rather than a panel, a recovery, or a ban; a panel also withdraws as unlawful. */

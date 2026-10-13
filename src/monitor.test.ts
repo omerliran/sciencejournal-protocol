@@ -70,6 +70,13 @@ const addendum = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, a
     keys.secretKey,
   );
 
+/** `author` voiding its bundle `name`, sealed at entry `sealed`, signed with `keys`. */
+const voidEntry = (keys: { secretKey: Uint8Array }, author: string, name: string, sealed: number) =>
+  signObject(
+    { type: "void" as const, author, bundle: sha256Digest(name), sealed, model_family: "family-a", model: "test-model" },
+    keys.secretKey,
+  );
+
 const bundleEntry = (keys: Keys, name: string) =>
   signObject({ type: "bundle" as const, bundle: sha256Digest(name) }, keys.secretKey);
 
@@ -251,6 +258,12 @@ async function realisticLog(): Promise<MemoryLog> {
   await log.append({
     entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest("bundle 2"), reason: "hazard" as const, sealed: withdrawn.index }, log.secretKey),
   });
+  // Alice voids a bundle of hers while it is sealed, and the log closes its commitment as voided.
+  const voided = await seal(log, bundleEntry(alice, "bundle 4"));
+  await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "bundle 4", voided.index) });
+  await log.append({
+    entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest("bundle 4"), reason: "voided" as const, sealed: voided.index }, log.secretKey),
+  });
   await log.append({
     operator: aliceId,
     entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: aliceId, key: aliceNext.publicKey, since: log.size }, log.secretKey),
@@ -348,7 +361,7 @@ describe("monitorLog", () => {
       types: {
         key: 6,
         identity: 7,
-        sealed: 7,
+        sealed: 8,
         key_rotation: 1,
         bundle: 2,
         attestation: 1,
@@ -359,7 +372,8 @@ describe("monitorLog", () => {
         idea: 1,
         hazard_flag: 1,
         canary: 1,
-        withdrawal: 2,
+        withdrawal: 3,
+        void: 1,
         retraction: 2,
         addendum: 1,
         key_recovery: 3,
@@ -381,6 +395,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.identity,
         NOT_CHECKED.canary,
         NOT_CHECKED.withdrawal,
+        NOT_CHECKED.void,
         NOT_CHECKED.retraction,
         NOT_CHECKED.addendum,
         NOT_CHECKED.recovery,
@@ -1043,6 +1058,41 @@ describe("monitorLog", () => {
     expect(report.problems).toEqual([
       { check: "signer", index: 0, reason: `The swarm_backers entry lists ${adaId}, who has no passkey on the log before it` },
       expect.objectContaining({ check: "signature", index: 3 }),
+    ]);
+  });
+
+  it("closes a commitment its author voided only as voided, naming the bundle the void named, and never opens it", async () => {
+    const log = new MemoryLog();
+    await log.append({ operator: aliceId, entry: keyEntry(alice) });
+    await log.append(invited(log, aliceId));
+    const withdrawal = (name: string, reason: "hazard" | "voided", sealed: number) =>
+      ({ entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest(name), reason, sealed }, log.secretKey) });
+    const second = bundleEntry(alice, "second");
+    const [first, secondSeal, third, fourth] = [
+      await seal(log, bundleEntry(alice, "first")),
+      await seal(log, second),
+      await seal(log, bundleEntry(alice, "third")),
+      await seal(log, bundleEntry(alice, "fourth")),
+    ];
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "first", first.index) });
+    await log.append(withdrawal("first", "hazard", first.index));
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "second", secondSeal.index) });
+    await log.append(bundleLeaf(aliceId, second, secondSeal));
+    await log.append(withdrawal("third", "voided", third.index));
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "first", first.index) });
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "fourth", fourth.index) });
+    await log.append(withdrawal("another", "voided", fourth.index));
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "withdrawal", index: 7, reason: "Its author voided entry 2 at entry 6, so the withdrawal closing it gives the reason voided, not hazard" },
+      { check: "seal", index: 9, reason: "Its author voided entry 3 at entry 8, so it never opens" },
+      { check: "withdrawal", index: 10, reason: "The withdrawal gives the reason voided, but no void by its author names entry 4" },
+      { check: "seal", index: 11, reason: "The void names entry 2, which holds no commitment waiting to be opened" },
+      {
+        check: "withdrawal",
+        index: 13,
+        reason: `The void at entry 12 names ${sha256Digest("fourth")}, but the withdrawal closing entry 5 names ${sha256Digest("another")}`,
+      },
     ]);
   });
 

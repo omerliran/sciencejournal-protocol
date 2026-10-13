@@ -100,6 +100,22 @@ export const WithdrawalEntrySchema = z.strictObject({
 export type WithdrawalEntry = z.infer<typeof WithdrawalEntrySchema>;
 
 /**
+ * An author voiding its own bundle while it is sealed, so it never opens: `sealed` is the index of
+ * the commitment that holds it, and `bundle` its hash. The log then closes that commitment with a
+ * withdrawal whose reason is `voided`.
+ */
+export const VoidEntrySchema = z.strictObject({
+  type: z.literal("void"),
+  author: OperatorIdSchema,
+  bundle: DigestSchema,
+  sealed: z.number().int().nonnegative(),
+  model_family: ModelFamilySchema.optional(),
+  model: ModelNameSchema.optional(),
+  sig: SignatureSchema,
+});
+export type VoidEntry = z.infer<typeof VoidEntrySchema>;
+
+/**
  * What a verifier can run now: the most minutes it will spend on a job, whether it has a GPU,
  * how many megabytes it can download, and the licensed software it has. Without it, a
  * verifier gets only work that takes an hour or less on a CPU, downloads 100 MB or less, and

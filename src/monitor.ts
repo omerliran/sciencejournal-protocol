@@ -107,7 +107,7 @@ export const PROBLEMS = {
   key: "A key entry, rotation, or recovery the protocol doesn't allow, or an operator or observer ID that isn't the SHA-256 of its first key",
   seal: "A revealed entry doesn't open its commitment, or a commitment is opened or closed twice",
   identity: "An identity the protocol doesn't allow, or an entry from an operator without the identity it needs",
-  withdrawal: "A bundle withdrawn twice",
+  withdrawal: "A bundle withdrawn twice, or a withdrawal of sealed work whose reason doesn't say whether its author voided it",
   retraction: "A bundle retracted twice",
   author: "A correction, retraction, or addendum signed by someone other than the bundle's author",
   correction: "A bundle corrected again while its earlier correction is still up",
@@ -194,6 +194,17 @@ export const AuditStateSchema = z.strictObject({
   authors: z.record(DigestSchema, OperatorIdSchema).default({}),
   /** Each corrected bundle's latest correction: a version takes another only once that one is withdrawn. */
   corrections: z.record(DigestSchema, DigestSchema).default({}),
+  /**
+   * Commitments their authors voided that the log hasn't closed yet, by the index of the sealed
+   * entry that holds each, with who voided it, the bundle it named, and where. Audits saved
+   * before voids have none.
+   */
+  voids: z
+    .record(
+      z.string().regex(/^(0|[1-9][0-9]*)$/),
+      z.strictObject({ operator: OperatorIdSchema, bundle: DigestSchema, index: z.number().int().nonnegative() }),
+    )
+    .default({}),
 });
 export type AuditState = z.infer<typeof AuditStateSchema>;
 
@@ -227,6 +238,7 @@ export function emptyAuditState(): AuditState {
     pairings: [],
     authors: {},
     corrections: {},
+    voids: {},
   };
 }
 
@@ -332,6 +344,7 @@ export const NOT_CHECKED = {
   canary: "A canary leaf's claim IDs come from the canary bundle's files, which the monitor doesn't fetch.",
   identity: "A domain or GitHub identity rests on a DNS record or a repository file that can change after it is logged, so the organization the log derived from it isn't rechecked.",
   withdrawal: "A withdrawal of sealed work closes a commitment that hides the bundle, so the monitor can't match the two.",
+  void: "A void names a sealed commitment, which hides its bundle and who sealed it, so the monitor can't check that the operator voiding it is its author; it checks that the void's signer has an identity, that the commitment was still waiting, and that the log closed it with a withdrawal giving the reason voided and naming the same bundle.",
   retraction: "A retraction names one version of a paper and covers its whole line. Which versions make up its line, and so whether another version was retracted before, come from bundle leaves and their files, which a log that only logs doesn't hold; the monitor checks that the author it names signed it, or the log, that the author published the bundle when the log holds full bundle leaves, and that no bundle is retracted twice unless a key recovery disowned the first.",
   addendum: "An addendum holds only the digest of its words, which the node keeps and may remove. Whether the bundle it names opened, was withdrawn, was corrected since, or had its line retracted, and whether screens let the addendum appear, which are requests to the node rather than entries, are the node's to check; the monitor checks that the author it names signed it, with an identity, and that the author published the bundle when the log holds full bundle leaves.",
   recovery: "A domain or GitHub recovery rests on a DNS record or a repository file naming the new key when it was logged, and a GitHub one on who owned the repository then, all of which can change after.",
@@ -390,6 +403,7 @@ export class LogAuditor {
   private readonly pairings: Set<string>;
   private readonly authors: Map<string, string>;
   private readonly corrections: Map<string, string>;
+  private readonly voids: Map<number, { operator: string; bundle: string; index: number }>;
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
 
@@ -418,6 +432,7 @@ export class LogAuditor {
     this.pairings = new Set(state.pairings);
     this.authors = new Map(Object.entries(state.authors));
     this.corrections = new Map(Object.entries(state.corrections));
+    this.voids = new Map(Object.entries(state.voids).map(([at, voided]) => [Number(at), voided]));
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
   }
 
@@ -460,6 +475,7 @@ export class LogAuditor {
       pairings: [...this.pairings].sort() as Digest[],
       authors: record(this.authors) as AuditState["authors"],
       corrections: record(this.corrections) as AuditState["corrections"],
+      voids: Object.fromEntries([...this.voids].sort(([a], [b]) => a - b).map(([at, voided]) => [String(at), voided])) as AuditState["voids"],
     };
   }
 
@@ -623,9 +639,35 @@ export class LogAuditor {
         this.withdrawn.add(bundle);
         if (entry.sealed !== undefined) {
           this.notes.add("withdrawal");
-          this.close(index, entry.sealed as number);
+          // A commitment its author voided closes as voided, naming the bundle the void named; no other does.
+          const at = entry.sealed as number;
+          const voided = this.voids.get(at);
+          if (voided && entry.reason !== "voided") {
+            this.problem(index, "withdrawal", `Its author voided entry ${at} at entry ${voided.index}, so the withdrawal closing it gives the reason voided, not ${String(entry.reason)}`);
+          } else if (!voided && entry.reason === "voided") {
+            this.problem(index, "withdrawal", `The withdrawal gives the reason voided, but no void by its author names entry ${at}`);
+          } else if (voided && voided.bundle !== bundle) {
+            this.problem(index, "withdrawal", `The void at entry ${voided.index} names ${voided.bundle}, but the withdrawal closing entry ${at} names ${bundle}`);
+          }
+          this.voids.delete(at);
+          this.close(index, at);
+        } else if (entry.reason === "voided") {
+          this.problem(index, "withdrawal", "The withdrawal gives the reason voided, but closes no sealed commitment, which is all a void can name");
         }
         return;
+      }
+      case "void": {
+        // An author voids its own sealed bundle, signing as itself; the log then closes the
+        // commitment with a voided withdrawal.
+        this.notes.add("void");
+        this.names(index, "author", entry.author, operator);
+        const at = entry.sealed as number;
+        const earlier = this.voids.get(at);
+        if (earlier) this.problem(index, "seal", `Entry ${at} was voided before, at entry ${earlier.index}`);
+        else if (!this.commitments.has(at)) this.problem(index, "seal", `The void names entry ${at}, which holds no commitment waiting to be opened`);
+        else this.voids.set(at, { operator, bundle: entry.bundle as string, index });
+        this.requireIdentity(index, entry.type, operator, index);
+        return this.signedByOperator(index, entry.type, signed, operator, index);
       }
       case "retraction": {
         // An author retracts its own paper, signing as itself; a person at the node retracts
@@ -669,6 +711,9 @@ export class LogAuditor {
       this.problem(index, "seal", `The entry opens a commitment at entry ${at}, which doesn't come before it`);
       return at;
     }
+    const voided = this.voids.get(at);
+    if (voided) this.problem(index, "seal", `Its author voided entry ${at} at entry ${voided.index}, so it never opens`);
+    this.voids.delete(at);
     const commitment = this.commitments.get(at);
     if (commitment === undefined) {
       this.problem(index, "seal", `Entry ${at} holds no commitment waiting to be opened: it isn't a sealed entry, or an earlier entry opened or closed it`);

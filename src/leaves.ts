@@ -31,6 +31,7 @@ import {
   HazardReviewEntrySchema,
   SealedEntrySchema,
   SealRevealSchema,
+  VoidEntrySchema,
   WithdrawalEntrySchema,
 } from "./rounds";
 
@@ -111,6 +112,7 @@ export const SignedLeafSchema = z.union([
   z.strictObject({ timestamp, entry: SwarmBackersEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: ChallengeReviewEntrySchema, sealed: SealRevealSchema }),
   z.strictObject({ timestamp, entry: WithdrawalEntrySchema }),
+  z.strictObject({ timestamp, operator: OperatorIdSchema, entry: VoidEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: AuthorRetractionEntrySchema }),
   z.strictObject({ timestamp, entry: NodeRetractionEntrySchema }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: AddendumEntrySchema }),
