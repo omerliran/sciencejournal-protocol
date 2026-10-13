@@ -101,13 +101,13 @@ export type WithdrawalEntry = z.infer<typeof WithdrawalEntrySchema>;
 
 /**
  * An author voiding its own bundle while it is sealed, so it never opens: `sealed` is the index of
- * the commitment that holds it, and `bundle` its hash. The log then closes that commitment with a
- * withdrawal whose reason is `voided`.
+ * the commitment that holds it, which names the bundle as well as its hash would, and which an
+ * author that lost its records still finds where its round is reported. The log then closes that
+ * commitment with a withdrawal whose reason is `voided`, naming the bundle.
  */
 export const VoidEntrySchema = z.strictObject({
   type: z.literal("void"),
   author: OperatorIdSchema,
-  bundle: DigestSchema,
   sealed: z.number().int().nonnegative(),
   model_family: ModelFamilySchema.optional(),
   model: ModelNameSchema.optional(),

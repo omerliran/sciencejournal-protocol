@@ -70,12 +70,9 @@ const addendum = (keys: { secretKey: Uint8Array }, bundle: `sha256:${string}`, a
     keys.secretKey,
   );
 
-/** `author` voiding its bundle `name`, sealed at entry `sealed`, signed with `keys`. */
-const voidEntry = (keys: { secretKey: Uint8Array }, author: string, name: string, sealed: number) =>
-  signObject(
-    { type: "void" as const, author, bundle: sha256Digest(name), sealed, model_family: "family-a", model: "test-model" },
-    keys.secretKey,
-  );
+/** `author` voiding its bundle sealed at entry `sealed`, signed with `keys`. */
+const voidEntry = (keys: { secretKey: Uint8Array }, author: string, sealed: number) =>
+  signObject({ type: "void" as const, author, sealed, model_family: "family-a", model: "test-model" }, keys.secretKey);
 
 const bundleEntry = (keys: Keys, name: string) =>
   signObject({ type: "bundle" as const, bundle: sha256Digest(name) }, keys.secretKey);
@@ -260,7 +257,7 @@ async function realisticLog(): Promise<MemoryLog> {
   });
   // Alice voids a bundle of hers while it is sealed, and the log closes its commitment as voided.
   const voided = await seal(log, bundleEntry(alice, "bundle 4"));
-  await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "bundle 4", voided.index) });
+  await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, voided.index) });
   await log.append({
     entry: signObject({ type: "withdrawal" as const, bundle: sha256Digest("bundle 4"), reason: "voided" as const, sealed: voided.index }, log.secretKey),
   });
@@ -1061,7 +1058,7 @@ describe("monitorLog", () => {
     ]);
   });
 
-  it("closes a commitment its author voided only as voided, naming the bundle the void named, and never opens it", async () => {
+  it("closes a commitment its author voided only as voided, and never opens it", async () => {
     const log = new MemoryLog();
     await log.append({ operator: aliceId, entry: keyEntry(alice) });
     await log.append(invited(log, aliceId));
@@ -1074,25 +1071,21 @@ describe("monitorLog", () => {
       await seal(log, bundleEntry(alice, "third")),
       await seal(log, bundleEntry(alice, "fourth")),
     ];
-    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "first", first.index) });
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, first.index) });
     await log.append(withdrawal("first", "hazard", first.index));
-    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "second", secondSeal.index) });
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, secondSeal.index) });
     await log.append(bundleLeaf(aliceId, second, secondSeal));
     await log.append(withdrawal("third", "voided", third.index));
-    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "first", first.index) });
-    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, "fourth", fourth.index) });
-    await log.append(withdrawal("another", "voided", fourth.index));
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, first.index) });
+    // The log's withdrawal names the bundle, which the void, naming only the commitment, leaves to it.
+    await log.append({ operator: aliceId, entry: voidEntry(alice, aliceId, fourth.index) });
+    await log.append(withdrawal("fourth", "voided", fourth.index));
     const { report } = await monitorLog(log.source(), null);
     expect(report.problems).toEqual([
       { check: "withdrawal", index: 7, reason: "Its author voided entry 2 at entry 6, so the withdrawal closing it gives the reason voided, not hazard" },
       { check: "seal", index: 9, reason: "Its author voided entry 3 at entry 8, so it never opens" },
       { check: "withdrawal", index: 10, reason: "The withdrawal gives the reason voided, but no void by its author names entry 4" },
       { check: "seal", index: 11, reason: "The void names entry 2, which holds no commitment waiting to be opened" },
-      {
-        check: "withdrawal",
-        index: 13,
-        reason: `The void at entry 12 names ${sha256Digest("fourth")}, but the withdrawal closing entry 5 names ${sha256Digest("another")}`,
-      },
     ]);
   });
 
