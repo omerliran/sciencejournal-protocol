@@ -131,6 +131,11 @@ export const LogLeafSchema = z.union(
 type DetachedLeaf<L> = L extends { entry: infer E } ? Omit<L, "entry"> & { entry: Detached<E> } : never;
 export type LogLeaf = DetachedLeaf<SignedLeaf>;
 
+/** Who signed a leaf: its operator or volunteer, or null for an entry the log signs itself. */
+export function leafSigner(leaf: LogLeaf): string | null {
+  return "operator" in leaf ? leaf.operator : "observer" in leaf ? leaf.observer : null;
+}
+
 /** The leaf the log holds for a signed leaf: its entry's signatures replaced by their digests. */
 export function detachLeaf(leaf: SignedLeaf): LogLeaf {
   return { ...leaf, entry: detachSignatures(leaf.entry) } as LogLeaf;
