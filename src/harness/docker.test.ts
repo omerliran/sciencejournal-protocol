@@ -26,7 +26,7 @@ except OSError:
     network = False
 os.makedirs("results/extra", exist_ok=True)
 json.dump({"value": sum(i * i for i in range(10)) / 1000}, open("results/R1.json", "w"))
-json.dump({"network": network, "uid": os.getuid()}, open("results/extra/sandbox.json", "w"))
+json.dump({"network": network, "uid": os.getuid(), "cpus": len(os.sched_getaffinity(0))}, open("results/extra/sandbox.json", "w"))
 print("computed")
 `;
 
@@ -73,7 +73,7 @@ const read = async <T>(path: string) => JSON.parse(await readFile(path, "utf8"))
 
 describe.skipIf(!engine)(`the sandbox, on ${engine?.command ?? "no engine"}`, () => {
   it(
-    "reproduces a bundle in a container built from env/requirements.txt, with no network, as the user",
+    "reproduces a bundle in a container built from env/requirements.txt, with no network, as the user, seeing only its CPUs",
     async () => {
       const bundle = await writeBundle(0.285);
       const out = deps();
@@ -86,8 +86,10 @@ describe.skipIf(!engine)(`the sandbox, on ${engine?.command ?? "no engine"}`, ()
       expect(run.image).toMatchObject({ plan: { from: "requirements" }, id: expect.stringMatching(/^sha256:/) });
       expect(run.result).toMatchObject({ exitCode: 0, timedOut: false });
 
-      const sandbox = await read<{ network: boolean; uid: number }>(join(outDir, "workspace", "results", "extra", "sandbox.json"));
+      const sandbox = await read<{ network: boolean; uid: number; cpus: number }>(join(outDir, "workspace", "results", "extra", "sandbox.json"));
       expect(sandbox.network).toBe(false);
+      // Held to its share of the CPUs where the engine can, so a thread a library starts for each CPU it sees has one.
+      expect(sandbox.cpus).toBe(engine!.cpuset ? run.limits!.cpus : engine!.cpus);
       if (process.getuid) {
         expect(sandbox.uid).toBe(process.getuid());
         expect((await stat(join(outDir, "workspace", "results", "R1.json"))).uid).toBe(process.getuid());

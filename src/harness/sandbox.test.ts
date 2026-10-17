@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCommand,
   CONDA_IMAGE,
+  cpuSet,
   environmentDockerfile,
   limitsFor,
   planCommand,
@@ -86,10 +87,15 @@ describe("planCommand", () => {
 });
 
 describe("limitsFor", () => {
-  const capacity = { cpus: 8, memoryBytes: 16 * 2 ** 30 };
+  const capacity = { cpus: 8, cpuset: true, memoryBytes: 16 * 2 ** 30 };
 
-  it("gives a run the declared minutes times 1.5 and most of the engine's machine", () => {
-    expect(limitsFor(capacity, 30)).toEqual({ minutes: 45, memory: "12288m", cpus: 8, pids: 4096 });
+  it("gives a run the declared minutes times 1.5 and three quarters of the engine's memory and CPUs", () => {
+    expect(limitsFor(capacity, 30)).toEqual({ minutes: 45, memory: "12288m", cpus: 6, pids: 4096 });
+    expect([12, 2, 1].map((cpus) => limitsFor({ ...capacity, cpus }, 30).cpus)).toEqual([9, 1, 1]);
+  });
+
+  it("gives every CPU where the engine can't hold a run to fewer, since a quota alone only slows the threads it sees", () => {
+    expect(limitsFor({ ...capacity, cpuset: false }, 30).cpus).toBe(8);
   });
 
   it("takes what the verifier says instead, and refuses what makes no sense", () => {
@@ -105,13 +111,14 @@ describe("runArguments", () => {
   const request = { name: "sj-harness-1", image: "sha256:abc", workspace: "/jobs/job-1/workspace", command: "sh code/run", limits };
 
   it("runs with no network, no privileges, bounded processes, memory, and CPU, as the user, in a copy of the work", () => {
-    const args = runArguments({ command: "docker", rootless: false }, request, { uid: 501, gid: 20 });
+    const args = runArguments({ command: "docker", rootless: false, cpuset: true }, request, { uid: 501, gid: 20 });
     const value = (flag: string) => args[args.indexOf(flag) + 1];
     expect(args[0]).toBe("run");
     expect(value("--network")).toBe("none");
     expect(value("--cap-drop")).toBe("ALL");
     expect(value("--security-opt")).toBe("no-new-privileges");
     expect([value("--pids-limit"), value("--memory"), value("--memory-swap"), value("--cpus")]).toEqual(["1024", "8g", "8g", "4"]);
+    expect(value("--cpuset-cpus")).toBe("0-3");
     expect([value("--user"), value("--env")]).toEqual(["501:20", "HOME=/tmp"]);
     expect(value("--mount")).toBe("type=bind,source=/jobs/job-1/workspace,target=/work");
     expect(value("--workdir")).toBe("/work");
@@ -119,15 +126,22 @@ describe("runArguments", () => {
     expect(args.slice(-4)).toEqual(["sha256:abc", "sh", "-c", "sh code/run"]);
   });
 
+  it("holds a run to its CPUs only where the engine can, so the CPUs it sees fit its share", () => {
+    expect(runArguments({ command: "podman", rootless: true, cpuset: false }, request, null)).not.toContain("--cpuset-cpus");
+    expect(cpuSet(1)).toBe("0");
+    expect(cpuSet(2.5)).toBe("0-1");
+    expect(cpuSet(0.5)).toBe("0");
+  });
+
   it("lets a rootless engine map the user itself", () => {
-    expect(runArguments({ command: "docker", rootless: true }, request, { uid: 501, gid: 20 })).not.toContain("--user");
-    const podman = runArguments({ command: "podman", rootless: true }, request, { uid: 501, gid: 20 });
+    expect(runArguments({ command: "docker", rootless: true, cpuset: true }, request, { uid: 501, gid: 20 })).not.toContain("--user");
+    const podman = runArguments({ command: "podman", rootless: true, cpuset: true }, request, { uid: 501, gid: 20 });
     expect(podman.slice(podman.indexOf("--userns"), podman.indexOf("--userns") + 2)).toEqual(["--userns", "keep-id"]);
     expect(podman).not.toContain("--user");
   });
 
   it("refuses a workspace path the mount syntax would split", () => {
-    expect(() => runArguments({ command: "docker", rootless: false }, { ...request, workspace: "/jobs/a,b/workspace" }, null)).toThrow(/comma/);
+    expect(() => runArguments({ command: "docker", rootless: false, cpuset: true }, { ...request, workspace: "/jobs/a,b/workspace" }, null)).toThrow(/comma/);
   });
 });
 

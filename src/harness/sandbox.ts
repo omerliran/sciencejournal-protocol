@@ -21,6 +21,8 @@ export interface Engine {
   /** Whether Docker builds through BuildKit's buildx, which can keep an image in its own cache. */
   buildx: boolean;
   cpus: number;
+  /** Whether the engine can hold a run to a set of CPUs, which then are all the CPUs the run sees. */
+  cpuset: boolean;
   memoryBytes: number;
 }
 
@@ -86,8 +88,8 @@ export interface RunResult {
 /** What runs bundle code. The harness uses a container engine; nothing else runs bundle code. */
 export interface Sandbox {
   engine: { name: string; version: string };
-  /** The CPUs and memory available, which the default limits are taken from. */
-  capacity: { cpus: number; memoryBytes: number };
+  /** The CPUs and memory available, which the default limits are taken from, and whether a run can be held to a set of CPUs. */
+  capacity: { cpus: number; cpuset: boolean; memoryBytes: number };
   /** The image a run uses: given, pulled, or built from the bundle's env/. */
   image(plan: ImagePlan, context: { workspace: string; scratch: string; key: string }, log: OutputSink): Promise<ImageInfo>;
   run(request: { image: ImageInfo; workspace: string; command: string; limits: Limits }, log: OutputSink): Promise<RunResult>;
@@ -117,10 +119,30 @@ export async function findEngine(preferred?: string): Promise<Engine | null> {
       rootless: command === "docker" ? security.includes("name=rootless") : security === "true",
       buildx: command === "docker" && (await capture(command, ["buildx", "version"])).code === 0,
       cpus: Number(cpus) || 1,
+      cpuset: await holdsToCpus(command),
       memoryBytes: Number(memory) || 2 ** 30,
     };
   }
   return null;
+}
+
+/**
+ * Whether the engine can hold a run to a set of CPUs, which takes the cgroup cpuset controller:
+ * a rootless engine has it only where the system delegates it. Asked apart from the engine's
+ * other facts, so an engine too old to say is one that can't, not one that isn't there.
+ */
+async function holdsToCpus(command: Engine["command"]): Promise<boolean> {
+  const format = command === "docker" ? "{{.CPUSet}}" : "{{json .Host.CgroupControllers}}";
+  const info = await capture(command, ["info", "--format", format]);
+  if (info.code !== 0) return false;
+  const said = info.stdout.trim();
+  if (command === "docker") return said === "true";
+  try {
+    const controllers: unknown = JSON.parse(said);
+    return Array.isArray(controllers) && controllers.includes("cpuset");
+  } catch {
+    return false;
+  }
 }
 
 const BUILD_FILES = ["env/Dockerfile", "env/Containerfile"];
@@ -200,7 +222,17 @@ export function planCommand(
   return { command: steps.length === 1 ? steps[0] : ["set -e", ...steps].join("; "), from: "produced_by", files };
 }
 
-/** The limits a run gets: the declared minutes times 1.5, and most of the engine's machine. */
+/**
+ * The limits a run gets: the declared minutes times 1.5, and most of the engine's machine: three
+ * quarters of its memory and, where the engine can hold a run to a set of CPUs, three quarters of
+ * those, leaving the rest to the engine and the computer, which runs the verifier's own agent
+ * beside it. A library that starts a thread on each CPU it sees, as OpenBLAS does, waits on the
+ * slowest of them at every step, so with one on each of the machine's CPUs every step waits on
+ * whichever CPU the computer took for something else: on a Mac with 12, a study of small
+ * least-squares fits that takes under two minutes on 9 ran past 22. Where the engine can't, the
+ * CPUs a run sees are all of them, and a quota of fewer only slows those threads more, so a run
+ * gets every CPU.
+ */
 export function limitsFor(
   capacity: Sandbox["capacity"],
   declaredMinutes: number,
@@ -215,14 +247,23 @@ export function limitsFor(
   return {
     minutes: given.minutes ?? declaredMinutes * 1.5,
     memory: given.memory ?? `${Math.max(512, Math.floor((capacity.memoryBytes * 0.75) / 2 ** 20))}m`,
-    cpus: given.cpus ?? capacity.cpus,
+    cpus: given.cpus ?? (capacity.cpuset ? Math.max(1, Math.floor(capacity.cpus * 0.75)) : capacity.cpus),
     pids: given.pids ?? 4096,
   };
 }
 
+/**
+ * The CPUs a run is held to, as the engine's --cpuset-cpus takes them: as many whole CPUs as its
+ * limit gives it, at least one, so the threads a library starts for each CPU it sees fit its share.
+ */
+export function cpuSet(cpus: number): string {
+  const count = Math.max(1, Math.floor(cpus));
+  return count === 1 ? "0" : `0-${count - 1}`;
+}
+
 /** The arguments that run `command` in the sandbox: everything the run may and may not do. */
 export function runArguments(
-  engine: Pick<Engine, "command" | "rootless">,
+  engine: Pick<Engine, "command" | "rootless" | "cpuset">,
   request: { name: string; image: string; workspace: string; command: string; limits: Limits; home?: string },
   user: { uid: number; gid: number } | null,
 ): string[] {
@@ -249,6 +290,7 @@ export function runArguments(
     limits.memory,
     "--cpus",
     String(limits.cpus),
+    ...(engine.cpuset ? ["--cpuset-cpus", cpuSet(limits.cpus)] : []),
     ...asUser(engine, user, request.home),
     "--tmpfs",
     "/tmp:rw,exec,nosuid,nodev",
@@ -333,7 +375,7 @@ export function containerSandbox(engine: Engine): Sandbox {
 
   return {
     engine: { name: engine.command, version: engine.version },
-    capacity: { cpus: engine.cpus, memoryBytes: engine.memoryBytes },
+    capacity: { cpus: engine.cpus, cpuset: engine.cpuset, memoryBytes: engine.memoryBytes },
 
     async image(plan, { workspace, scratch, key }, log) {
       const started = Date.now();
