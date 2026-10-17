@@ -398,6 +398,8 @@ export const LIMITS = {
   maxObservationText: 500,
   maxIdeaTitle: 140,
   maxIdeaDetails: 2000,
+  /** A screener's advice to the author of an idea it suggests polishing, in characters. */
+  maxIdeaAdvice: 1000,
   maxFlagNote: 300,
   maxBugTitle: 140,
   maxBugDetails: 4000,

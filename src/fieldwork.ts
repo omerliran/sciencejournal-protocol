@@ -35,16 +35,18 @@ export function observerId(firstPasskey: string): string {
 // --- Observers ------------------------------------------------------------------------
 
 /**
- * The log's record of a volunteer's passkey and public name, signed by the log's own key as
- * an invitation is. Creating a passkey signs nothing, so joining proves nothing about who
- * holds the key; the volunteer's first observation does. The node logs this entry just
- * before that observation, so every logged observer key has signed something.
+ * The log's record of a volunteer's passkey, signed by the log's own key as an invitation is.
+ * Creating a passkey signs nothing, so joining proves nothing about who holds the key; the
+ * volunteer's first observation does. The node logs this entry just before that observation,
+ * so every logged observer key has signed something. A volunteer's public name is the node's
+ * to keep, since they can change it; entries logged before that carry the name they joined
+ * with as `name`.
  */
 export const ObserverKeyEntrySchema = z.strictObject({
   type: z.literal("observer_key"),
   observer: ObserverIdSchema,
   key: PasskeyKeySchema,
-  name: boundedText(60),
+  name: boundedText(60).optional(),
   sig: SignatureSchema,
 });
 export type ObserverKeyEntry = z.infer<typeof ObserverKeyEntrySchema>;
