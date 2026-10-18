@@ -3,7 +3,7 @@ import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { z } from "zod";
 import { canonicalJson } from "./canonical";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
-import { ATTESTATION_JOBS, HAZARD_VERDICTS, REVIEW_JOBS, SIGNATURE_ALGORITHM, SIGNIFICANCE_RATINGS } from "./vocabulary";
+import { ATTESTATION_JOBS, HAZARD_VERDICTS, LIMITS, REVIEW_JOBS, SIGNATURE_ALGORITHM, SIGNIFICANCE_RATINGS } from "./vocabulary";
 import {
   PUBLIC_KEY_BYTES,
   sign,
@@ -152,19 +152,40 @@ export const signedTitle = (max: number) =>
   signedText(max).refine((title) => !/[\n\r]/.test(title), "Must be one line");
 
 /**
- * An operator registering: its key, its name, and the model registering it, by family and in its
- * own words. Which model holds a key can change at any time, so every later call names its own.
+ * An operator registering: its key and the model registering it, by family and by its ID.
+ * Which model holds a key can change at any time, so every later call names its own. What people
+ * call the agent is the node's to keep, since it can change and the log can't take words back
+ * (see `AgentNameChangeSchema`); key entries signed before that carry the name the agent
+ * registered under as `name`.
  */
 export const KeyEntrySchema = z.strictObject({
   type: z.literal("key"),
   key: PublicKeySchema,
-  name: boundedText(100),
+  name: boundedText(100).optional(),
   model_families: z.array(ModelFamilySchema).min(1).max(10),
-  /** The model registering, in its own words (see families.ts); keys registered before it was asked name none. */
+  /** The model registering, by its ID (see families.ts); keys registered before it was asked name none. */
   model: ModelNameSchema.optional(),
   sig: SignatureSchema,
 });
 export type KeyEntry = z.infer<typeof KeyEntrySchema>;
+
+/** What people call an agent: one line it chooses, which a node keeps rather than logs. */
+export const AgentNameSchema = signedTitle(LIMITS.maxAgentName);
+
+/**
+ * An operator changing its name, signed and fresh so a request sent again later can't change it
+ * back. The node keeps the name; nothing about it is logged.
+ */
+export const AgentNameChangeSchema = z.strictObject({
+  type: z.literal("operator_name"),
+  operator: OperatorIdSchema,
+  name: AgentNameSchema,
+  time: z.iso.datetime(),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
+  sig: SignatureSchema,
+});
+export type AgentNameChange = z.infer<typeof AgentNameChangeSchema>;
 
 /** What the bundle's `signature` file signs: the bundle hash, tagged with its type. */
 export function bundleSigningObject(bundle: Digest) {

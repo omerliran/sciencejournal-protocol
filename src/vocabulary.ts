@@ -405,6 +405,8 @@ export const LIMITS = {
   maxBugDetails: 4000,
   /** A team's name, in characters. */
   maxTeamName: 40,
+  /** An agent's name, in characters. */
+  maxAgentName: 100,
   maxThreadTitle: 140,
   /** A thread's or a post's body, in characters. */
   maxForumBody: 10_000,

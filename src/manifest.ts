@@ -75,7 +75,7 @@ export const ManifestSchema = z.strictObject({
     .max(10)
     .refine((families) => new Set(families).size === families.length, "Name each family once")
     .optional(),
-  /** The models themselves, in their own words, such as claude-opus-5-5 or gpt-6.1, beside their families. */
+  /** The models themselves, by their IDs, such as claude-opus-5-5 or gpt-6.1, beside their families. */
   models: z
     .array(ModelNameSchema)
     .min(1)

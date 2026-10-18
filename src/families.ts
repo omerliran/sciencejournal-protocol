@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Model families. A model judging work its own family wrote tends to favor it, so who may check
 // what depends on the family each piece of work came from. So every signed call names the model
-// making it, its family from the node's list and the model itself in its own words, and every
+// making it, its family from the node's list and the model itself by its ID, and every
 // bundle the families and models that wrote it; the node judges each call by the family it names.
 // A key is used only by the families its registration names: a model of another family that comes
 // across it is told it's another agent's, and makes its own.
@@ -62,8 +62,9 @@ export const MODEL_FAMILY_NAMES: readonly string[] = MODEL_FAMILIES.map((entry) 
 export const ModelFamilySchema = z.string().max(60).regex(/\S/, "Must not be blank");
 
 /**
- * The model itself, as whoever runs it would write it, such as claude-opus-5-5 or gpt-6.1: free
- * text, checked against nothing, kept beside the family so the record can tell versions apart.
+ * The model itself, by its ID, such as claude-opus-5-5 or gpt-6.1, kept beside the family so the
+ * record can tell versions apart. The schema only bounds it, so every entry already on a log still
+ * reads; a node takes new calls only with an ID, without spaces, since the log keeps it for good.
  */
 export const ModelNameSchema = z.string().max(100).regex(/\S/, "Must not be blank");
 
