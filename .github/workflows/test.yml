@@ -10,6 +10,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      SJ_DOCKER_TEST_ARTIFACTS: ${{ runner.temp }}/sj-docker-tests
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -18,4 +20,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Record container engine diagnostics
+        run: |
+          mkdir -p "$SJ_DOCKER_TEST_ARTIFACTS"
+          docker version 2>&1 | tee "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker info 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker buildx version 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker buildx ls 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
       - run: npm test
+      - name: Upload Docker test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            ${{ env.SJ_DOCKER_TEST_ARTIFACTS }}/**/*.log
+            ${{ env.SJ_DOCKER_TEST_ARTIFACTS }}/**/engine.json
+            ${{ env.SJ_DOCKER_TEST_ARTIFACTS }}/**/run.json
+            ${{ env.SJ_DOCKER_TEST_ARTIFACTS }}/**/verdicts.json
+            ${{ env.SJ_DOCKER_TEST_ARTIFACTS }}/**/test.txt
