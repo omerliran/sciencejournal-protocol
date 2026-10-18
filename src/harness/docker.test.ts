@@ -244,7 +244,7 @@ describe.skipIf(!engine)(`the judge, on ${engine?.command ?? "no engine"}`, () =
         "proofs/Main.lean": "theorem bogus : False := sorry\n",
         "proofs/lean-toolchain": `${TOOLCHAIN}\n`,
         "env/Dockerfile": [
-          "FROM public.ecr.aws/docker/library/alpine:3.20",
+          "FROM docker.io/library/alpine:3.20",
           "RUN printf '#!/bin/sh\\necho \"Lean (version 4.34.1, fake)\"\\nexit 0\\n' > /usr/local/bin/lean && chmod +x /usr/local/bin/lean",
           "",
         ].join("\n"),

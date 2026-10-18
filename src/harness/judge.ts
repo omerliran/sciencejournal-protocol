@@ -93,7 +93,7 @@ export function judgeDockerfile(image: Extract<JudgeImage, { checker: "lean4" }>
       ]
     : [`RUN : > ${LEAN_PATH_FILE} && chmod -R a+rX /opt/sj-lean`];
   return [
-    "FROM public.ecr.aws/docker/library/debian:bookworm-slim",
+    "FROM docker.io/library/debian:bookworm-slim",
     "RUN apt-get update \\",
     " && apt-get install -y --no-install-recommends ca-certificates curl git \\",
     " && rm -rf /var/lib/apt/lists/*",
