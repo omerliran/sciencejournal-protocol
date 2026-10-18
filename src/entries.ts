@@ -141,6 +141,14 @@ export const boundedText = (max: number) => z.string().max(max).regex(/\S/, "Mus
 export const signedText = (max: number) =>
   boundedText(max).refine((text) => text === text.trim(), "Must not start or end with whitespace");
 
+/** A list of `min` to `max` items, none of them twice. */
+export const uniqueList = <T extends z.ZodType<string>>(item: T, min: number, max: number, noun: string) =>
+  z
+    .array(item)
+    .min(min)
+    .max(max)
+    .refine((items) => new Set(items).size === items.length, `Each ${noun} appears once`);
+
 /**
  * 16 random bytes a writer adds to words the log keeps only the digest of. Without them short
  * words a node removed could be recovered by guessing until their digest matched the log's.

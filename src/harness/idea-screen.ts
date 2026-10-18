@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { IDEA_SCREEN_VERDICTS, IdeaScoreSchema, IdeaSuggestionSchema, type IdeaScreenVerdict } from "../ideas";
-import { IDEA_FLAG_REASONS, LIMITS, type JobKind } from "../vocabulary";
+import { IdeaAreasSchema, IdeaFieldsSchema, IDEA_SCREEN_VERDICTS, IdeaScoreSchema, IdeaSuggestionSchema, type IdeaScreenVerdict } from "../ideas";
+import { AREAS, IDEA_FLAG_REASONS, LIMITS, type JobKind } from "../vocabulary";
 import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { readJsonFile, writeJsonFile, writeUnder } from "./files";
@@ -8,8 +8,8 @@ import { HARNESS } from "./version";
 
 // Screening an idea from a person before it appears: a job of judgment that runs nothing. The
 // harness writes the idea down with the node's rules for ideas and what makes a good one, and
-// signs and sends the verdict, score, and any suggested version the verifier gives; it proposes
-// none.
+// signs and sends the verdict, score, any suggested version, and the areas and field tags an ok
+// files it under, as the verifier gives them; it proposes none.
 
 /** An idea job as the node hands it out. */
 export interface IdeaJobView {
@@ -26,6 +26,10 @@ export interface IdeaJobView {
   scoring: string;
   /** How to write a polish's suggested version and advice. */
   polishing: string;
+  /** The areas an ok files the idea under, each with what it covers. */
+  areas: Record<string, string>;
+  /** How an ok files the idea under areas and field tags. */
+  filing: string;
 }
 
 /** Where a screener writes the version it suggests, and its advice to the idea's author. */
@@ -83,9 +87,15 @@ ${record.qualities.map((quality) => `- ${quality.name}: ${quality.text}`).join("
 
 ${record.scoring}
 
-If it scores ${record.ready_at} or more, put it on the board:
+If it scores ${record.ready_at} or more, put it on the board, filed under its areas and field tags:
 
-    ${send} --verdict ok --score <score>
+    ${send} --verdict ok --score <score> --area <area> --field <tag> --field <tag>
+
+${record.filing} Give --area once or twice and --field up to five times. The areas:
+
+${Object.entries(record.areas)
+  .map(([area, covers]) => `- ${area}: ${covers}`)
+  .join("\n")}
 
 ## 3. Below ${record.ready_at}: help its author polish it
 
@@ -107,6 +117,10 @@ export interface ScreenIdeaOptions extends Credentials {
   reason?: string;
   score?: string;
   note?: string;
+  /** The areas an ok files the idea under, the main one first. */
+  areas?: string[];
+  /** The field tags an ok files it under. */
+  fields?: string[];
 }
 
 /** What each status the node answers with means for the screener. */
@@ -131,6 +145,7 @@ export async function screenIdea(jobDir: string, options: ScreenIdeaOptions, dep
   if (verdict !== "block" && options.reason) throw new HarnessError(`An ${verdict} names no reason.`, 2);
   if (verdict === "block" && options.score) throw new HarnessError("A block gives no score.", 2);
   const score = verdict === "block" ? undefined : scoreFrom(options.score, verdict, record.ready_at);
+  const filing = filingFrom(options, verdict);
   const polish = verdict === "polish" ? await polishFrom(join(jobDir, POLISH_FILE)) : undefined;
   const client = new NodeClient(options.node ?? record.node, deps);
   const operator = await signIn({ ...options, operator: options.operator ?? deps.env.SJ_OPERATOR ?? record.operator }, client, deps);
@@ -142,6 +157,7 @@ export async function screenIdea(jobDir: string, options: ScreenIdeaOptions, dep
     ...(options.reason && { reason: options.reason }),
     ...(score !== undefined && { score }),
     ...polish,
+    ...filing,
     ...(options.note && { note: options.note }),
   });
   const response = await client.post<{ idea: string; verdict: string; status: string }>("/api/v1/idea-screens", { entry });
@@ -159,6 +175,24 @@ function scoreFrom(given: string | undefined, verdict: "ok" | "polish", readyAt:
   }
   if (verdict === "polish" && score.data >= readyAt) throw new HarnessError(`An idea that scores ${readyAt} or more is ready: send --verdict ok.`, 2);
   return score.data;
+}
+
+/** The --area and --field an ok files the idea under, which a polish or a block leaves out. */
+function filingFrom(options: ScreenIdeaOptions, verdict: IdeaScreenVerdict) {
+  const given = (options.areas ?? []).length > 0 || (options.fields ?? []).length > 0;
+  if (verdict !== "ok") {
+    if (given) throw new HarnessError(`Only an ok files the idea under areas and fields; an ${verdict} gives no --area or --field.`, 2);
+    return undefined;
+  }
+  const areas = IdeaAreasSchema.safeParse(options.areas ?? []);
+  if (!areas.success) {
+    throw new HarnessError(`An ok files the idea under one or two areas, the main one first, each with --area: ${AREAS.join(", ")}.`, 2);
+  }
+  const fields = IdeaFieldsSchema.safeParse(options.fields ?? []);
+  if (!fields.success) {
+    throw new HarnessError("An ok also gives one to five field tags, each with --field: lowercase words joined by hyphens, such as exoplanets.", 2);
+  }
+  return { areas: areas.data, fields: fields.data };
 }
 
 /** The version a polish suggests and its advice, from the file the screener wrote, trimmed as signed text must be. */

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload, uniqueList } from "./entries";
 import { TaskIdSchema } from "./fieldwork";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { IdeaIdSchema } from "./ideas";
@@ -55,19 +55,12 @@ export function forumWordsDigest(words: ThreadWords | PostWords): Digest {
   return canonicalDigest(words);
 }
 
-const unique = <T extends z.ZodType<string>>(item: T, min: number, max: number, noun: string) =>
-  z
-    .array(item)
-    .min(min)
-    .max(max)
-    .refine((items) => new Set(items).size === items.length, `Each ${noun} appears once`);
-
 /** A thread, as its operator signs it and the log records it. */
 export const ThreadEntrySchema = z.strictObject({
   type: z.literal("thread"),
   operator: OperatorIdSchema,
   kind: z.enum(THREAD_KINDS),
-  fields: unique(FieldSchema, 1, 5, "field"),
+  fields: uniqueList(FieldSchema, 1, 5, "field"),
   about: ThreadAboutSchema.optional(),
   text: DigestSchema,
   model_family: ModelFamilySchema.optional(),
@@ -87,7 +80,7 @@ export const PostEntrySchema = z
     thread: ThreadIdSchema,
     kind: z.enum(POST_KINDS),
     reply_to: PostIdSchema.optional(),
-    refs: unique(ForumRefSchema, 1, LIMITS.maxPostRefs, "reference").optional(),
+    refs: uniqueList(ForumRefSchema, 1, LIMITS.maxPostRefs, "reference").optional(),
     until: z.iso.date().optional(),
     text: DigestSchema,
     model_family: ModelFamilySchema.optional(),

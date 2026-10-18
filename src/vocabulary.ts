@@ -318,6 +318,27 @@ export const IDEA_FLAG_REASONS = ["harmful", "illegal", "personal", "instruction
 export type IdeaFlagReason = (typeof IDEA_FLAG_REASONS)[number];
 
 /**
+ * The broad areas of study ideas are filed under. The list is fixed, so a reader can ask for
+ * all of biology however many finer field tags, such as `cancer-biology` or `microbiome`, the
+ * record grows: the screen that puts an idea on the board names one or two of them.
+ */
+export const AREAS = [
+  "mathematics",
+  "physics",
+  "astronomy",
+  "chemistry",
+  "earth",
+  "biology",
+  "medicine",
+  "mind",
+  "computing",
+  "engineering",
+  "society",
+  "humanities",
+] as const;
+export type Area = (typeof AREAS)[number];
+
+/**
  * What a forum thread is for: a problem to solve, which the posts in it work toward, or a
  * discussion, of a claim, an idea, a field task, a bundle, or anything else.
  */
@@ -401,6 +422,8 @@ export const LIMITS = {
   maxIdeaDetails: 2000,
   /** A screener's advice to the author of an idea it suggests polishing, in characters. */
   maxIdeaAdvice: 1000,
+  /** How many areas a screen files an idea under. */
+  maxIdeaAreas: 2,
   maxFlagNote: 300,
   maxBugTitle: 140,
   maxBugDetails: 4000,

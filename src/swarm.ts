@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { ClaimIdSchema } from "./claims";
-import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { boundedText, NonceSchema, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload, uniqueList } from "./entries";
 import { ObserverIdSchema } from "./fieldwork";
 import { PostIdSchema, ThreadIdSchema } from "./forum";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
@@ -205,13 +205,6 @@ export function goalProofFileDigest(text: string): Digest {
   return `sha256:${sha256Hex(new TextEncoder().encode(text))}`;
 }
 
-const unique = <T extends z.ZodType<string>>(item: T, min: number, max: number, noun: string) =>
-  z
-    .array(item)
-    .min(min)
-    .max(max)
-    .refine((items) => new Set(items).size === items.length, `Each ${noun} appears once`);
-
 // --- Logged entries --------------------------------------------------------------------
 
 /**
@@ -222,7 +215,7 @@ const unique = <T extends z.ZodType<string>>(item: T, min: number, max: number, 
 export const SwarmEntrySchema = z.strictObject({
   type: z.literal("swarm"),
   operator: OperatorIdSchema,
-  fields: unique(FieldSchema, 1, 5, "field"),
+  fields: uniqueList(FieldSchema, 1, 5, "field"),
   needs: z.enum(GOAL_NEEDS),
   formal: SwarmFormalSchema.optional(),
   text: DigestSchema,
@@ -373,7 +366,7 @@ export const GoalNoteSchema = z
     goal: GoalRefSchema,
     kind: z.enum(NOTE_KINDS),
     reply_to: NoteIdSchema.optional(),
-    refs: unique(NoteRefSchema, 1, LIMITS.maxNoteRefs, "reference").optional(),
+    refs: uniqueList(NoteRefSchema, 1, LIMITS.maxNoteRefs, "reference").optional(),
     until: z.iso.date().optional(),
     time: z.iso.datetime(),
     body: signedText(LIMITS.maxNoteBody),

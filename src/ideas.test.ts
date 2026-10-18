@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson } from "./canonical";
 import { detachSignatures, signObject } from "./entries";
 import { sha256Hex } from "./hash";
-import { IdeaEntrySchema, IdeaFlagSchema, ideaId, IdeaTextSchema, ideaTextDigest, type IdeaText } from "./ideas";
+import { IdeaEntrySchema, IdeaFlagSchema, ideaId, IdeaScreenSchema, IdeaTextSchema, ideaTextDigest, type IdeaText } from "./ideas";
 import { LogLeafSchema } from "./leaves";
 import { verifyPasskeyObject } from "./passkey";
 import { generateKeyPair, SIGNATURE_BYTES, verify } from "./signing";
@@ -84,5 +84,33 @@ describe("idea flags", () => {
     ["a malformed idea ID", { idea: "idea:xyz" }],
   ])("reject %s", (_, fields) => {
     expect(IdeaFlagSchema.safeParse(flag(fields)).success).toBe(false);
+  });
+});
+
+describe("idea screens", () => {
+  const screener = generateKeyPair();
+  const idea = ideaId(sign({ title: "A question" }));
+  const ok = (fields: Record<string, unknown>) =>
+    signObject(
+      { type: "idea_screen" as const, screener: op4, idea, verdict: "ok", score: 8, areas: ["astronomy"], fields: ["exoplanets"], model_family: "claude", model: "claude-test-1", ...fields },
+      screener.secretKey,
+    );
+
+  it("file an idea they put up under one or two areas, the main one first, and one to five field tags", () => {
+    expect(IdeaScreenSchema.parse(ok({})).areas).toEqual(["astronomy"]);
+    expect(IdeaScreenSchema.parse(ok({ areas: ["astronomy", "biology"], fields: ["astrobiology", "exoplanets"] })).areas).toEqual(["astronomy", "biology"]);
+  });
+
+  it.each([
+    ["an ok with no areas", { areas: undefined }],
+    ["an ok with no field tags", { fields: undefined }],
+    ["an area off the list", { areas: ["astrology"] }],
+    ["three areas", { areas: ["astronomy", "physics", "biology"] }],
+    ["an area twice", { areas: ["astronomy", "astronomy"] }],
+    ["six field tags", { fields: ["a", "b", "c", "d", "e", "f"] }],
+    ["a field tag that isn't one", { fields: ["Exo Planets"] }],
+    ["a block that files the idea", { verdict: "block", score: undefined, reason: "spam" }],
+  ])("reject %s", (_, fields) => {
+    expect(IdeaScreenSchema.safeParse(ok(fields)).success).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
-import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload } from "./entries";
+import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle, signingPayload, uniqueList } from "./entries";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
+import { FieldSchema } from "./manifest";
 import { PasskeySignatureSchema } from "./passkey";
-import { IDEA_FLAG_REASONS, LIMITS } from "./vocabulary";
+import { AREAS, IDEA_FLAG_REASONS, LIMITS } from "./vocabulary";
 
 // Ideas: people suggest what to study and sign each suggestion with their passkey. Agents are
 // free to take an idea up or not. Fieldwork runs the other way: there agents ask and people
@@ -84,11 +85,19 @@ export const IdeaSuggestionSchema = z.strictObject({
 });
 export type IdeaSuggestion = z.infer<typeof IdeaSuggestionSchema>;
 
+/** The areas an ok files an idea under: one or two from the fixed list, the main one first. */
+export const IdeaAreasSchema = uniqueList(z.enum(AREAS), 1, LIMITS.maxIdeaAreas, "area");
+
+/** An ok's field tags for an idea: one to five, in the form a bundle's fields take. */
+export const IdeaFieldsSchema = uniqueList(FieldSchema, 1, 5, "field");
+
 /**
  * An operator's signed screen of an idea it was given as a job, before the idea appears: `ok`,
  * `polish` with a suggested version and advice for its author, or `block` with the rule it
- * breaks, as a flag names one. An ok or a polish scores the idea; a block doesn't. Screens are
- * requests to a node, not log entries.
+ * breaks, as a flag names one. An ok or a polish scores the idea; a block doesn't. An ok also
+ * files the idea under its areas and field tags, since it may be the screen that puts the idea
+ * up, and the board shows those of the screen that did. Screens are requests to a node, not log
+ * entries.
  */
 export const IdeaScreenSchema = z
   .strictObject({
@@ -100,6 +109,8 @@ export const IdeaScreenSchema = z
     score: IdeaScoreSchema.optional(),
     suggestion: IdeaSuggestionSchema.optional(),
     advice: signedText(LIMITS.maxIdeaAdvice).optional(),
+    areas: IdeaAreasSchema.optional(),
+    fields: IdeaFieldsSchema.optional(),
     note: boundedText(LIMITS.maxFlagNote).optional(),
     model_family: ModelFamilySchema,
     model: ModelNameSchema,
@@ -121,6 +132,14 @@ export const IdeaScreenSchema = z
     {
       message: "A polish suggests a version of the idea and gives its author advice, and an ok or a block does neither",
       path: ["suggestion"],
+    },
+  )
+  .refine(
+    (screen) =>
+      screen.verdict === "ok" ? screen.areas !== undefined && screen.fields !== undefined : screen.areas === undefined && screen.fields === undefined,
+    {
+      message: `An ok files the idea under one or two areas (${AREAS.join(", ")}) and one to five field tags, and a polish or a block names neither`,
+      path: ["areas"],
     },
   );
 export type IdeaScreen = z.infer<typeof IdeaScreenSchema>;
