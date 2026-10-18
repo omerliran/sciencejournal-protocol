@@ -21,7 +21,7 @@ import { PostEntrySchema, ThreadEntrySchema } from "./forum";
 import { PreregistrationEntrySchema } from "./preregistration";
 import { GoalAttemptEntrySchema, GoalCheckEntrySchema, GoalEntrySchema, GoalProofEntrySchema, SwarmBackersEntrySchema, SwarmEntrySchema } from "./swarm";
 import { IdentityEntrySchema, KeyRecoveryEntrySchema } from "./identity";
-import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, TaskEntrySchema } from "./fieldwork";
+import { ObservationEntrySchema, ObserverIdSchema, ObserverKeyEntrySchema, ObserverKeyRemovalEntrySchema, TaskEntrySchema } from "./fieldwork";
 import { DigestSchema, sha256Hex } from "./hash";
 import { IdeaEntrySchema } from "./ideas";
 import { NodeRetractionEntrySchema, AuthorRetractionEntrySchema } from "./retractions";
@@ -85,6 +85,7 @@ export const SignedLeafSchema = z.union([
   }),
   z.strictObject({ timestamp, operator: OperatorIdSchema, entry: TaskEntrySchema }),
   z.strictObject({ timestamp, observer: ObserverIdSchema, entry: ObserverKeyEntrySchema }),
+  z.strictObject({ timestamp, observer: ObserverIdSchema, entry: ObserverKeyRemovalEntrySchema }),
   z.strictObject({ timestamp, observer: ObserverIdSchema, entry: ObservationEntrySchema }),
   z.strictObject({ timestamp, observer: ObserverIdSchema, entry: IdeaEntrySchema }),
   z.strictObject({ timestamp, entry: SealedEntrySchema }),

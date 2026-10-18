@@ -75,6 +75,7 @@ export const LEDGER_ENTRY_TYPES = [
   "identity",
   "task",
   "observer_key",
+  "observer_key_removal",
   "observation",
   "idea",
   "thread",

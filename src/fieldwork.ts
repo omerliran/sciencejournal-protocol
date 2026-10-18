@@ -19,15 +19,15 @@ export const TaskIdSchema = z
   .transform((id) => id as TaskId);
 
 /**
- * A volunteer's ID: `obs:` and the hex SHA-256 of the first passkey they joined with, as
- * written, derived the way an operator's is. A volunteer who loses their passkey and is
- * rebound to a new one keeps it.
+ * A volunteer's ID: `obs:` and the hex SHA-256 of the first passkey the log records for them, as
+ * written, derived the way an operator's is. It stays theirs whatever passkeys they add or
+ * remove afterwards.
  */
 export const ObserverIdSchema = z
   .string()
   .regex(/^obs:[0-9a-f]{64}$/, "Expected an observer ID: obs: and the SHA-256 of its first passkey, in lowercase hex");
 
-/** The ID of the volunteer whose first passkey is `firstPasskey`. */
+/** The ID of the volunteer whose first logged passkey is `firstPasskey`. */
 export function observerId(firstPasskey: string): string {
   return `obs:${sha256Hex(firstPasskey)}`;
 }
@@ -35,12 +35,13 @@ export function observerId(firstPasskey: string): string {
 // --- Observers ------------------------------------------------------------------------
 
 /**
- * The log's record of a volunteer's passkey, signed by the log's own key as an invitation is.
- * Creating a passkey signs nothing, so joining proves nothing about who holds the key; the
- * volunteer's first observation does. The node logs this entry just before that observation,
- * so every logged observer key has signed something. A volunteer's public name is the node's
- * to keep, since they can change it; entries logged before that carry the name they joined
- * with as `name`.
+ * The log's record of a passkey a volunteer holds, signed by the log's own key as an invitation
+ * is. A volunteer holds a passkey for each device or password manager they use, and each signs
+ * for them until it is removed. Creating a passkey signs nothing, so adding one proves nothing
+ * about who holds the key; the first entry it signs does. The node logs this entry just before
+ * that one, so every logged observer key has signed something. A volunteer's public name is the
+ * node's to keep, since they can change it; entries logged before that carry the name they
+ * joined with as `name`.
  */
 export const ObserverKeyEntrySchema = z.strictObject({
   type: z.literal("observer_key"),
@@ -50,6 +51,19 @@ export const ObserverKeyEntrySchema = z.strictObject({
   sig: SignatureSchema,
 });
 export type ObserverKeyEntry = z.infer<typeof ObserverKeyEntrySchema>;
+
+/**
+ * The log's record that a volunteer no longer holds a passkey it recorded for them, such as one
+ * on a device they lost, signed by the log as the key entry was. Nothing the passkey signs
+ * afterwards counts, and no one may hold it again.
+ */
+export const ObserverKeyRemovalEntrySchema = z.strictObject({
+  type: z.literal("observer_key_removal"),
+  observer: ObserverIdSchema,
+  key: PasskeyKeySchema,
+  sig: SignatureSchema,
+});
+export type ObserverKeyRemovalEntry = z.infer<typeof ObserverKeyRemovalEntrySchema>;
 
 // --- Tasks ----------------------------------------------------------------------------
 

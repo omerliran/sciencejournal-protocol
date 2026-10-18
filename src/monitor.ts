@@ -14,7 +14,7 @@ import {
   type Detached,
   type KeyRotationEntry,
 } from "./entries";
-import { observerId, ObserverIdSchema } from "./fieldwork";
+import { observerId, ObserverIdSchema, type ObserverKeyEntry, type ObserverKeyRemovalEntry } from "./fieldwork";
 import { DigestSchema, type Digest } from "./hash";
 import {
   GithubAccountSchema,
@@ -139,6 +139,10 @@ const HexHashSchema = z.string().regex(/^[0-9a-f]{64}$/, "Expected 32 bytes in h
 const KeyChangeSchema = z.strictObject({ index: z.number().int().nonnegative(), key: z.string() });
 type KeyChange = z.infer<typeof KeyChangeSchema>;
 
+/** A passkey a volunteer held: the entry that recorded it, and the one that removed it, if any. */
+const PasskeyHeldSchema = KeyChangeSchema.extend({ removed: z.number().int().nonnegative().optional() });
+type PasskeyHeld = z.infer<typeof PasskeyHeldSchema>;
+
 /**
  * An identity on the log: the entry that gave it, its kind, what it rests on, which a recovery
  * must go through, and the organization its leaf counts it as, which an operator it sponsors
@@ -166,8 +170,11 @@ export const AuditStateSchema = z.strictObject({
   operators: z.record(OperatorIdSchema, z.array(KeyChangeSchema).min(1)),
   /** Each operator's identities, which its key recoveries rest on. */
   identities: z.record(OperatorIdSchema, z.array(IdentityRecordSchema).min(1)),
-  /** Each observer's passkeys in log order, from their observer key entries. */
-  observers: z.record(ObserverIdSchema, z.array(KeyChangeSchema).min(1)),
+  /**
+   * Each observer's passkeys in log order, from their observer key entries, with where a removal
+   * took each away. Audits saved before passkeys were removed have no removals.
+   */
+  observers: z.record(ObserverIdSchema, z.array(PasskeyHeldSchema).min(1)),
   /** Commitments not yet opened or closed, by the index of the sealed entry that holds each. */
   commitments: z.record(z.string().regex(/^(0|[1-9][0-9]*)$/), DigestSchema),
   /** The indexes of the challenges logged, which their reviews name. */
@@ -349,6 +356,7 @@ export const NOT_CHECKED = {
   work: "An attestation, review, flag, or challenge names a bundle or a claim, and only the node's jobs say who could take that work. The monitor indexes neither, so it checks each one's signer, identity, and commitment, and that a challenge review names an earlier challenge.",
   disowned: "A key recovery may disown only recent entries; the monitor checks that it disowns nothing after itself, not how far back it reaches.",
   forum: "A forum thread or post holds only the digest of its words, which the node keeps and may remove. Whether what it names was open when it was logged, whether a reply is in the same thread, and how far ahead a working_on post's date is are the node's to check; the monitor checks each one's signer and identity.",
+  passkeys: "A volunteer's passkeys after their first, and their removals, are the log's word that one person holds them, as an invited operator's recovery is; the monitor checks that the log signed each, that no passkey serves two volunteers or comes back once removed, and that whatever a volunteer signs verifies against a passkey they held then.",
   backers: "A swarm's backers and the credit each put in are the node's records of what people bought and gave, which no log entry holds, and so is whether the swarm's problem was answered when its pool closed; the monitor checks that the log signed the list and that each backer's passkey was logged before it.",
   swarm: "A swarm, goal, or attempt holds only the digest of its words, and a goal proof its file's digest, which the node keeps and may remove. Whether a goal's parent was open in the same swarm, whether the goals a proof assumes are goals of the same swarm that don't rest on it, whether a goal check was the node's to give and went to an organization other than the prover's, and whether a proof passed, which only re-running it shows, are the node's to check; the monitor checks each one's signer and identity.",
 } as const;
@@ -389,7 +397,7 @@ export class LogAuditor {
   private timestamp: string | null;
   private readonly operators: Map<string, KeyChange[]>;
   private readonly identities: Map<string, IdentityRecord[]>;
-  private readonly observers: Map<string, KeyChange[]>;
+  private readonly observers: Map<string, PasskeyHeld[]>;
   private readonly commitments: Map<number, Digest>;
   private readonly challenges: Set<number>;
   private readonly withdrawn: Set<string>;
@@ -402,6 +410,8 @@ export class LogAuditor {
   private readonly voids: Map<number, { operator: string; index: number }>;
   /** Which operator first held each key, retired keys included. */
   private readonly holders = new Map<string, string>();
+  /** Which observer each passkey was recorded for, removed ones included. */
+  private readonly passkeyHolders = new Map<string, string>();
 
   /**
    * `logKey` is the audited log's key. A log that also holds entries another log signed, as a
@@ -418,7 +428,7 @@ export class LogAuditor {
     this.timestamp = state.timestamp;
     this.operators = new Map(Object.entries(state.operators).map(([id, keys]) => [id, [...keys]]));
     this.identities = new Map(Object.entries(state.identities).map(([id, held]) => [id, [...held]]));
-    this.observers = new Map(Object.entries(state.observers).map(([id, keys]) => [id, [...keys]]));
+    this.observers = new Map(Object.entries(state.observers).map(([id, keys]) => [id, keys.map((held) => ({ ...held }))]));
     this.commitments = new Map(Object.entries(state.commitments).map(([index, digest]) => [Number(index), digest]));
     this.challenges = new Set(state.challenges);
     this.withdrawn = new Set(state.withdrawn);
@@ -430,6 +440,7 @@ export class LogAuditor {
     this.corrections = new Map(Object.entries(state.corrections));
     this.voids = new Map(Object.entries(state.voids).map(([at, voided]) => [Number(at), voided]));
     for (const [operator, keys] of this.operators) for (const { key } of keys) this.holders.set(key, operator);
+    for (const [observer, keys] of this.observers) for (const { key } of keys) this.passkeyHolders.set(key, observer);
   }
 
   /** How many entries have been audited, this run and before. */
@@ -610,17 +621,12 @@ export class LogAuditor {
       case "task":
         return this.task(index, operator, entry.operator_key_digest as string, signed);
       case "observer_key":
-        this.names(index, "observer", entry.observer, leaf.observer!);
-        this.signedByLog(index, entry.type, signed);
-        // A volunteer's first passkey makes their ID; one rebound to a new passkey keeps it.
-        if (!this.observers.has(leaf.observer!) && leaf.observer !== observerId(entry.key as string)) {
-          this.problem(index, "key", `The observer key entry names ${leaf.observer}, but the passkey it records first makes ${observerId(entry.key as string)}`);
-        }
-        return this.addKey(this.observers, leaf.observer!, index, entry.key as string);
+        return this.addPasskey(index, leaf.observer!, entry as unknown as Detached<ObserverKeyEntry>, signed);
+      case "observer_key_removal":
+        return this.removePasskey(index, leaf.observer!, entry as unknown as Detached<ObserverKeyRemovalEntry>, signed);
       case "observation":
-        return this.observation(index, leaf.observer!, signed);
       case "idea":
-        return this.idea(index, leaf.observer!, signed);
+        return this.signedByObserver(index, type, leaf.observer!, signed);
       case "sealed":
         this.signedByLog(index, entry.type, signed);
         this.commitments.set(index, entry.commitment as Digest);
@@ -973,24 +979,49 @@ export class LogAuditor {
     }
   }
 
-  private observation(index: number, observer: string, signed: Signed | null): void {
-    const held = latest(this.observers.get(observer), index);
-    if (!held) return this.problem(index, "signer", `${observer} has no passkey on the log`);
-    if (signed && !verifyPasskeyObject(signed as unknown as PasskeySigned, held.key)) {
-      this.problem(index, "signature", `The observation's passkey signature doesn't verify against ${observer}'s passkey from entry ${held.index}`);
+  /**
+   * A volunteer holds a passkey for each device or password manager they use, so what they sign
+   * is checked against every passkey the log recorded for them before it and hadn't removed.
+   */
+  private signedByObserver(index: number, type: string, observer: string, signed: Signed | null): void {
+    const held = (this.observers.get(observer) ?? []).filter((key) => key.index < index && (key.removed === undefined || key.removed > index));
+    if (held.length === 0) return this.problem(index, "signer", `${observer} holds no passkey on the log before it`);
+    if (signed && !held.some(({ key }) => verifyPasskeyObject(signed as unknown as PasskeySigned, key))) {
+      const from = held.map((key) => key.index).join(", ");
+      this.problem(index, "signature", `The ${type}'s passkey signature doesn't verify against any passkey ${observer} held then, from entries ${from}`);
     }
   }
 
   /**
-   * An idea waits for a person's approval before it is logged, so a volunteer who lost their
-   * passkey in between signed it with the one before: any passkey they held on the log counts.
+   * The log records a passkey a volunteer holds. Their first one makes their ID; later ones add
+   * to it. A passkey serves one volunteer, once, so a removed one can't come back.
    */
-  private idea(index: number, observer: string, signed: Signed | null): void {
-    const keys = (this.observers.get(observer) ?? []).filter((change) => change.index < index);
-    if (keys.length === 0) return this.problem(index, "signer", `${observer} has no passkey on the log`);
-    if (signed && !keys.some(({ key }) => verifyPasskeyObject(signed as unknown as PasskeySigned, key))) {
-      this.problem(index, "signature", `The idea's passkey signature doesn't verify against any passkey ${observer} held on the log before it`);
+  private addPasskey(index: number, observer: string, entry: Detached<ObserverKeyEntry>, signed: Signed | null): void {
+    this.names(index, "observer", entry.observer, observer);
+    this.signedByLog(index, entry.type, signed);
+    if (!this.observers.has(observer) && observer !== observerId(entry.key)) {
+      this.problem(index, "key", `The observer key entry names ${observer}, but the passkey it records first makes ${observerId(entry.key)}`);
     }
+    const holder = this.passkeyHolders.get(entry.key);
+    if (holder !== undefined) {
+      return this.problem(index, "key", `The log recorded this passkey for ${holder} before; a passkey serves one volunteer, once`);
+    }
+    this.passkeyHolders.set(entry.key, observer);
+    const held = this.observers.get(observer);
+    if (!held) return void this.observers.set(observer, [{ index, key: entry.key }]);
+    this.notes.add("passkeys");
+    held.push({ index, key: entry.key });
+  }
+
+  /** The log removes a passkey a volunteer held, which signs nothing for them from then on. */
+  private removePasskey(index: number, observer: string, entry: Detached<ObserverKeyRemovalEntry>, signed: Signed | null): void {
+    this.notes.add("passkeys");
+    this.names(index, "observer", entry.observer, observer);
+    this.signedByLog(index, entry.type, signed);
+    const held = (this.observers.get(observer) ?? []).find((key) => key.key === entry.key);
+    if (!held) return this.problem(index, "key", `The removal names a passkey the log never recorded for ${observer}`);
+    if (held.removed !== undefined) return this.problem(index, "key", `${observer}'s passkey from entry ${held.index} was removed before, at entry ${held.removed}`);
+    held.removed = index;
   }
 
   /** The entry needs its operator to have proven an identity on the log before position `at`. */

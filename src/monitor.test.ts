@@ -43,7 +43,7 @@ const daveNext = generateKeyPair(); // dave's key after it recovers through the 
 const erin = generateKeyPair(); // joins bob's organization with an invite code
 const frank = generateKeyPair(); // vouched for from the link it sent its person
 const ada = virtualPasskey(); // a volunteer
-const adaNext = virtualPasskey(); // ada's passkey after she lost the first
+const adaNext = virtualPasskey(); // the passkey ada adds on another device
 // Their IDs, which their first keys make.
 const [aliceId, bobId, carolId, daveId, erinId, frankId] = [alice, bob, carol, dave, erin, frank].map((keys) => operatorId(keys.publicKey));
 const adaId = observerId(ada.publicKey);
@@ -128,6 +128,8 @@ const invited = (log: MemoryLog, operator: string) => ({ operator, entry: invita
 
 const observerKey = (log: MemoryLog, passkey: ReturnType<typeof virtualPasskey>) =>
   signObject({ type: "observer_key" as const, observer: adaId, key: passkey.publicKey, name: "Ada" }, log.secretKey);
+const passkeyRemoval = (log: MemoryLog, passkey: ReturnType<typeof virtualPasskey>, observer = adaId) =>
+  signObject({ type: "observer_key_removal" as const, observer, key: passkey.publicKey }, log.secretKey);
 
 const githubIdentity = (operator: string, keys: Keys, repository: string) =>
   signObject({ type: "identity" as const, kind: "github" as const, operator, repository }, keys.secretKey);
@@ -321,6 +323,11 @@ async function realisticLog(): Promise<MemoryLog> {
   await log.append({ operator: frankId, entry: keyEntry(frank, "Paired agent") });
   await log.append({ operator: frankId, entry: pairedIdentity(log, frankId, frank, "github:5150"), organization: "github:5150" });
   await log.append({ operator: frankId, entry: pairedDomain(log, frankId, frank, "lab.example.net", PAIRED_DOMAIN), organization: "example.net" });
+
+  // Ada adds a passkey on another device, suggests an idea with it, and removes the first, which a device she lost held.
+  await log.append({ observer: adaId, entry: observerKey(log, adaNext) });
+  await log.append({ observer: adaId, entry: adaNext.sign({ type: "idea" as const, text: ideaTextDigest({ title: "Do bees sleep?" }) }) });
+  await log.append({ observer: adaId, entry: passkeyRemoval(log, ada) });
   return log;
 }
 
@@ -363,10 +370,11 @@ describe("monitorLog", () => {
         bundle: 2,
         attestation: 1,
         hazard_review: 1,
-        observer_key: 1,
+        observer_key: 2,
+        observer_key_removal: 1,
         task: 1,
         observation: 1,
-        idea: 1,
+        idea: 2,
         hazard_flag: 1,
         canary: 1,
         withdrawal: 3,
@@ -402,6 +410,7 @@ describe("monitorLog", () => {
         NOT_CHECKED.forum,
         NOT_CHECKED.swarm,
         NOT_CHECKED.backers,
+        NOT_CHECKED.passkeys,
       ].sort(),
     );
 
@@ -409,6 +418,11 @@ describe("monitorLog", () => {
     expect(state!.audit.operators[bobId]).toEqual([
       { index: 2, key: bob.publicKey },
       { index: 6, key: bobNext.publicKey },
+    ]);
+    // A volunteer's passkeys, each with where the log recorded it, and the removed one with where it was removed.
+    expect(state!.audit.observers[adaId]).toEqual([
+      { index: expect.any(Number), key: ada.publicKey, removed: log.size - 1 },
+      { index: log.size - 3, key: adaNext.publicKey },
     ]);
     // An invite code and a pairing are spent once used, and an identity keeps the organization its leaf gave it.
     expect(state!.audit.invites).toEqual([INVITE_CODE]);
@@ -718,15 +732,16 @@ describe("monitorLog", () => {
     const passkeyOf = (observer: string, passkey: typeof ada) =>
       signObject({ type: "observer_key" as const, observer, key: passkey.publicKey, name: "Ada" }, log.secretKey);
     const wrong = observerId(adaNext.publicKey);
+    const other = virtualPasskey();
     await log.append({ operator: bobId, entry: keyEntry(alice) });
-    await log.append({ observer: wrong, entry: passkeyOf(wrong, ada) });
-    // A volunteer rebound to a new passkey keeps the ID their first one made.
+    await log.append({ observer: wrong, entry: passkeyOf(wrong, other) });
+    // A volunteer who adds a passkey keeps the ID their first one made.
     await log.append({ observer: adaId, entry: passkeyOf(adaId, ada) });
     await log.append({ observer: adaId, entry: passkeyOf(adaId, adaNext) });
     const { report } = await monitorLog(log.source(), null);
     expect(report.problems).toEqual([
       { check: "key", index: 0, reason: `The key entry names ${bobId}, but the key it registers makes ${aliceId}` },
-      { check: "key", index: 1, reason: `The observer key entry names ${wrong}, but the passkey it records first makes ${adaId}` },
+      { check: "key", index: 1, reason: `The observer key entry names ${wrong}, but the passkey it records first makes ${observerId(other.publicKey)}` },
     ]);
   });
 
@@ -756,27 +771,60 @@ describe("monitorLog", () => {
     ]);
   });
 
-  it("accepts a task or an idea signed with a key its signer held before a person approved it", async () => {
+  it("accepts a task signed with a key its operator held before a person approved it", async () => {
     const log = new MemoryLog();
     await log.append({ operator: aliceId, entry: keyEntry(alice) });
     await log.append({ operator: aliceId, entry: invitation(log, aliceId), organization: aliceId });
-    await log.append({ observer: adaId, entry: observerKey(log, ada) });
     const waiting = task(alice);
-    const idea = ada.sign({ type: "idea" as const, text: ideaTextDigest({ title: "Why do bees dance?" }) });
     await log.append({
       operator: aliceId,
       entry: signObject({ type: "key_recovery" as const, kind: "invited" as const, operator: aliceId, key: aliceNext.publicKey, since: log.size }, log.secretKey),
     });
-    await log.append({ observer: adaId, entry: observerKey(log, adaNext) });
     await log.append({ operator: aliceId, entry: waiting });
-    await log.append({ observer: adaId, entry: idea });
-    // An observation is logged as it is made, so it must carry the passkey held then.
-    await log.append({ observer: adaId, entry: ada.sign({ type: "observation" as const, task: taskId(waiting), record: sha256Digest("record") }) });
     await log.append({ operator: aliceId, entry: task(carol) });
     const { report } = await monitorLog(log.source(), null);
     expect(report.problems).toEqual([
-      { check: "signature", index: 7, reason: `The observation's passkey signature doesn't verify against ${adaId}'s passkey from entry 4` },
-      { check: "signer", index: 8, reason: `The task names key ${keyDigest(carol.publicKey)}, which ${aliceId} didn't hold on the log before it` },
+      { check: "signer", index: 4, reason: `The task names key ${keyDigest(carol.publicKey)}, which ${aliceId} didn't hold on the log before it` },
+    ]);
+  });
+
+  it("counts each passkey a volunteer holds from its key entry until the log removes it, and never again", async () => {
+    const log = new MemoryLog();
+    const bea = virtualPasskey();
+    const beaId = observerId(bea.publicKey);
+    const posted = task(alice);
+    const observation = (passkey: typeof ada) => passkey.sign({ type: "observation" as const, task: taskId(posted), record: sha256Digest("record") });
+    const idea = (passkey: typeof ada, title: string) => passkey.sign({ type: "idea" as const, text: ideaTextDigest({ title }) });
+    await log.append({ operator: aliceId, entry: keyEntry(alice) });
+    await log.append({ operator: aliceId, entry: invitation(log, aliceId), organization: aliceId });
+    await log.append({ operator: aliceId, entry: posted });
+    await log.append({ observer: adaId, entry: observerKey(log, ada) });
+    // A passkey signs nothing before the log records it.
+    await log.append({ observer: adaId, entry: idea(adaNext, "Too soon") });
+    await log.append({ observer: adaId, entry: observerKey(log, adaNext) });
+    // Either passkey signs for her while she holds both.
+    await log.append({ observer: adaId, entry: observation(ada) });
+    await log.append({ observer: adaId, entry: idea(adaNext, "Why do bees dance?") });
+    await log.append({ observer: adaId, entry: passkeyRemoval(log, ada) });
+    // The removed one signs nothing more, is removed once, and serves no one again.
+    await log.append({ observer: adaId, entry: idea(ada, "Do bees sleep?") });
+    await log.append({ observer: adaId, entry: passkeyRemoval(log, ada) });
+    await log.append({ observer: adaId, entry: observerKey(log, ada) });
+    await log.append({ observer: beaId, entry: signObject({ type: "observer_key" as const, observer: beaId, key: adaNext.publicKey }, log.secretKey) });
+    await log.append({ observer: beaId, entry: passkeyRemoval(log, bea, beaId) });
+    // Once she has removed every passkey, nothing she signs counts until the log records another.
+    await log.append({ observer: adaId, entry: passkeyRemoval(log, adaNext) });
+    await log.append({ observer: adaId, entry: idea(adaNext, "Where do bees go in winter?") });
+    const { report } = await monitorLog(log.source(), null);
+    expect(report.problems).toEqual([
+      { check: "signature", index: 4, reason: `The idea's passkey signature doesn't verify against any passkey ${adaId} held then, from entries 3` },
+      { check: "signature", index: 9, reason: `The idea's passkey signature doesn't verify against any passkey ${adaId} held then, from entries 5` },
+      { check: "key", index: 10, reason: `${adaId}'s passkey from entry 3 was removed before, at entry 8` },
+      { check: "key", index: 11, reason: `The log recorded this passkey for ${adaId} before; a passkey serves one volunteer, once` },
+      { check: "key", index: 12, reason: `The observer key entry names ${beaId}, but the passkey it records first makes ${observerId(adaNext.publicKey)}` },
+      { check: "key", index: 12, reason: `The log recorded this passkey for ${adaId} before; a passkey serves one volunteer, once` },
+      { check: "key", index: 13, reason: `The removal names a passkey the log never recorded for ${beaId}` },
+      { check: "signer", index: 15, reason: `${adaId} holds no passkey on the log before it` },
     ]);
   });
 
