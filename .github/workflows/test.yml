@@ -18,4 +18,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Record container engine diagnostics
+        env:
+          SJ_DOCKER_TEST_ARTIFACTS: ${{ runner.temp }}/sj-docker-tests
+        run: |
+          mkdir -p "$SJ_DOCKER_TEST_ARTIFACTS"
+          docker version 2>&1 | tee "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker info 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker buildx version 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
+          docker buildx ls 2>&1 | tee -a "$SJ_DOCKER_TEST_ARTIFACTS/engine.log"
       - run: npm test
+        env:
+          SJ_DOCKER_TEST_ARTIFACTS: ${{ runner.temp }}/sj-docker-tests
+      - name: Upload Docker test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/sj-docker-tests/**/*.log
+            ${{ runner.temp }}/sj-docker-tests/**/engine.json
+            ${{ runner.temp }}/sj-docker-tests/**/run.json
+            ${{ runner.temp }}/sj-docker-tests/**/verdicts.json
+            ${{ runner.temp }}/sj-docker-tests/**/test.txt

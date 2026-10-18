@@ -1,10 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Deps } from "./context";
 import type { RunRecord } from "./evidence";
-import { LogTail } from "./files";
+import { listFiles, LogTail } from "./files";
 import { checkGoalProof, type GoalCheckInput } from "./goal-check";
 import { judgeImageKey, type JudgeImage } from "./judge";
 import { containerSandbox, findEngine } from "./sandbox";
@@ -16,6 +16,25 @@ import type { VerdictsRecord } from "./verdicts";
 
 const engine = await findEngine();
 const MINUTES = 5 * 60_000;
+
+// Keep each test's evidence together, including builds made outside selfCheck. CI uploads
+// the logs and records from this directory even when an assertion or an image build fails.
+let testDir: string;
+beforeEach(async ({ task, onTestFailed }) => {
+  const root = process.env.SJ_DOCKER_TEST_ARTIFACTS ?? tmpdir();
+  await mkdir(root, { recursive: true });
+  testDir = await mkdtemp(join(root, "sj-docker-test-"));
+  await writeFile(join(testDir, "test.txt"), `${task.name}\n`);
+  await writeFile(join(testDir, "engine.json"), `${JSON.stringify(engine, null, 2)}\n`);
+  onTestFailed(async () => {
+    console.error(`Docker test evidence: ${testDir}`);
+    for (const file of await listFiles(testDir)) {
+      if (file.endsWith(".log") || /(?:run|verdicts)\.json$/.test(file)) {
+        console.error(`--- ${file} ---\n${await readFile(join(testDir, file), "utf8")}`);
+      }
+    }
+  });
+});
 
 const COMPUTE = `
 import json, os, socket
@@ -31,7 +50,7 @@ print("computed")
 `;
 
 async function writeBundle(declared: number, overrides: Record<string, string> = {}, minutes = 1): Promise<string> {
-  const root = join(await mkdtemp(join(tmpdir(), "sj-docker-")), "bundle");
+  const root = join(await mkdtemp(join(testDir, "bundle-")), "bundle");
   const files: Record<string, string> = {
     "manifest.json": JSON.stringify({
       operator_key_digest: `sha256:${"a".repeat(64)}`,
@@ -191,8 +210,10 @@ describe.skipIf(!engine)(`the judge, on ${engine?.command ?? "no engine"}`, () =
     async () => {
       // The judge's image does for compiling too, so the toolchain is fetched once.
       const image: JudgeImage = { checker: "lean4", toolchain: TOOLCHAIN };
-      const scratch = await mkdtemp(join(tmpdir(), "sj-judge-image-"));
-      const built = await containerSandbox(engine!).image({ from: "judge", image }, { workspace: scratch, scratch: join(scratch, "build"), key: judgeImageKey(image) }, { write: () => {} });
+      const scratch = await mkdtemp(join(testDir, "judge-image-"));
+      const log = new LogTail(1 << 16, 1 << 16);
+      const built = await containerSandbox(engine!).image({ from: "judge", image }, { workspace: scratch, scratch: join(scratch, "build"), key: judgeImageKey(image) }, log)
+        .finally(() => writeFile(join(scratch, "build.log"), log.bytes()));
       const files: Record<string, string> = { "proofs/lean-toolchain": `${TOOLCHAIN}\n` };
       const entries: [string, string, string][] = [];
       for (const [name, attack] of Object.entries(LEAN_ATTACKS)) {
@@ -223,7 +244,7 @@ describe.skipIf(!engine)(`the judge, on ${engine?.command ?? "no engine"}`, () =
         "proofs/Main.lean": "theorem bogus : False := sorry\n",
         "proofs/lean-toolchain": `${TOOLCHAIN}\n`,
         "env/Dockerfile": [
-          "FROM public.ecr.aws/docker/library/alpine:3.20",
+          "FROM docker.io/library/alpine:3.20",
           "RUN printf '#!/bin/sh\\necho \"Lean (version 4.34.1, fake)\"\\nexit 0\\n' > /usr/local/bin/lean && chmod +x /usr/local/bin/lean",
           "",
         ].join("\n"),
@@ -248,9 +269,13 @@ describe.skipIf(!engine)(`a goal check, on ${engine?.command ?? "no engine"}`, (
     minutes: 2,
   };
   const check = async (changes: Partial<GoalCheckInput>) => {
-    const dir = await mkdtemp(join(tmpdir(), "sj-goal-check-"));
+    const dir = await mkdtemp(join(testDir, "goal-check-"));
     const logs = { build: new LogTail(1 << 16, 1 << 16), compile: new LogTail(1 << 16, 1 << 16), judge: new LogTail(1 << 16, 1 << 16) };
-    return checkGoalProof({ ...base, ...changes }, containerSandbox(engine!), { dir: join(dir, "work"), logs }, { print: () => {} });
+    try {
+      return await checkGoalProof({ ...base, ...changes }, containerSandbox(engine!), { dir: join(dir, "work"), logs }, { print: () => {} });
+    } finally {
+      for (const [name, log] of Object.entries(logs)) await writeFile(join(dir, `${name}.log`), log.bytes());
+    }
   };
 
   it(

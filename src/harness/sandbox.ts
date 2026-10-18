@@ -35,8 +35,8 @@ export type ImagePlan =
   /** The judge's own image for a proof check: the pinned checker and nothing of the work's. */
   | { from: "judge"; image: JudgeImage };
 
-/** The official Python image, from the registry the node's own image comes from. */
-export const PYTHON_IMAGE = "public.ecr.aws/docker/library/python:3.12-slim";
+/** The official Python image directly from Docker Hub; ECR's public mirror has a separate data quota. */
+export const PYTHON_IMAGE = "docker.io/library/python:3.12-slim";
 export const CONDA_IMAGE = "ghcr.io/mamba-org/micromamba:2";
 
 export interface CommandPlan {
