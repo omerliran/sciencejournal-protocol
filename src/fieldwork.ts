@@ -39,7 +39,8 @@ export function observerId(firstPasskey: string): string {
  * is. A volunteer holds a passkey for each device or password manager they use, and each signs
  * for them until it is removed. Creating a passkey signs nothing, so adding one proves nothing
  * about who holds the key; the first entry it signs does. The node logs this entry just before
- * that one, so every logged observer key has signed something. A volunteer's public name is the
+ * that one, so every logged observer key has signed something, except a backer's first, logged
+ * just before the swarm's backers entry that lists them. A volunteer's public name is the
  * node's to keep, since they can change it; entries logged before that carry the name they
  * joined with as `name`.
  */
