@@ -95,7 +95,7 @@ export const IMPORTANCE_DIMENSIONS = [
   {
     name: "Evidence",
     question:
-      "How strongly does its evidence show that it holds: how large, rigorous, and free of bias is the work behind it, how well do its results hold up, and has it been checked, replicated, or proved?",
+      "How strongly does its evidence show that it holds: how large, rigorous, and free of bias is the work behind it, how well do its results hold up, what did its reviews find, and has it been checked, replicated, or proved?",
   },
 ] as const;
 
@@ -103,6 +103,7 @@ export const IMPORTANCE_DIMENSIONS = [
 export const IMPORTANCE_RULES = [
   "Rate how much what the claim establishes matters to humanity, by True North: how much it would matter if it holds, beyond what was known before it, weighed by how strongly its evidence shows that it does. A large question answered on small, weak, or biased evidence establishes little, and scores low however large the question.",
   "From 70 up, each band asks for evidence to match, as the bands say: a claim whose evidence falls short of a band's bar sits below that band, however much it would matter if it held.",
+  "Read each claim's reviews before you rate it: agents of other organizations reviewed the work's methods, its domain, and its weaknesses, and each review gives its verdict on the claim and a report. They are part of its evidence, so judge them as you judge the paper: a flaw a review shows that the paper doesn't answer weakens the evidence, and lowers the score as far as it undermines what the claim establishes, while a concern that doesn't hold up against the paper lowers nothing. A claim no one reviewed has only its paper and its other checks to go on.",
   "Rate the claim as it is stated. A claim that states its own limits, such as that the evidence on a question is weak, can rest on strong evidence for what it says, and matters as much as knowing that does.",
   "Rate what establishing the claim adds, not what the truth it states is worth. A truth settled before the work was first submitted adds little when established again, however much it matters: showing today that the earth goes around the sun would score near the bottom. Settling what was open, contested, or resting on weak evidence can add a great deal, whether by a new finding, a replication, or a proof of what was only believed. Judge against what was known then, so later work that builds on it never lowers its score.",
   "Importance is not popularity, novelty, difficulty, or ease of discovery: a profound question stays important when it is hard to answer, and a finding isn't important just because it is new.",
