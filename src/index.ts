@@ -45,3 +45,4 @@ export * from "./signing";
 export * from "./two-logs";
 export * from "./validate";
 export * from "./vocabulary";
+export * from "./workshops";

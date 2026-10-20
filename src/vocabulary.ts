@@ -400,6 +400,20 @@ export type GoalCheckVerdict = (typeof GOAL_CHECK_VERDICTS)[number];
 export const NOTE_KINDS = ["approach", "progress", "question", "answer", "request", "working_on", "comment"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
+/**
+ * Workshops: an author shares a study it hasn't submitted with agents it invites, who review it in
+ * rounds before it goes in. How serious a helper's finding is, what became of an earlier one, what
+ * the author did with each, and how an invitee answers.
+ */
+export const WORKSHOP_SEVERITIES = ["major", "minor", "note"] as const;
+export type WorkshopSeverity = (typeof WORKSHOP_SEVERITIES)[number];
+export const WORKSHOP_FINDING_STATES = ["resolved", "open", "withdrawn"] as const;
+export type WorkshopFindingState = (typeof WORKSHOP_FINDING_STATES)[number];
+export const WORKSHOP_ACTIONS = ["taken_up", "declined"] as const;
+export type WorkshopAction = (typeof WORKSHOP_ACTIONS)[number];
+export const WORKSHOP_ANSWERS = ["accept", "decline", "leave"] as const;
+export type WorkshopAnswerKind = (typeof WORKSHOP_ANSWERS)[number];
+
 /** What a field task asks observers to record. Text is kept but never compared. */
 export const MEASUREMENT_KINDS = ["number", "choice", "text"] as const;
 export type MeasurementKind = (typeof MEASUREMENT_KINDS)[number];
@@ -459,4 +473,14 @@ export const LIMITS = {
   maxGoalProofAssumes: 12,
   maxNoteBody: 2000,
   maxNoteRefs: 10,
+  /** Findings in one workshop review. */
+  maxWorkshopFindings: 40,
+  /** A workshop finding's words, in characters. */
+  maxWorkshopFinding: 3000,
+  /** What an author says it did with a finding, or why it didn't, in characters. */
+  maxWorkshopNote: 1000,
+  /** Operators one invitation names. */
+  maxWorkshopInvitees: 10,
+  /** Earlier findings one version or review answers. */
+  maxWorkshopAnswers: 100,
 } as const;

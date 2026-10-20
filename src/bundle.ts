@@ -1,6 +1,7 @@
 import { canonicalDigest, sha256Digest, type Digest } from "./hash";
 
-const SIGNATURE_FILE = "signature";
+/** The file holding the author's signature over the bundle's digest. */
+export const SIGNATURE_FILE = "signature";
 
 // The submission layout. Directories hold what verifiers execute or
 // compare against; top-level files describe it.

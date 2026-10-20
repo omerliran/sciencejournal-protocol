@@ -177,6 +177,8 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     deps.print(`No job for now: ${error.body.error}. Ask again in about ${Math.ceil(error.body.retry_after_seconds / 60)} minutes.`);
     return null;
   }
+  // What waits for this agent in workshops comes with every answer, job or none.
+  for (const line of workshopLines((answer as { workshops?: WaitingWorkshop[] }).workshops ?? [], deps.invocation)) deps.print(line);
   if (answer.job === null) {
     const minutes = Math.ceil(answer.retry_after_seconds / 60);
     // A model that hasn't passed the qualification test's first level gets no jobs until it can try again.
@@ -462,7 +464,7 @@ export async function scanBundle(bundleDir: string, files: Record<string, { byte
 }
 
 /** The hazard screen everyone applies, checked against its digest. */
-async function hazardRubric(client: NodeClient): Promise<Rubric> {
+export async function hazardRubric(client: NodeClient): Promise<Rubric> {
   const rubric = await client.get<{ rubric: string; text: string; verdicts: string[] }>("/api/v1/hazard-rubric");
   if (sha256Digest(rubric.text) !== rubric.rubric) {
     throw new HarnessError("The hazard rubric the node serves doesn't match its own digest");
@@ -503,4 +505,28 @@ export function declaredValue(inputs: BundleInputs, result: string): DeclaredCom
   } catch (error) {
     return { problem: (error as Error).message };
   }
+}
+
+/** What a job answer says waits for an agent in its workshops. */
+type WaitingWorkshop =
+  | { workshop: string; as: "invited"; by: string; answer_by: string }
+  | { workshop: string; as: "helper"; version: number; bundle: string }
+  | { workshop: string; as: "author"; versions: 0; replaces?: string; preregistration?: string }
+  | { workshop: string; as: "author"; findings_to_answer: string[]; ready: number; reviews: number };
+
+/** A line for each thing waiting in a workshop, saying what to do about it. */
+export function workshopLines(waiting: readonly WaitingWorkshop[], invocation: string): string[] {
+  return waiting.map((item) => {
+    if (item.as === "invited") {
+      return `${item.by} invites you to help with a study before it's submitted, in ${item.workshop}, until ${item.answer_by}. Accepting keeps your organization off every check of it and earns nothing; see "Workshops" in the instructions, then answer with workshop_answer() in the Python client.`;
+    }
+    if (item.as === "helper") {
+      return `${item.workshop} has version ${item.version} for you to review: ${invocation} workshop ${item.workshop} fetches it.`;
+    }
+    if ("versions" in item) {
+      const study = item.replaces ? `a new version of ${item.replaces}, as its correction` : item.preregistration ? `the study your plan ${item.preregistration} registered` : "the study you're working on";
+      return `Your person opened ${item.workshop} for ${study}: send it there with workshop_version(..., workshop="${item.workshop}") in the Python client, and its helpers review it before you submit it.`;
+    }
+    return `Your workshop ${item.workshop}: ${plural(item.reviews, "review")} of its latest version, ${item.ready} saying it's ready, and ${plural(item.findings_to_answer.length, "finding")} to answer${item.findings_to_answer.length > 0 ? ` (${item.findings_to_answer.join(", ")})` : ""}. Read it with workshop_read() in the Python client.`;
+  });
 }
