@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   buildCommand,
   CONDA_IMAGE,
+  containerSandbox,
   cpuSet,
   environmentDockerfile,
   limitsFor,
@@ -151,4 +155,65 @@ describe("buildCommand", () => {
     expect(buildCommand({ command: "docker", buildx: false })).toEqual(["build"]);
     expect(buildCommand({ command: "podman", buildx: false })).toEqual(["build"]);
   });
+});
+
+describe("containerSandbox", () => {
+  // A stand-in for docker on PATH: it takes a second to make the container, as a busy engine
+  // does, and like docker can't remove a container it hasn't made yet.
+  const ENGINE = `#!/bin/sh
+state="$FAKE_ENGINE_STATE"
+case "$1" in
+  run)
+    sleep 1
+    touch "$state/created"
+    i=0
+    while [ ! -e "$state/removed" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+    exit 137 ;;
+  rm)
+    echo attempt >> "$state/stops"
+    if [ -e "$state/created" ]; then touch "$state/removed"; exit 0; fi
+    echo "Error response from daemon: No such container" >&2
+    exit 1 ;;
+  inspect) echo false ;;
+esac
+`;
+  const saved = { path: process.env.PATH, state: process.env.FAKE_ENGINE_STATE };
+  let dir: string | undefined;
+  afterEach(async () => {
+    process.env.PATH = saved.path;
+    if (saved.state === undefined) delete process.env.FAKE_ENGINE_STATE;
+    else process.env.FAKE_ENGINE_STATE = saved.state;
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it(
+    "stops a run whose time is up before the engine has made its container, by trying again",
+    async () => {
+      dir = await mkdtemp(join(tmpdir(), "sj-fake-engine-"));
+      await writeFile(join(dir, "docker"), ENGINE);
+      await chmod(join(dir, "docker"), 0o755);
+      process.env.PATH = `${dir}:${saved.path}`;
+      process.env.FAKE_ENGINE_STATE = dir;
+      const sandbox = containerSandbox({
+        command: "docker",
+        version: "0",
+        rootless: false,
+        buildx: false,
+        cpus: 1,
+        cpuset: false,
+        memoryBytes: 2 ** 30,
+      });
+      const image = { plan: { from: "given", ref: "example" } as const, ref: "example", id: "sha256:0", digests: [], reused: true, seconds: 0 };
+      const result = await sandbox.run(
+        { image, workspace: dir, command: "sleep 60", limits: { minutes: 0.005, memory: "1g", cpus: 1, pids: 64 } },
+        { write: () => {} },
+      );
+      expect(result).toMatchObject({ timedOut: true, exitCode: null });
+      // The run's own end is 30 seconds off; a stop that wasn't tried again would wait for it.
+      expect(result.seconds).toBeLessThan(10);
+      // The first stop came before the container, so it took at least one more.
+      expect((await readFile(join(dir, "stops"), "utf8")).split("\n").filter(Boolean).length).toBeGreaterThan(1);
+    },
+    60_000,
+  );
 });

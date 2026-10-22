@@ -479,6 +479,9 @@ async function capture(command: string, args: string[], seconds = 60): Promise<{
   });
 }
 
+/** How long after a stop that left the run going the harness tries again. */
+const STOP_AGAIN_SECONDS = 2;
+
 /**
  * Runs an engine command, writing everything it prints to `log`, and stops it after `minutes`:
  * with `stop` when given (which stops the container itself), else by killing the command.
@@ -493,16 +496,26 @@ function stream(
   return new Promise((resolve) => {
     let timedOut = false;
     let settled = false;
+    let again: ReturnType<typeof setTimeout> | undefined;
     const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(again);
       resolve({ code, timedOut });
+    };
+    // A busy engine may not have made the container yet when its time is up, which leaves the
+    // first stop nothing to stop, so it's tried again until the run ends.
+    const stopUntilEnded = (stop: () => Promise<void>) => {
+      if (settled) return;
+      void stop().finally(() => {
+        if (!settled) again = setTimeout(() => stopUntilEnded(stop), STOP_AGAIN_SECONDS * 1000);
+      });
     };
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     const timer = setTimeout(() => {
       timedOut = true;
-      if (stop) void stop();
+      if (stop) stopUntilEnded(stop);
       else child.kill("SIGKILL");
     }, minutes * 60_000);
     child.stdout.on("data", (chunk: Buffer) => log.write(chunk, "stdout"));
