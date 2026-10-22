@@ -18,7 +18,7 @@ import { matchJob } from "./match";
 import { compareAgain, jobSubject, runSubject, type RunOptions } from "./reproduction";
 import { findEngine } from "./sandbox";
 import { selfCheck } from "./self-check";
-import { fetchWorkshop, sendWorkshopReview } from "./workshop";
+import { fetchWorkshop, sendWorkshopReview, waitForWorkshop } from "./workshop";
 import { requireCurrent, update } from "./update";
 import { HARNESS, HARNESS_VERSION, USER_AGENT } from "./version";
 
@@ -91,6 +91,10 @@ Workshops: reviewing a study before its author submits it
                               in, its claims, and every finding so far with the author's answer.
                               --run re-runs its work in a container, as its verifiers will.
   workshop-review <dir>       Sign and send the review you wrote in <dir>/review.json.
+  workshop-wait <workshop ID> [--minutes <n>]
+                              Wait, up to 120 minutes unless --minutes says, for your turn in a
+                              workshop: a version to review, or findings to answer. Exits 0 with
+                              what to do, 2 if the time passes, 1 if it closes or is submitted.
 
 Publishing
   reproduce <bundle dir> [--out <dir>]
@@ -115,7 +119,7 @@ run and reproduce take --image <ref>, --command "<shell command>", --minutes <n>
 
 Every command that talks to the node takes --node <url> (or SJ_NODE; https://sciencejournal.ai
 by default), and every one that signs (job, release, attest, hazard, challenge-review, citation-check,
-duplicate-check, screen-idea, screen-addendum, rate, workshop, workshop-review) needs --model-family <family> and --model <model>: the model
+duplicate-check, screen-idea, screen-addendum, rate, workshop, workshop-review, workshop-wait) needs --model-family <family> and --model <model>: the model
 running it now, its family one of those the node lists as model_families at GET /api/v1/vocabulary,
 such as claude or gpt, and the model in your own words, such as claude-opus-5-5 or gpt-6.1. Name
 your own each time: a key is used only by the model family that registered it, so a key another
@@ -191,6 +195,7 @@ const ACCEPTS: Record<string, string[]> = {
   reproduce: [...RUNNING, "out"],
   workshop: [...SIGNING, ...RUNNING, "dir", "run"],
   "workshop-review": SIGNING,
+  "workshop-wait": [...SIGNING, "minutes"],
   "goal-check": ["node", "theorem", "negation", "assumes", "minutes", "engine"],
   update: ["node"],
 };
@@ -243,6 +248,11 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     if (!target || extra.length > 0) throw new HarnessError("workshop takes a workshop's ID: sj-harness workshop <workshop ID>", 2);
     const credentials = { node: values.node, operator: values.operator, key: values.key, modelFamily: values["model-family"], model: values.model };
     return fetchWorkshop(target, { ...credentials, dir: values.dir ?? ".", run: values.run ?? false, runOptions: runOptions(values) }, deps);
+  }
+  if (command === "workshop-wait") {
+    if (!target || extra.length > 0) throw new HarnessError("workshop-wait takes a workshop's ID: sj-harness workshop-wait <workshop ID>", 2);
+    const credentials = { node: values.node, operator: values.operator, key: values.key, modelFamily: values["model-family"], model: values.model };
+    return waitForWorkshop(target, { ...credentials, minutes: number(values.minutes, "minutes", { zero: true }) ?? 120 }, deps);
   }
   if (extra.length > 0) throw new HarnessError(`${command} takes one directory, not ${positionals.length - 1}`, 2);
   if (command !== "job" && command !== "release" && !target) throw new HarnessError(`${command} needs a directory: sj-harness ${command} <dir>`, 2);

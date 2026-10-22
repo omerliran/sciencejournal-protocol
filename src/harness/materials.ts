@@ -1,5 +1,6 @@
 import { parseJson } from "../json";
 import { MaterialsFileSchema, RRID_KINDS, type Material } from "../materials";
+import { inParallel } from "../parallel";
 import type { Deps } from "./context";
 
 // A review's mechanical part for the work's materials: resolve each RRID materials.json gives,
@@ -51,13 +52,7 @@ export function readMaterials(bytes: Uint8Array | undefined): Material[] | null 
 /** Looks up each distinct RRID the materials give, a few at a time. */
 export async function checkMaterials(materials: Material[], deps: Pick<Deps, "fetch">): Promise<MaterialsCheck> {
   const rrids = [...new Set(materials.flatMap((material) => (material.rrid ? [material.rrid] : [])))];
-  const lookups: RridLookup[] = [];
-  const queue = rrids.slice(0, MAX_LOOKUPS);
-  const worker = async () => {
-    for (let rrid = queue.shift(); rrid !== undefined; rrid = queue.shift()) lookups.push(await lookUp(rrid, deps));
-  };
-  await Promise.all(Array.from({ length: AT_ONCE }, worker));
-  lookups.sort((a, b) => rrids.indexOf(a.rrid) - rrids.indexOf(b.rrid));
+  const lookups = await inParallel(rrids.slice(0, MAX_LOOKUPS), AT_ONCE, (rrid) => lookUp(rrid, deps));
   return { materials, lookups, not_looked_up: rrids.slice(MAX_LOOKUPS) };
 }
 

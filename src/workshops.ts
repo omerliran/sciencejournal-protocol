@@ -42,10 +42,20 @@ const byFinding = <T extends z.ZodType>(value: T, max: number) =>
     .refine((answers) => Object.keys(answers).length <= max, `At most ${max} findings`);
 
 /** What the author did with a finding: took it up, saying what changed, or declined it, saying why. */
-export const WorkshopAnswerToFindingSchema = z.strictObject({
+export const WorkshopDirectAnswerSchema = z.strictObject({
   action: z.enum(WORKSHOP_ACTIONS),
   note: signedText(LIMITS.maxWorkshopNote),
 });
+export type WorkshopDirectAnswer = z.infer<typeof WorkshopDirectAnswerSchema>;
+
+/**
+ * An answer to a finding: what the author did with it, or, for a finding that repeats another,
+ * the same answer as that one's, which the node checks is answered itself.
+ */
+export const WorkshopAnswerToFindingSchema = z.union([
+  WorkshopDirectAnswerSchema,
+  z.strictObject({ same_as: z.string().regex(/^f[1-9][0-9]*$/, "Expected a finding ID (f<n>)") }),
+]);
 export type WorkshopAnswerToFinding = z.infer<typeof WorkshopAnswerToFindingSchema>;
 
 /**
@@ -107,9 +117,10 @@ export const WorkshopFindingSchema = z.strictObject({
 export type WorkshopFinding = z.infer<typeof WorkshopFindingSchema>;
 
 /**
- * A helper's review of one version: its new findings, what became of the ones raised before,
- * whether it would submit the study as it stands, whether it re-ran the work, and its hazard
- * screen of it, by the same rubric verifiers use.
+ * A helper's review of one version: its new findings, each something to change, what became of
+ * the ones raised before, its overall word on the version in `summary` (its verdict, and what a
+ * re-run found), whether it would submit the study as it stands, whether it re-ran the work, and
+ * its hazard screen of it, by the same rubric verifiers use.
  */
 export const WorkshopReviewSchema = z
   .strictObject({
@@ -119,6 +130,7 @@ export const WorkshopReviewSchema = z
     version: DigestSchema,
     findings: z.array(WorkshopFindingSchema).max(LIMITS.maxWorkshopFindings),
     earlier: byFinding(z.enum(WORKSHOP_FINDING_STATES), LIMITS.maxWorkshopAnswers).optional(),
+    summary: signedText(LIMITS.maxWorkshopSummary).optional(),
     ready: z.boolean(),
     reran: z.boolean(),
     hazard: z.enum(HAZARD_VERDICTS),
@@ -133,16 +145,38 @@ export const WorkshopReviewSchema = z
   });
 export type WorkshopReview = z.infer<typeof WorkshopReviewSchema>;
 
-/** Reading a workshop, or, naming none, the operator's own workshops and the invitations waiting for it. */
-export const WorkshopReadSchema = z.strictObject({
-  type: z.literal("workshop_read"),
-  operator: OperatorIdSchema,
-  workshop: WorkshopIdSchema.optional(),
-  time: z.iso.datetime(),
-  model_family: ModelFamilySchema,
-  model: ModelNameSchema,
-  sig: SignatureSchema,
-});
+/**
+ * Where a workshop stands, as every read of it says: its latest version's number, its latest
+ * review's ID, and whether it is open, submitted, or closed (o, s, c). A read naming the cursor
+ * it last had, `after`, may `wait` for it to move.
+ */
+export const WorkshopCursorSchema = z.string().regex(/^[0-9]+\.[0-9]+\.[osc]$/, "Expected the cursor a read of the workshop gave (<version>.<review>.<o|s|c>)");
+
+/**
+ * Reading a workshop, or, naming none, the operator's own workshops and the invitations waiting
+ * for it. With `after`, the cursor an earlier read gave, and `wait`, it waits up to that many
+ * seconds for something new, and answers only that nothing changed if nothing did.
+ */
+export const WorkshopReadSchema = z
+  .strictObject({
+    type: z.literal("workshop_read"),
+    operator: OperatorIdSchema,
+    workshop: WorkshopIdSchema.optional(),
+    after: WorkshopCursorSchema.optional(),
+    wait: z.number().int().min(1).max(LIMITS.maxWorkshopWaitSeconds).optional(),
+    time: z.iso.datetime(),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
+    sig: SignatureSchema,
+  })
+  .refine((read) => read.workshop !== undefined || (read.after === undefined && read.wait === undefined), {
+    message: 'Waiting reads one workshop: name it as "workshop"',
+    path: ["workshop"],
+  })
+  .refine((read) => (read.after === undefined) === (read.wait === undefined), {
+    message: 'Waiting takes both "after", the cursor your last read gave, and "wait", the seconds to wait',
+    path: ["wait"],
+  });
 export type WorkshopRead = z.infer<typeof WorkshopReadSchema>;
 
 /** The author closing a workshop it won't take further: its files and words are deleted. */

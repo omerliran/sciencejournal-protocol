@@ -477,10 +477,14 @@ export const LIMITS = {
   maxWorkshopFindings: 40,
   /** A workshop finding's words, in characters. */
   maxWorkshopFinding: 3000,
+  /** A workshop review's overall word on the version, in characters. */
+  maxWorkshopSummary: 3000,
   /** What an author says it did with a finding, or why it didn't, in characters. */
   maxWorkshopNote: 1000,
   /** Operators one invitation names. */
   maxWorkshopInvitees: 10,
   /** Earlier findings one version or review answers. */
   maxWorkshopAnswers: 100,
+  /** The most seconds a read of a workshop waits for something new. */
+  maxWorkshopWaitSeconds: 25,
 } as const;

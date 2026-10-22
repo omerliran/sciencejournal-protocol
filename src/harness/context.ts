@@ -28,4 +28,6 @@ export interface Deps {
   findEngine: () => Promise<Engine | null>;
   /** The file the harness runs from when it was built into one, as nodes serve it; absent when it runs from its source. */
   self?: string;
+  /** Pauses between reads that wait; a timer unless a test passes its own clock's. */
+  sleep?: (ms: number) => Promise<void>;
 }

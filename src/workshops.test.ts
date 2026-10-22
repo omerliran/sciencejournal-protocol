@@ -36,11 +36,15 @@ describe("workshop requests", () => {
       keys.secretKey,
     );
     expect(WorkshopVersionSchema.safeParse(next).success).toBe(true);
+    // A finding that repeats another takes that one's answer.
+    expect(WorkshopVersionSchema.safeParse(signObject({ ...next, answers: { ...next.answers, f3: { same_as: "f2" } } }, keys.secretKey)).success).toBe(true);
     for (const bad of [
       { ...next, answers: { g1: { action: "taken_up", note: "x" } } },
       { ...next, answers: { f1: { action: "maybe", note: "x" } } },
       { ...next, answers: { f1: { action: "declined", note: " padded" } } },
       { ...next, answers: { f1: { action: "declined" } } },
+      { ...next, answers: { f3: { same_as: "x2" } } },
+      { ...next, answers: { f3: { same_as: "f2", action: "declined", note: "x" } } },
       { ...next, workshop: "workshop:1" },
     ]) {
       expect(WorkshopVersionSchema.safeParse(bad).success).toBe(false);
@@ -72,12 +76,16 @@ describe("workshop requests", () => {
     };
     expect(WorkshopReviewSchema.safeParse(signObject(review, keys.secretKey)).success).toBe(true);
     expect(WorkshopReviewSchema.safeParse(signObject({ ...review, findings: [], earlier: undefined }, keys.secretKey)).success).toBe(true);
+    // Its overall word goes in a summary, not a finding.
+    expect(WorkshopReviewSchema.safeParse(signObject({ ...review, summary: "Ready: reran it, and every value matched." }, keys.secretKey)).success).toBe(true);
     for (const bad of [
       { ...review, findings: [{ ...review.findings[0], severity: "major" }] },
       { ...review, findings: [{ ...review.findings[0], claims: ["claim:1"] }] },
       { ...review, earlier: { f1: "fixed" } },
       { ...review, hazard: "maybe" },
       { ...review, findings: [{ severity: "note", text: "" }] },
+      { ...review, summary: " padded" },
+      { ...review, summary: "x".repeat(3001) },
     ]) {
       expect(WorkshopReviewSchema.safeParse(signObject(bad, keys.secretKey)).success).toBe(false);
     }
@@ -88,6 +96,19 @@ describe("workshop requests", () => {
       expect(WorkshopAnswerSchema.safeParse(signObject({ type: "workshop_answer", operator: helper, workshop, answer, time, ...model }, keys.secretKey)).success).toBe(true);
     }
     expect(WorkshopReadSchema.safeParse(signObject({ type: "workshop_read", operator: helper, time, ...model }, keys.secretKey)).success).toBe(true);
+    // A read of one workshop may wait for its cursor to move, up to 25 seconds.
+    const waiting = { type: "workshop_read", operator: helper, workshop, after: "3.17.o", wait: 25, time, ...model };
+    expect(WorkshopReadSchema.safeParse(signObject(waiting, keys.secretKey)).success).toBe(true);
+    for (const bad of [
+      { ...waiting, wait: 26 },
+      { ...waiting, wait: 0 },
+      { ...waiting, after: "3.17" },
+      { ...waiting, after: undefined },
+      { ...waiting, wait: undefined },
+      { ...waiting, workshop: undefined },
+    ]) {
+      expect(WorkshopReadSchema.safeParse(signObject(bad, keys.secretKey)).success).toBe(false);
+    }
     expect(WorkshopCloseSchema.safeParse(signObject({ type: "workshop_close", operator: op, workshop, time, ...model }, keys.secretKey)).success).toBe(true);
     expect(WorkshopCloseSchema.safeParse(signObject({ type: "workshop_close", operator: op, workshop, time }, keys.secretKey)).success).toBe(false);
   });

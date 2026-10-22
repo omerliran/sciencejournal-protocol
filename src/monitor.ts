@@ -38,6 +38,7 @@ import {
 } from "./identity";
 import { leafBytes, LogLeafSchema, logId, TreeHeadSchema, type LogLeaf, type TreeHead } from "./leaves";
 import { extendRange, leafHash, rangeRoot, verifyConsistency } from "./merkle";
+import { inParallel } from "./parallel";
 import {
   checkNoteSignature,
   checkpointOrigin,
@@ -1413,20 +1414,6 @@ export async function readLogEntries(
     });
     entries.forEach((entry, i) => each(entry.index, entry.leaf, entry.leaf_hash, signed[i]));
   }
-}
-
-/** Runs `work` on each item with at most `limit` at once, keeping the results in order. */
-async function inParallel<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await work(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 // --- Signed checkpoints and witnesses ------------------------------------------------

@@ -8,6 +8,7 @@ import type { TreeHead } from "../leaves";
 import { FILES_PER_PAGE, ServedFilesPageSchema, servedFilesProblem, withdrawnBundle, type ServedFiles } from "../mirror";
 import { MonitorError, monitorLog, type LogSource, type ProblemCheck } from "../monitor";
 import { parseCheckpointNote } from "../notes";
+import { inParallel } from "../parallel";
 import { getText, httpSource, nodeUrl, type HttpOptions } from "../monitor/http";
 import { MirrorStore, servedDigests, type MirrorState, type StoredEntry } from "./store";
 
@@ -388,15 +389,6 @@ function recording(source: LogSource): Recorder {
     },
     checkpoint: (size) => checkpoints.get(size) ?? null,
   };
-}
-
-/** Runs `work` on each item with at most `limit` at once. */
-async function inParallel<T>(items: readonly T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) await work(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 function pause(ms: number): Promise<void> {

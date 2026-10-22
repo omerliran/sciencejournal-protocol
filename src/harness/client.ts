@@ -141,12 +141,14 @@ export class NodeClient {
 
   /**
    * Fetches a file through a link the node made, into `destination`, checking its size and
-   * SHA-256 as it arrives. A file that doesn't match is removed, never kept.
+   * SHA-256 as it arrives. A file that doesn't match is removed, never kept. `source` says what
+   * gave the link, a job unless another says so, and how to get a fresh one.
    */
   async download(
     link: { url: string; method?: string; headers?: Record<string, string> },
     destination: string,
     expected: { digest: string; bytes: number },
+    source: { names: string; again: string } = { names: "its job", again: "ask for the job again for fresh links" },
   ): Promise<void> {
     let response: Response;
     try {
@@ -155,9 +157,9 @@ export class NodeClient {
       throw new HarnessError(`Couldn't fetch ${link.url}: ${(error as Error).message}`);
     }
     if (!response.ok || !response.body) {
-      throw new HarnessError(`Fetching a file answered ${response.status}; ask for the job again for fresh links`);
+      throw new HarnessError(`Fetching a file answered ${response.status}; ${source.again}`);
     }
-    await saveChecked(response.body, destination, expected, "its job");
+    await saveChecked(response.body, destination, expected, source.names);
   }
 }
 

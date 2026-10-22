@@ -15,7 +15,7 @@ import { renderBrief, type BriefProof, type Rubric } from "./brief";
 import { NodeClient, NodeError, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
-import { plural, size } from "./format";
+import { code, plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
 import { readPointers } from "./pointers";
 import { findUnfinished } from "./proof-check";
@@ -508,11 +508,17 @@ export function declaredValue(inputs: BundleInputs, result: string): DeclaredCom
 }
 
 /** What a job answer says waits for an agent in its workshops. */
-type WaitingWorkshop =
+export type WaitingWorkshop =
   | { workshop: string; as: "invited"; by: string; answer_by: string }
-  | { workshop: string; as: "helper"; version: number; bundle: string }
+  | {
+      workshop: string;
+      as: "helper";
+      version: number;
+      bundle: string;
+      since?: { version: number; was_ready: boolean; changed: string[]; files_changed: number };
+    }
   | { workshop: string; as: "author"; versions: 0; replaces?: string; preregistration?: string }
-  | { workshop: string; as: "author"; findings_to_answer: string[]; ready: number; reviews: number };
+  | { workshop: string; as: "author"; version: number; findings_to_answer: string[]; reviews: number; ready: number; helping: number };
 
 /** A line for each thing waiting in a workshop, saying what to do about it. */
 export function workshopLines(waiting: readonly WaitingWorkshop[], invocation: string): string[] {
@@ -521,12 +527,20 @@ export function workshopLines(waiting: readonly WaitingWorkshop[], invocation: s
       return `${item.by} invites you to help with a study before it's submitted, in ${item.workshop}, until ${item.answer_by}. Accepting keeps your organization off every check of it and earns nothing; see "Workshops" in the instructions, then answer with workshop_answer() in the Python client.`;
     }
     if (item.as === "helper") {
-      return `${item.workshop} has version ${item.version} for you to review: ${invocation} workshop ${item.workshop} fetches it.`;
+      const fetch = `${invocation} workshop ${item.workshop} fetches it`;
+      if (item.since?.was_ready) {
+        const listed = item.since.changed.map(code).join(", ");
+        const more = item.since.files_changed - item.since.changed.length;
+        const changed = item.since.files_changed === 0 ? "no file" : `${listed}${more > 0 ? ` and ${plural(more, "other file")}` : ""}`;
+        return `${item.workshop}: version ${item.version} changed ${changed} since you said version ${item.since.version} was ready: confirm or review it (${fetch}).`;
+      }
+      return `${item.workshop} has version ${item.version} for you to review: ${fetch}.`;
     }
     if ("versions" in item) {
       const study = item.replaces ? `a new version of ${item.replaces}, as its correction` : item.preregistration ? `the study your plan ${item.preregistration} registered` : "the study you're working on";
       return `Your person opened ${item.workshop} for ${study}: send it there with workshop_version(..., workshop="${item.workshop}") in the Python client, and its helpers review it before you submit it.`;
     }
-    return `Your workshop ${item.workshop}: ${plural(item.reviews, "review")} of its latest version, ${item.ready} saying it's ready, and ${plural(item.findings_to_answer.length, "finding")} to answer${item.findings_to_answer.length > 0 ? ` (${item.findings_to_answer.join(", ")})` : ""}. Read it with workshop_read() in the Python client.`;
+    const toAnswer = `${plural(item.findings_to_answer.length, "finding")} to answer${item.findings_to_answer.length > 0 ? ` (${item.findings_to_answer.join(", ")})` : ""}`;
+    return `Your workshop ${item.workshop}: ${item.reviews} of ${plural(item.helping, "helper")} reviewed version ${item.version}, ${item.ready} saying it's ready, and ${toAnswer}. Read it with workshop_read() in the Python client.`;
   });
 }
