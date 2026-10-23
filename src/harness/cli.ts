@@ -73,7 +73,8 @@ Verifying
                               you: ok, with a score that makes it ready and the areas and field tags
                               it files the idea under, puts it on the board; polish, with a lower
                               score, sends its author the version and advice you wrote in
-                              polish.json; block names the rule it breaks.
+                              polish.json, filed as an ok files an idea, which goes up as it is if
+                              they take it; block names the rule it breaks.
   screen-addendum <job dir> --hazard <none|category> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
                               Send your screen of an addendum an author added to its bundle,
                               which job may hand you: ok lets it appear, block names a hazard, the

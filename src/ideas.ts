@@ -85,19 +85,20 @@ export const IdeaSuggestionSchema = z.strictObject({
 });
 export type IdeaSuggestion = z.infer<typeof IdeaSuggestionSchema>;
 
-/** The areas an ok files an idea under: one or two from the fixed list, the main one first. */
+/** The areas a screen files an idea under: one or two from the fixed list, the main one first. */
 export const IdeaAreasSchema = uniqueList(z.enum(AREAS), 1, LIMITS.maxIdeaAreas, "area");
 
-/** An ok's field tags for an idea: one to five, in the form a bundle's fields take. */
+/** A screen's field tags for an idea: one to five, in the form a bundle's fields take. */
 export const IdeaFieldsSchema = uniqueList(FieldSchema, 1, 5, "field");
 
 /**
  * An operator's signed screen of an idea it was given as a job, before the idea appears: `ok`,
  * `polish` with a suggested version and advice for its author, or `block` with the rule it
- * breaks, as a flag names one. An ok or a polish scores the idea; a block doesn't. An ok also
- * files the idea under its areas and field tags, since it may be the screen that puts the idea
- * up, and the board shows those of the screen that did. Screens are requests to a node, not log
- * entries.
+ * breaks, as a flag names one. An ok or a polish scores the idea; a block doesn't. An ok files
+ * the idea under its areas and field tags, since it may be the screen that puts the idea up, and
+ * a polish files the version it suggests, which goes up as it is if its author takes it
+ * unchanged; the board shows those of the screen that put the idea up. Screens are requests to a
+ * node, not log entries.
  */
 export const IdeaScreenSchema = z
   .strictObject({
@@ -136,9 +137,9 @@ export const IdeaScreenSchema = z
   )
   .refine(
     (screen) =>
-      screen.verdict === "ok" ? screen.areas !== undefined && screen.fields !== undefined : screen.areas === undefined && screen.fields === undefined,
+      screen.verdict === "block" ? screen.areas === undefined && screen.fields === undefined : screen.areas !== undefined && screen.fields !== undefined,
     {
-      message: `An ok files the idea under one or two areas (${AREAS.join(", ")}) and one to five field tags, and a polish or a block names neither`,
+      message: `An ok files the idea, and a polish the version it suggests, under one or two areas (${AREAS.join(", ")}) and one to five field tags, and a block names neither`,
       path: ["areas"],
     },
   );

@@ -103,9 +103,9 @@ ${record.polishing}
 
 Write your version and your advice to ${join(jobDir, POLISH_FILE)}, as
 {"title": "<at most ${LIMITS.maxIdeaTitle} characters>", "details": "<at most ${LIMITS.maxIdeaDetails} characters>", "advice": "<at most ${LIMITS.maxIdeaAdvice} characters>"},
-then send it:
+then send it, filed under the areas and field tags your version belongs under, as in step 2:
 
-    ${send} --verdict polish --score <score>
+    ${send} --verdict polish --score <score> --area <area> --field <tag> --field <tag>
 
 Due ${record.deadline}.
 `;
@@ -117,9 +117,9 @@ export interface ScreenIdeaOptions extends Credentials {
   reason?: string;
   score?: string;
   note?: string;
-  /** The areas an ok files the idea under, the main one first. */
+  /** The areas an ok files the idea under, or a polish its version, the main one first. */
   areas?: string[];
-  /** The field tags an ok files it under. */
+  /** The field tags an ok files it under, or a polish its version. */
   fields?: string[];
 }
 
@@ -127,7 +127,7 @@ export interface ScreenIdeaOptions extends Credentials {
 const SENT: Record<string, string> = {
   approved: "Sent. The idea is on the board.",
   blocked: "Sent. Two screeners blocked it, so it stays off the board.",
-  polishing: "Sent. Its author sees your version and advice and can edit the idea; another screener reads the new version.",
+  polishing: "Sent. Its author sees your version and advice: if they take your version as it is, it goes on the board; if they change it, another screener reads the new version.",
   replaced: "Sent. Its author had edited it already, and the new version waits for a screen of its own.",
 };
 
@@ -177,20 +177,21 @@ function scoreFrom(given: string | undefined, verdict: "ok" | "polish", readyAt:
   return score.data;
 }
 
-/** The --area and --field an ok files the idea under, which a polish or a block leaves out. */
+/** The --area and --field an ok files the idea under, or a polish its version, which a block leaves out. */
 function filingFrom(options: ScreenIdeaOptions, verdict: IdeaScreenVerdict) {
   const given = (options.areas ?? []).length > 0 || (options.fields ?? []).length > 0;
-  if (verdict !== "ok") {
-    if (given) throw new HarnessError(`Only an ok files the idea under areas and fields; an ${verdict} gives no --area or --field.`, 2);
+  if (verdict === "block") {
+    if (given) throw new HarnessError("A block files nothing under areas and fields; it gives no --area or --field.", 2);
     return undefined;
   }
+  const what = verdict === "ok" ? "An ok files the idea" : "A polish files the version it suggests";
   const areas = IdeaAreasSchema.safeParse(options.areas ?? []);
   if (!areas.success) {
-    throw new HarnessError(`An ok files the idea under one or two areas, the main one first, each with --area: ${AREAS.join(", ")}.`, 2);
+    throw new HarnessError(`${what} under one or two areas, the main one first, each with --area: ${AREAS.join(", ")}.`, 2);
   }
   const fields = IdeaFieldsSchema.safeParse(options.fields ?? []);
   if (!fields.success) {
-    throw new HarnessError("An ok also gives one to five field tags, each with --field: lowercase words joined by hyphens, such as exoplanets.", 2);
+    throw new HarnessError(`${what} under one to five field tags too, each with --field: lowercase words joined by hyphens, such as exoplanets.`, 2);
   }
   return { areas: areas.data, fields: fields.data };
 }
