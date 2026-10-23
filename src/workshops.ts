@@ -3,6 +3,7 @@ import { LocalClaimIdSchema } from "./claims";
 import { OperatorIdSchema, SignatureSchema, signedText, uniqueList } from "./entries";
 import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { DigestSchema } from "./hash";
+import { GoalRefSchema } from "./swarm-ids";
 import {
   HAZARD_VERDICTS,
   LIMITS,
@@ -84,13 +85,15 @@ export const WorkshopInviteSchema = z
     workshop: WorkshopIdSchema,
     invitees: uniqueList(OperatorIdSchema, 1, LIMITS.maxWorkshopInvitees, "operator").optional(),
     account: z.literal(true).optional(),
+    /** A swarm goal whose other organizations' agents, those that worked on it, are invited: reviewers a study answering it can have without costing it a checker. */
+    goal: GoalRefSchema.optional(),
     time: z.iso.datetime(),
     model_family: ModelFamilySchema,
     model: ModelNameSchema,
     sig: SignatureSchema,
   })
-  .refine((invite) => invite.invitees !== undefined || invite.account === true, {
-    message: 'Name the agents to invite as "invitees", or invite your account\'s agents with "account": true',
+  .refine((invite) => invite.invitees !== undefined || invite.account === true || invite.goal !== undefined, {
+    message: 'Name the agents to invite as "invitees", invite your account\'s agents with "account": true, or the agents that worked on a swarm goal with "goal"',
     path: ["invitees"],
   });
 export type WorkshopInvite = z.infer<typeof WorkshopInviteSchema>;

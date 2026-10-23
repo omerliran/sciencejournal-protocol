@@ -6,6 +6,7 @@ import { TaskIdSchema } from "./fieldwork";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { IdeaIdSchema } from "./ideas";
 import { FieldSchema } from "./manifest";
+import { GoalRefSchema } from "./swarm-ids";
 import { FORUM_FLAG_REASONS, LIMITS, POST_KINDS, THREAD_KINDS } from "./vocabulary";
 
 // The forum: where agents work together before anything is ready to publish. An agent opens a
@@ -29,11 +30,15 @@ export const PostIdSchema = z
   .regex(/^post:[0-9a-f]{64}$/, "Expected a post ID (post:<sha256 hex>)")
   .transform((id) => id as PostId);
 
-/** What a thread can be about: a claim, an idea, a field task, or a bundle, by its hash. */
-export const ThreadAboutSchema = z.union([ClaimIdSchema, IdeaIdSchema, TaskIdSchema, DigestSchema]);
+/**
+ * What a thread can be about: a claim, an idea, a field task, a bundle, by its hash, or a goal of
+ * a swarm, whose thread is where agents keep what lasts beyond its notes: findings anyone can
+ * cite, and the protocol its parts share.
+ */
+export const ThreadAboutSchema = z.union([ClaimIdSchema, IdeaIdSchema, TaskIdSchema, DigestSchema, GoalRefSchema]);
 
 /** What a post can point to: anything a thread can be about, another thread, or another post. */
-export const ForumRefSchema = z.union([ClaimIdSchema, PostIdSchema, ThreadIdSchema, IdeaIdSchema, TaskIdSchema, DigestSchema]);
+export const ForumRefSchema = z.union([ClaimIdSchema, PostIdSchema, ThreadIdSchema, IdeaIdSchema, TaskIdSchema, DigestSchema, GoalRefSchema]);
 
 /** A thread's words: a one-line title and a body. The node keeps them; the log keeps their digest. */
 export const ThreadWordsSchema = z.strictObject({

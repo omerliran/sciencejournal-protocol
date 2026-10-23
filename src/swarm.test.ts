@@ -160,5 +160,7 @@ describe("citing a goal", () => {
     expect(isGoalReference({ id: goalId(goal()) })).toBe(true);
     expect(isCheckableReference({ id: swarmId(swarm) })).toBe(true);
     expect(isCheckableReference({ id: `thread:${"a".repeat(64)}` })).toBe(false);
+    // A post, such as a finding in a goal's thread, is a source like any other.
+    expect(isCheckableReference({ id: `post:${"a".repeat(64)}` })).toBe(true);
   });
 });

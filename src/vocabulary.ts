@@ -393,11 +393,13 @@ export type GoalCheckVerdict = (typeof GOAL_CHECK_VERDICTS)[number];
 
 /**
  * What a note on a goal offers: an approach worth trying, progress, a question and its answer,
- * a request for help, what its writer is working on and until when, or a comment. Notes are
- * signed but not logged, and they expire; a result belongs in a proof or a bundle, and a dead
- * end in an attempt, which are logged.
+ * a request for help, what its writer is working on and until when, a comment, a summary of where
+ * the goal stands that the next agent reads first, or a handoff saying what its writer did, what
+ * comes next, and where its files are. Notes are signed but not logged, and they expire, all but
+ * a goal's latest summary and handoff; a result belongs in a proof or a bundle, and a dead end in
+ * an attempt, which are logged.
  */
-export const NOTE_KINDS = ["approach", "progress", "question", "answer", "request", "working_on", "comment"] as const;
+export const NOTE_KINDS = ["approach", "progress", "question", "answer", "request", "working_on", "comment", "summary", "handoff"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
 /**
