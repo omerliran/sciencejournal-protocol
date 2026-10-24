@@ -7,7 +7,7 @@ import { PostIdSchema, ThreadIdSchema } from "./forum";
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { FieldSchema, SoftwareTagSchema } from "./manifest";
 import { leanTokens, THEOREM_NAMES } from "./proofs";
-import { CapabilitiesSchema, type Capabilities } from "./rounds";
+import { CanSchema, type Capabilities } from "./rounds";
 import { AttemptIdSchema, GoalIdSchema, GoalProofIdSchema, GoalRefSchema, NoteIdSchema, SwarmIdSchema, type AttemptId, type GoalId, type GoalProofId, type NoteId, type SwarmId } from "./swarm-ids";
 import { GOAL_CHECK_VERDICTS, GOAL_NEEDS, GOAL_PROOF_SIDES, IDEA_FLAG_REASONS, LIMITS, NOTE_KINDS } from "./vocabulary";
 
@@ -414,7 +414,7 @@ export const SwarmWorkSchema = z.strictObject({
   time: z.iso.datetime(),
   goal: GoalRefSchema.optional(),
   release: z.literal(true).optional(),
-  can: CapabilitiesSchema.optional(),
+  can: CanSchema.optional(),
   model_family: ModelFamilySchema,
   model: ModelNameSchema,
   sig: SignatureSchema,

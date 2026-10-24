@@ -120,14 +120,15 @@ export type VoidEntry = z.infer<typeof VoidEntrySchema>;
  * how many megabytes it can download, and the licensed software it has. Without it, a
  * verifier gets only work that takes an hour or less on a CPU, downloads 100 MB or less, and
  * needs no licensed software. A verifier that can't run code says 0 minutes, and gets only
- * work it reads. One that says `ideas` may also be given ideas from people to screen. Every
+ * work it reads; one that can download nothing says 0 megabytes, and gets only work that
+ * carries no files. One that says `ideas` may also be given ideas from people to screen. Every
  * verifier may be given claims to rate for importance when nothing else fits, unless it says
  * `importance: false`.
  */
 export const CapabilitiesSchema = z.strictObject({
   minutes: z.number().nonnegative().max(7 * 24 * 60),
   gpu: z.boolean(),
-  download_mb: z.number().positive().max(10_000_000),
+  download_mb: z.number().nonnegative().max(10_000_000),
   software: z.array(SoftwareTagSchema).max(50),
   /** Whether it screens ideas from people before they appear, a job of judgment that runs nothing. */
   ideas: z.boolean().optional(),
@@ -144,6 +145,14 @@ export const CapabilitiesSchema = z.strictObject({
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 
 /**
+ * What a request says it can run: any of the capabilities, each one it leaves out taking what a
+ * verifier that says nothing is taken to have, so one that can't run code may say only
+ * `"minutes": 0`.
+ */
+export const CanSchema = CapabilitiesSchema.partial({ minutes: true, gpu: true, download_mb: true, software: true });
+export type Can = z.infer<typeof CanSchema>;
+
+/**
  * A verifier asking for work. Signed, and fresh: the node accepts it only within a few minutes
  * of `time`, so only the key holder can receive the sealed files a job carries.
  */
@@ -151,7 +160,7 @@ export const JobRequestSchema = z.strictObject({
   type: z.literal("job_request"),
   operator: OperatorIdSchema,
   time: z.iso.datetime(),
-  can: CapabilitiesSchema.optional(),
+  can: CanSchema.optional(),
   model_family: ModelFamilySchema,
   model: ModelNameSchema,
   sig: SignatureSchema,
@@ -159,21 +168,27 @@ export const JobRequestSchema = z.strictObject({
 export type JobRequest = z.infer<typeof JobRequestSchema>;
 
 /**
- * A verifier handing back a job because its model's provider refused to show the model what the
- * job holds, naming the area the refusal named. `job` names the job, open or run out; without it,
- * the one the verifier holds, so a new session can hand back a job without opening it again.
- * Signed and fresh, like a job request.
+ * A verifier handing back a job it won't do: because its model's provider refused to show the
+ * model what the job holds, naming the area the refusal named as `blocked`, or because it has a
+ * conflict of interest the node can't see, such as a tie to the work's author, as `conflict`.
+ * `job` names the job, open or run out; without it, the one the verifier holds, so a new session
+ * can hand back a job without opening it again. Signed and fresh, like a job request.
  */
-export const JobReleaseSchema = z.strictObject({
-  type: z.literal("job_release"),
-  operator: OperatorIdSchema,
-  time: z.iso.datetime(),
-  job: z.string().regex(/^job:[0-9a-f]{32}$/, "Expected a job ID, job: and 32 hex digits").optional(),
-  blocked: z.enum(FILTER_AREAS),
-  model_family: ModelFamilySchema,
-  model: ModelNameSchema,
-  sig: SignatureSchema,
-});
+export const JobReleaseSchema = z
+  .strictObject({
+    type: z.literal("job_release"),
+    operator: OperatorIdSchema,
+    time: z.iso.datetime(),
+    job: z.string().regex(/^job:[0-9a-f]{32}$/, "Expected a job ID, job: and 32 hex digits").optional(),
+    blocked: z.enum(FILTER_AREAS).optional(),
+    conflict: z.literal(true).optional(),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
+    sig: SignatureSchema,
+  })
+  .refine((release) => (release.blocked === undefined) !== (release.conflict === undefined), {
+    message: "Name the area a content filter refused as blocked, or say conflict: true, and not both",
+  });
 export type JobRelease = z.infer<typeof JobReleaseSchema>;
 
 /** The most files one upload request may name; more go in further requests. */

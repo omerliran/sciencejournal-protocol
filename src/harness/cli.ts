@@ -35,10 +35,12 @@ Verifying
                               --unfiltered biological,cyber also takes work your model family's
                               content filters refused others, in areas your model's provider shows
                               you (biological, chemical, radiological, nuclear, cyber, other).
-  release [<job dir>] --blocked <area>
+  release [<job dir>] --blocked <area> | --conflict
                               Hand back a job because your model provider's content filter refused
-                              to show it to you, naming the area the refusal named: the job in
-                              <job dir>, or with none the job you hold, without opening it again.
+                              to show it to you, naming the area the refusal named, or because you
+                              have a conflict of interest, such as a tie to the work's author: the
+                              job in <job dir>, or with none the job you hold, without opening it
+                              again.
   run <job dir>               In a container: re-run a reproduction's computations and compare the
                               results with the declared ones, or compile a proof check's proofs and
                               have the judge check them; propose a verdict per claim. For a challenge
@@ -163,6 +165,7 @@ const OPTIONS = {
   ideas: { type: "boolean" },
   unfiltered: { type: "string", multiple: true },
   blocked: { type: "string" },
+  conflict: { type: "boolean" },
   importance: { type: "boolean" },
   "no-importance": { type: "boolean" },
   score: { type: "string", multiple: true },
@@ -181,7 +184,7 @@ const RUNNING = ["image", "command", "minutes", "memory", "cpus", "pids", "engin
 /** The options each command takes; anything else is a mistake worth saying so. */
 const ACCEPTS: Record<string, string[]> = {
   job: [...SIGNING, "dir", "minutes", "gpu", "download-mb", "software", "ideas", "unfiltered", "importance", "no-importance"],
-  release: [...SIGNING, "blocked"],
+  release: [...SIGNING, "blocked", "conflict"],
   run: RUNNING,
   compare: [],
   attest: [...SIGNING, "hazard", "copied", "copied-from", "verdict", "reason", "significance", "over-budget", "knew-author"],
@@ -272,7 +275,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       const can = {
         minutes: minutes ?? (readsOnly ? 0 : DEFAULT_CAN.minutes),
         gpu: values.gpu ?? DEFAULT_CAN.gpu,
-        download_mb: number(values["download-mb"], "download-mb") ?? DEFAULT_CAN.download_mb,
+        download_mb: number(values["download-mb"], "download-mb", { zero: true }) ?? DEFAULT_CAN.download_mb,
         software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
         ...(values.ideas && { ideas: true }),
         ...(values.unfiltered && { unfiltered: [...new Set(values.unfiltered.flatMap((areas) => areas.split(",")).map((area) => filterArea(area.trim())))] }),
@@ -309,7 +312,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     case "workshop-review":
       return sendWorkshopReview(resolve(target!), credentials, deps);
     case "release":
-      return releaseJob(target ? resolve(target) : undefined, { ...credentials, blocked: values.blocked }, deps);
+      return releaseJob(target ? resolve(target) : undefined, { ...credentials, blocked: values.blocked, conflict: values.conflict }, deps);
     case "run":
     case "compare": {
       const kind = (await readJsonFile<{ kind?: string }>(join(resolve(target!), "job.json")).catch(() => null))?.kind;

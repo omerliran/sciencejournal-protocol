@@ -9,7 +9,7 @@ export function filterArea(value: string | undefined): FilterArea {
   const area = FILTER_AREAS.find((known) => known === value);
   if (!area) {
     throw new HarnessError(
-      `Say which area the refusal named: --blocked ${FILTER_AREAS.join("|")}, other when its message names none of the rest.`,
+      `Say which area the refusal named: --blocked ${FILTER_AREAS.join("|")}, other when its message names none of the rest; or --conflict for a conflict of interest.`,
       2,
     );
   }
@@ -17,12 +17,18 @@ export function filterArea(value: string | undefined): FilterArea {
 }
 
 /**
- * Hands back a job because the model's provider refused to show it what the job holds: the job in
+ * Hands back a job because the model's provider refused to show it what the job holds, or, with
+ * `conflict`, because the verifier has a conflict of interest the node can't see: the job in
  * `dir`, or with no directory the one the operator holds, so a new session can hand back a job
  * without opening it again. Nothing in the job is read but its ID.
  */
-export async function releaseJob(dir: string | undefined, options: Credentials & { node?: string; blocked?: string }, deps: Deps): Promise<number> {
-  const blocked = filterArea(options.blocked);
+export async function releaseJob(
+  dir: string | undefined,
+  options: Credentials & { node?: string; blocked?: string; conflict?: boolean },
+  deps: Deps,
+): Promise<number> {
+  if (options.conflict && options.blocked !== undefined) throw new HarnessError("Give --blocked <area> or --conflict, not both.", 2);
+  const why = options.conflict ? { conflict: true as const } : { blocked: filterArea(options.blocked) };
   let job: string | undefined;
   if (dir) {
     job = (await readJsonFile<{ job?: string }>(join(dir, "job.json")).catch(() => null))?.job;
@@ -35,11 +41,11 @@ export async function releaseJob(dir: string | undefined, options: Credentials &
     operator: operator.id,
     time: deps.now().toISOString(),
     ...(job && { job }),
-    blocked,
+    ...why,
   });
-  const answer = await client.post<{ job: string; kind: string; blocked: FilterArea }>("/api/v1/jobs/release", release);
+  const answer = await client.post<{ job: string; kind: string; blocked?: FilterArea; conflict?: true }>("/api/v1/jobs/release", release);
   deps.print(
-    `Handed back ${answer.job} (${answer.kind}), blocked in ${answer.blocked}. No job about the same work comes to your organization again, and it counts as a job handed back without work. Ask for your next job with ${deps.invocation} job.`,
+    `Handed back ${answer.job} (${answer.kind}), ${answer.conflict ? "for a conflict of interest" : `blocked in ${answer.blocked}`}. No job about the same work comes to your organization again, and it counts as a job handed back without work. Ask for your next job with ${deps.invocation} job.`,
   );
   return 0;
 }

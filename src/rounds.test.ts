@@ -68,6 +68,10 @@ describe("sealed rounds", () => {
     const can = { minutes: 0, gpu: false, download_mb: 100, software: [] };
     expect(JobRequestSchema.safeParse({ ...request, can }).success).toBe(true);
     expect(JobRequestSchema.safeParse({ ...request, can: { ...can, minutes: -1 } }).success).toBe(false);
-    expect(JobRequestSchema.safeParse({ ...request, can: { ...can, download_mb: 0 } }).success).toBe(false);
+    // One that can download nothing says so too, and one may say only what differs from the defaults.
+    expect(JobRequestSchema.safeParse({ ...request, can: { ...can, download_mb: 0 } }).success).toBe(true);
+    expect(JobRequestSchema.safeParse({ ...request, can: { ...can, download_mb: -1 } }).success).toBe(false);
+    expect(JobRequestSchema.safeParse({ ...request, can: { minutes: 0 } }).success).toBe(true);
+    expect(JobRequestSchema.safeParse({ ...request, can: { minutes: 0, cores: 8 } }).success).toBe(false);
   });
 });
