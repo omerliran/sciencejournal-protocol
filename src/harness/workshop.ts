@@ -9,7 +9,7 @@ import { inParallel } from "../parallel";
 import { RESULT_PLACEHOLDER, resultLocation } from "../results";
 import { HIDDEN_KINDS, scanFiles } from "../scan";
 import { WorkshopReviewSchema, type WorkshopFinding } from "../workshops";
-import { MODEL_FLAGS, NodeClient, nodeUrl, signAs, signIn, type Credentials } from "./client";
+import { MODEL_FLAGS, NodeClient, NodeError, nodeUrl, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { unifiedDiff } from "./diff";
 import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writeUnder } from "./files";
@@ -201,34 +201,59 @@ export async function fetchWorkshop(
 const invitedLine = (view: WorkshopView) =>
   `${view.author.name} (${view.author.agent}) invites you to help with a study before it's submitted. You see nothing of it until you accept, and accepting keeps your organization off every check of that study for good: answer with workshop_answer() in the Python client (${view.answer_with}).`;
 
-/** How long the node holds each read that waits, and how often the harness sends one: within the hourly allowance of reads. */
+/**
+ * How long the node holds each read that waits, and how often the harness sends one. The reference
+ * node allows an operator 120 workshop requests an hour, reads included, across all its workshops:
+ * a read every 40 seconds uses 90 of them, leaving room for fetching versions and the client's reads.
+ */
 const WAIT_SECONDS = 25;
-const READ_EVERY_MS = 30_000;
+const READ_EVERY_MS = 40_000;
 
 /**
  * Waits for this agent's turn in a workshop, reading it with `wait` so the node answers as soon
- * as something changes, a read at most every 30 seconds. Its turn, as a helper, is a version it
- * hasn't reviewed; as the author, findings to answer, or a helper's new review of the current
- * version. Prints what to do, as a job answer's lines do, and exits 0; 2 once `minutes` pass
- * with no turn; 1 if the workshop is closed or its study submitted.
+ * as something changes, a read at most every 40 seconds, and pausing while the node's hourly
+ * limit on workshop requests is reached. Its turn, as a helper, is a version it hasn't reviewed;
+ * as the author, findings to answer, or a helper's new review of the current version. Prints what
+ * to do, as a job answer's lines do, and exits 0; 2 once `minutes` pass with no turn, or the limit
+ * holds its reads back past them; 1 if the workshop is closed or its study submitted.
  */
 export async function waitForWorkshop(workshop: string, options: Credentials & { node?: string; minutes: number }, deps: Deps): Promise<number> {
   const client = new NodeClient(nodeUrl(options.node, deps), deps);
   const operator = await signIn(options, client, deps);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const read = (after?: string) =>
-    client.post<WorkshopView | { changed: false; cursor: string }>("/api/v1/workshops/read", {
-      entry: signAs(operator, {
-        type: "workshop_read" as const,
-        operator: operator.id,
-        workshop,
-        ...(after !== undefined && { after, wait: WAIT_SECONDS }),
-        time: deps.now().toISOString(),
-      }),
-    });
   const until = deps.now().getTime() + options.minutes * 60_000;
-  let view = (await read()) as WorkshopView;
-  // When the last read that waits went out: the next goes 30 seconds after it, and a turn it brings is said at once.
+  // A read the node turns away for its hourly limit says when there's room again: the wait pauses
+  // until then, signing the read afresh, unless that's past its time, when it says how long.
+  const read = async (after?: string): Promise<WorkshopView | { changed: false; cursor: string } | { limited: number }> => {
+    for (;;) {
+      try {
+        return await client.post<WorkshopView | { changed: false; cursor: string }>("/api/v1/workshops/read", {
+          entry: signAs(operator, {
+            type: "workshop_read" as const,
+            operator: operator.id,
+            workshop,
+            ...(after !== undefined && { after, wait: WAIT_SECONDS }),
+            time: deps.now().toISOString(),
+          }),
+        });
+      } catch (error) {
+        const retry = error instanceof NodeError && error.status === 429 ? error.body.retry_after_seconds : undefined;
+        if (retry === undefined) throw error;
+        if (deps.now().getTime() + retry * 1000 >= until) return { limited: retry };
+        await sleep(retry * 1000);
+      }
+    }
+  };
+  const heldBack = (seconds: number) => {
+    deps.print(
+      `The node's hourly limit on workshop requests holds back your reads of ${workshop} for ${plural(Math.ceil(seconds / 60), "minute")}, past the end of this wait. Run ${deps.invocation} workshop-wait ${workshop} ${MODEL_FLAGS} again then.`,
+    );
+    return 2;
+  };
+  const first = await read();
+  if ("limited" in first) return heldBack(first.limited);
+  let view = first as WorkshopView;
+  // When the last read that waits went out: the next goes 40 seconds after it, and a turn it brings is said at once.
   let lastWait = -Infinity;
   // The reviews each helper had sent when the wait began, so the author's turn is a new one.
   const reviewed = new Map((view.helpers ?? []).map((helper) => [helper.agent, helper.reviews.length]));
@@ -254,6 +279,7 @@ export async function waitForWorkshop(workshop: string, options: Credentials & {
     if (gap > 0) await sleep(gap);
     lastWait = deps.now().getTime();
     const answer = await read(view.cursor);
+    if ("limited" in answer) return heldBack(answer.limited);
     if (!("changed" in answer)) view = answer;
   }
 }
