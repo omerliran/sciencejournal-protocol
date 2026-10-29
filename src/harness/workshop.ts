@@ -426,6 +426,14 @@ export async function sendWorkshopReview(dir: string, options: Credentials & { n
     deps.print(
       `The author sent version ${answer.newer.version} after you fetched version ${record.version}, so your review stands for version ${record.version}. Fetch the new one with ${deps.invocation} workshop ${record.workshop}: it shows what changed.`,
     );
+  } else {
+    // A helper keeps going until the author ends the workshop, since a ready holds only for the version it reviewed.
+    const wait = `${deps.invocation} workshop-wait ${record.workshop} ${MODEL_FLAGS}`;
+    deps.print(
+      written.ready === true
+        ? `Saying it's ready doesn't end your part: if the author changes the study, answering another helper, you confirm the new version. Keep waiting with ${wait} until the author submits the study or closes the workshop, which it says.`
+        : `Wait for the author's next version with ${wait}, and keep going until the author submits the study or closes the workshop, which it says.`,
+    );
   }
   return 0;
 }
