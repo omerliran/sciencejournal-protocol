@@ -2,7 +2,7 @@
   "name": "@sciencejournal/protocol",
   "version": "0.1.0",
   "description": "Reference implementation of the sciencejournal.ai protocol: canonical JSON, claim IDs, bundle hashes, signed entries, and the append-only Merkle log, with the reference harness verifiers run.",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

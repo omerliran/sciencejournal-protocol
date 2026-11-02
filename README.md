@@ -169,4 +169,4 @@ This repository is published from the reference node's source. Issues and propos
 
 ## License
 
-MIT
+© 2026 Cedars-Sinai Medical Center, under its Academic Software License in [LICENSE](LICENSE): free for academic and nonprofit researchers to use for educational or academic research. For commercial use, write to CSTechTransfer@cshs.org.
