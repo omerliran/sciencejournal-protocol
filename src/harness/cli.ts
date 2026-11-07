@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { DEFAULT_LIMITS } from "../rounds";
 import { attest, challengeReview, citationCheck, duplicateCheck, hazard } from "./attest";
 import { shellQuote } from "./format";
 import { readJsonFile } from "./files";
@@ -27,7 +28,10 @@ const USAGE = `${HARNESS}: the sciencejournal.ai reference harness, for verifier
 Verifying
   job [--dir <dir>]           Take a job: its files go to <dir>/<job>/bundle/, checked and scanned for
                               hidden content, with a brief in JOB.md. Say what you can run with
-                              --minutes <n>, --gpu, --download-mb <n>, and --software <tags>;
+                              --minutes <n> (the most you can give one job), --gpu, --download-mb
+                              <n>, and --software <tags>; the node takes each you leave out as
+                              ${DEFAULT_LIMITS.minutes} minutes, no GPU, ${DEFAULT_LIMITS.download_mb} MB, and no licensed software, and when no
+                              job fits it says which of them keep waiting work from you.
                               --minutes 0 asks only for work you read, as the harness does by
                               itself when no container engine answers; --ideas also takes ideas
                               from people to screen before they appear. It takes claims to rate
@@ -207,9 +211,6 @@ const ACCEPTS: Record<string, string[]> = {
 /** The harness's commands. */
 export const COMMANDS = Object.keys(ACCEPTS);
 
-/** What a job request that doesn't say is taken to mean: an hour on a CPU and 100 MB. */
-const DEFAULT_CAN = { minutes: 60, gpu: false, download_mb: 100, software: [] as string[] };
-
 function parse(argv: string[]) {
   try {
     return parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
@@ -272,11 +273,14 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       // work to read, unless the verifier says how many minutes it can run.
       const engine = minutes === undefined ? await deps.findEngine() : undefined;
       const readsOnly = engine === null;
+      const downloadMb = number(values["download-mb"], "download-mb", { zero: true });
+      // Each limit it isn't given is left out, so the node takes it as a request that says
+      // nothing would, and says so when no job fits.
       const can = {
-        minutes: minutes ?? (readsOnly ? 0 : DEFAULT_CAN.minutes),
-        gpu: values.gpu ?? DEFAULT_CAN.gpu,
-        download_mb: number(values["download-mb"], "download-mb", { zero: true }) ?? DEFAULT_CAN.download_mb,
-        software: (values.software ?? []).flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean),
+        ...(minutes !== undefined ? { minutes } : readsOnly && { minutes: 0 }),
+        ...(values.gpu && { gpu: true }),
+        ...(downloadMb !== undefined && { download_mb: downloadMb }),
+        ...(values.software && { software: values.software.flatMap((tags) => tags.split(",")).map((tag) => tag.trim()).filter(Boolean) }),
         ...(values.ideas && { ideas: true }),
         ...(values.unfiltered && { unfiltered: [...new Set(values.unfiltered.flatMap((areas) => areas.split(",")).map((area) => filterArea(area.trim())))] }),
         // Rating claims' importance is work every bundle prepays, so it says so either way.

@@ -115,6 +115,22 @@ export const VoidEntrySchema = z.strictObject({
 });
 export type VoidEntry = z.infer<typeof VoidEntrySchema>;
 
+/** The most minutes a verifier can say it will spend on a job: a week. */
+export const MOST_MINUTES = 7 * 24 * 60;
+
+/** The most megabytes a verifier can say it can download for a job. */
+export const MOST_DOWNLOAD_MB = 10_000_000;
+
+/**
+ * The limits a verifier's capabilities set on the work it is given, each of which a request
+ * that leaves it out takes as a verifier that says nothing has it. A request no job fits is
+ * answered with each limit it was matched against, the ones it left out, and the ones that keep
+ * work from it: those that work it would otherwise be given needs more of. It learns which
+ * limits, never what the work is or how much more it needs.
+ */
+export const CAPABILITY_LIMITS = ["minutes", "gpu", "download_mb", "software"] as const;
+export type CapabilityLimit = (typeof CAPABILITY_LIMITS)[number];
+
 /**
  * What a verifier can run now: the most minutes it will spend on a job, whether it has a GPU,
  * how many megabytes it can download, and the licensed software it has. Without it, a
@@ -126,9 +142,9 @@ export type VoidEntry = z.infer<typeof VoidEntrySchema>;
  * `importance: false`.
  */
 export const CapabilitiesSchema = z.strictObject({
-  minutes: z.number().nonnegative().max(7 * 24 * 60),
+  minutes: z.number().nonnegative().max(MOST_MINUTES),
   gpu: z.boolean(),
-  download_mb: z.number().nonnegative().max(10_000_000),
+  download_mb: z.number().nonnegative().max(MOST_DOWNLOAD_MB),
   software: z.array(SoftwareTagSchema).max(50),
   /** Whether it screens ideas from people before they appear, a job of judgment that runs nothing. */
   ideas: z.boolean().optional(),
@@ -143,6 +159,9 @@ export const CapabilitiesSchema = z.strictObject({
   unfiltered: z.array(z.enum(FILTER_AREAS)).max(FILTER_AREAS.length).optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
+
+/** What a verifier that doesn't say is taken to have of each limit: an hour on a CPU, 100 MB, and no licensed software. */
+export const DEFAULT_LIMITS: Readonly<Pick<Capabilities, CapabilityLimit>> = Object.freeze({ minutes: 60, gpu: false, download_mb: 100, software: [] });
 
 /**
  * What a request says it can run: any of the capabilities, each one it leaves out taking what a

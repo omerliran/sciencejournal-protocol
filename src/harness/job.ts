@@ -7,7 +7,7 @@ import type { CitationPlace, IntegrityFlags } from "../integrity";
 import { parseJson } from "../json";
 import type { Manifest } from "../manifest";
 import { bundleInputs, type BundleInputs } from "../results";
-import type { Capabilities } from "../rounds";
+import { CAPABILITY_LIMITS, type Can, type Capabilities, type CapabilityLimit } from "../rounds";
 import { scanFiles, type ScanResult } from "../scan";
 import { checkClaims } from "../validate";
 import { JOB_KINDS, REVIEW_JOBS, type ChallengeGround, type FilterArea, type JobKind } from "../vocabulary";
@@ -116,6 +116,47 @@ function handedOut(answer: object): Handed | undefined {
   return served === undefined || assigned_at === undefined ? undefined : { served, since: assigned_at, filtered: filtered ?? [] };
 }
 
+/**
+ * What a node says a job request no job fits was matched against: each limit, those the request
+ * left out, which it took as a request that says nothing would, and those that keep work from it.
+ */
+export interface Matched {
+  can: Pick<Capabilities, CapabilityLimit>;
+  assumed: CapabilityLimit[];
+  limited_by: CapabilityLimit[];
+}
+
+/** Each limit's option, which a request without it leaves to the node's default. */
+const OPTION: Record<CapabilityLimit, string> = { minutes: "--minutes", gpu: "--gpu", download_mb: "--download-mb", software: "--software" };
+
+/** Names in a list, as a sentence says them: "a", "a and b", "a, b, and c". */
+function inWords(items: string[], last = "and"): string {
+  return items.length <= 2 ? items.join(` ${last} `) : `${items.slice(0, -1).join(", ")}, ${last} ${items.at(-1)}`;
+}
+
+/** What a request was matched against, in words, and which of its limits were the node's defaults. */
+function askedFor({ can, assumed }: Matched): string {
+  const asked = inWords([
+    can.minutes === 0 ? "only work you read" : `jobs of at most ${can.minutes} minutes`,
+    can.gpu ? "a GPU" : "no GPU",
+    can.download_mb === 0 ? "nothing to download" : `up to ${can.download_mb} MB to download`,
+    can.software.length > 0 ? `the software ${can.software.join(", ")}` : "no licensed software",
+  ]);
+  const defaults = CAPABILITY_LIMITS.filter((limit) => assumed.includes(limit)).map((limit) => OPTION[limit]);
+  return `${asked}.${defaults.length > 0 ? ` You didn't give ${inWords(defaults, "or")}, so ${defaults.length === 1 ? "that is the node's default" : "those are the node's defaults"}.` : ""}`;
+}
+
+/** Which limits keep waiting work from a request, with the option that raises each. */
+function heldBack({ can, limited_by }: Matched): string {
+  const more: Record<CapabilityLimit, string> = {
+    minutes: can.minutes === 0 ? "minutes to run it in a container" : "more minutes",
+    gpu: "a GPU",
+    download_mb: can.download_mb === 0 ? "files to download" : "more to download",
+    software: "software you didn't list",
+  };
+  return `Work you'd otherwise be given waits that needs ${inWords(limited_by.map((limit) => `${more[limit]} (${OPTION[limit]})`))}.`;
+}
+
 /** Files larger than this aren't scanned for hidden content; no model reads them whole. */
 export const SCAN_LIMIT = 64 * 1024 * 1024;
 
@@ -136,7 +177,8 @@ export interface TakeJobOptions extends Credentials {
   node?: string;
   /** Where job directories go. */
   dir: string;
-  can?: Capabilities;
+  /** What it can run, each limit it leaves out taking the node's default. */
+  can?: Can;
 }
 
 /**
@@ -166,7 +208,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     | GoalCheckJobView
     | ImportanceJobView
     | AddendumJobView
-    | { job: null; retry_after_seconds: number; swarm?: Funded; qualification?: { message: string; retake_at?: string } };
+    | ({ job: null; retry_after_seconds: number; swarm?: Funded; qualification?: { message: string; retake_at?: string } } & Partial<Matched>);
   let answer: Answer;
   try {
     answer = await client.post<Answer>("/api/v1/jobs", request);
@@ -186,11 +228,23 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
       deps.print(answer.qualification.message);
       return null;
     }
+    // A node that says what it matched the request against says which of its limits keep work
+    // from it, so a limit left to a default never does unseen.
+    const matched = answer.can && answer.assumed && answer.limited_by ? { can: answer.can, assumed: answer.assumed, limited_by: answer.limited_by } : null;
     // People funded a swarm this agent can work in, which pays for its checked work there; the
     // node sends agents to one even while jobs wait, in proportion to the credit people put in.
     const swarm = answer.swarm;
     if (!swarm) {
-      deps.print(`No job fits what you can run right now. Ask again in about ${minutes} minutes.`);
+      if (!matched) {
+        deps.print(`No job fits what you can run right now. Ask again in about ${minutes} minutes.`);
+        return null;
+      }
+      deps.print(`No job fits what you can run right now: ${askedFor(matched)}`);
+      deps.print(
+        matched.limited_by.length > 0
+          ? `${heldBack(matched)} If you can run that, and your person's level and time allow it, say so and ask again now; if not, ask again in about ${minutes} minutes.`
+          : `None of those keeps waiting work from you. Ask again in about ${minutes} minutes.`,
+      );
       return null;
     }
     deps.print(
@@ -201,6 +255,9 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
       deps.print(`It has ${smaller.count} smaller goal${smaller.count === 1 ? "" : "s"}, which may be easier to take on than the whole. Some of them:`);
       for (const goal of smaller.some) deps.print(`  ${goal.goal}: ${goal.statement ?? "(removed)"}`);
       deps.print(`Every goal it still needs, a page at a time: GET ${smaller.list}`);
+    }
+    if (matched && matched.limited_by.length > 0) {
+      deps.print(`No job fits what you can run right now: ${askedFor(matched)} ${heldBack(matched)} If you can run that, and your person's level and time allow it, say so when you ask for a job again.`);
     }
     return null;
   }
