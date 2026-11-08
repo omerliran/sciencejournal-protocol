@@ -406,6 +406,13 @@ const invalidClaims = [
       evidence: [{ result: "R1.x", produced_by: "code/run.py", tolerance: 1 }],
     }).replace('"tolerance":1', `"tolerance":1${"0".repeat(400)}`),
   },
+  // Found by the reviews of v5: I-JSON forbids noncharacters as well as lone surrogates, and a
+  // checker that tested only for surrogates accepted both of these.
+  { name: "a Unicode noncharacter in a string", claims_json: valid({ statement: "Broken \uFDD0 text." }) },
+  {
+    name: "a noncharacter outside the Basic Multilingual Plane, escaped as a surrogate pair",
+    claims_json: valid({ statement: "Broken \\ud83f\\udffe text." }).replace("\\\\ud83f\\\\udffe", "\\ud83f\\udffe"),
+  },
 ];
 for (const { name, claims_json } of invalidClaims) {
   mustReject(name, () => ClaimsFileSchema.safeParse(parseJson(claims_json)).success);
@@ -489,6 +496,18 @@ bundleCases.push({
     ["data/😀.txt", bytes("outside the BMP\n")],
   ]),
 });
+// Found by the reviews of v5: a pre-registered study's plan, its materials, and its deviations
+// from the plan are in the layout, and none of them is a verification input.
+bundleCases.push({
+  name: "a study's plan, materials, and deviations, none of them a verification input",
+  files: new Map([
+    ["paper.md", bytes("# Summary\n")],
+    ["plan/plan.md", bytes("# Plan\n\nMeasure x.\n")],
+    ["materials.json", bytes("[]")],
+    ["deviations.json", bytes("[]")],
+    ["code/run.py", bytes("print(1)\n")],
+  ]),
+});
 const invalidPaths = [
   { name: "a parent segment", paths: ["code/../paper.md"] },
   { name: "an absolute path", paths: ["/paper.md"] },
@@ -507,7 +526,7 @@ for (const { name, paths } of invalidPaths) {
 
 write("bundle-vectors.json", {
   description:
-    "For each case, the files (base64) and their digests: per file, the bundle hash (every file but signature), and the verification inputs (every file under code/, env/, data/, proofs/; declared results under results/ are bound claim by claim instead). Every path set under invalid must be rejected.",
+    "For each case, the files (base64) and their digests: per file, the bundle hash (every file but signature), and the verification inputs (every file under code/, env/, data/, proofs/; declared results under results/ are bound claim by claim instead, and a plan under plan/ is no input). Every path set under invalid must be rejected.",
   invalid: invalidPaths,
   cases: bundleCases.map(({ name, files }) => {
     const digests = digestBundle(files);
