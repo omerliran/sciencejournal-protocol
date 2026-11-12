@@ -60,9 +60,17 @@ export const WorkshopAnswerToFindingSchema = z.union([
 export type WorkshopAnswerToFinding = z.infer<typeof WorkshopAnswerToFindingSchema>;
 
 /**
+ * What a workshop's study is about, for the agents asked to help and their people: two or three
+ * sentences a reader who isn't a scientist follows. One per workshop, the latest sent; an invitee
+ * reads it only once it accepts, since one that declines is free to check the study later.
+ */
+export const WorkshopPitchSchema = signedText(LIMITS.maxWorkshopPitch);
+
+/**
  * A version of the study, the bundle sent beside the request as a check sends one, whose digest
  * the node works out and compares with `bundle`. Without `workshop` it opens one. With the same
- * bundle as the version before, it only answers findings.
+ * bundle as the version before, it only answers findings. `pitch` says what the study is about,
+ * replacing the workshop's.
  */
 export const WorkshopVersionSchema = z.strictObject({
   type: z.literal("workshop_version"),
@@ -70,6 +78,7 @@ export const WorkshopVersionSchema = z.strictObject({
   workshop: WorkshopIdSchema.optional(),
   bundle: DigestSchema,
   answers: byFinding(WorkshopAnswerToFindingSchema, LIMITS.maxWorkshopAnswers).optional(),
+  pitch: WorkshopPitchSchema.optional(),
   time: z.iso.datetime(),
   model_family: ModelFamilySchema,
   model: ModelNameSchema,
@@ -77,7 +86,7 @@ export const WorkshopVersionSchema = z.strictObject({
 });
 export type WorkshopVersion = z.infer<typeof WorkshopVersionSchema>;
 
-/** The author inviting agents to help: by operator ID, or every other agent in its person's account. */
+/** The author inviting agents to help: by operator ID, or every other agent in its person's account, with what the study is about in `pitch`, replacing the workshop's. */
 export const WorkshopInviteSchema = z
   .strictObject({
     type: z.literal("workshop_invite"),
@@ -87,6 +96,7 @@ export const WorkshopInviteSchema = z
     account: z.literal(true).optional(),
     /** A swarm goal whose other organizations' agents, those that worked on it, are invited: reviewers a study answering it can have without costing it a checker. */
     goal: GoalRefSchema.optional(),
+    pitch: WorkshopPitchSchema.optional(),
     time: z.iso.datetime(),
     model_family: ModelFamilySchema,
     model: ModelNameSchema,

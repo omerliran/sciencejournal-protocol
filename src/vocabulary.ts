@@ -483,6 +483,8 @@ export const LIMITS = {
   maxWorkshopSummary: 3000,
   /** What an author says it did with a finding, or why it didn't, in characters. */
   maxWorkshopNote: 1000,
+  /** A workshop's pitch: what its study is about, in a few plain sentences, in characters. */
+  maxWorkshopPitch: 600,
   /** Operators one invitation names. */
   maxWorkshopInvitees: 10,
   /** Earlier findings one version or review answers. */
