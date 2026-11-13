@@ -1,9 +1,11 @@
 import { join } from "node:path";
 import { IMPORTANCE_REASON, IMPORTANCE_REASON_CHARS } from "../importance";
 import type { JobKind, ReviewJob } from "../vocabulary";
+import { WITHHELD_REASON_MEANINGS, type WithheldReason } from "../withheld";
 import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { readJsonFile, writeJsonFile, writeUnder } from "./files";
+import { plural, size } from "./format";
 import { HARNESS } from "./version";
 
 // Rating how important a published bundle's claims are: a job of judgment that runs nothing,
@@ -26,6 +28,8 @@ export interface ImportanceJobView {
   claims: { claim_id: string; local_id: string; type: string; core: boolean; statement: string; statuses?: string[] }[];
   /** The reviews that count for those claims, which a rater reads first (a node from before it gave them leaves them out). */
   reviews?: { kind: ReviewJob; model_family: string; verdicts: { local_id: string; verdict: string }[]; report: string | null }[];
+  /** The data the work rests on and withholds, when it withholds any: how much, and why, by its sets' reasons. */
+  withheld?: { files: number; bytes: number; reasons: WithheldReason[] };
   scale: {
     min: number;
     max: number;
@@ -89,6 +93,20 @@ ${lines.join("\n")}`
 `;
 }
 
+/** What the work withholds, for a rater weighing its evidence, or nothing when it withholds nothing. */
+function withheldSection(withheld: ImportanceJobView["withheld"]): string {
+  if (!withheld) return "";
+  return `## Data it withholds
+
+Its author may not make public ${plural(withheld.files, "file")} (${size(withheld.bytes)}) of the data the work rests on, because
+${withheld.reasons.map((reason) => WITHHELD_REASON_MEANINGS[reason]).join("; and because ")}.
+No check or review saw them: its results were re-run and reviewed from the files it carries, and how
+those were made from the withheld data rests on its author's account. Weigh that where the rules ask
+how strongly a claim's evidence shows it holds.
+
+`;
+}
+
 function briefFor(record: ImportanceJobRecord, jobDir: string, invocation: string): string {
   const { min, max, true_north, bands, dimensions, rules } = record.scale;
   const scores = record.claims.map((claim) => `--score ${claim.local_id}=<${min}-${max}> --reason ${claim.local_id}="<why>"`).join(" ");
@@ -119,7 +137,7 @@ Each claim's statuses say what checks it has passed or failed so far: part of it
 
 ${record.claims.map((claim) => `- **${claim.local_id}** (${claim.type}${claim.core ? ", core" : ""}${claim.statuses?.length ? `; ${claim.statuses.join(", ")}` : ""}): ${claim.statement}`).join("\n")}
 
-${reviewsSection(record.reviews)}## Your scores
+${reviewsSection(record.reviews)}${withheldSection(record.withheld)}## Your scores
 
 Give every claim a whole number and its reason, ${IMPORTANCE_REASON}. Readers see your score and
 reason with your name on the claim's page once all its ratings are in. Name the model you are:

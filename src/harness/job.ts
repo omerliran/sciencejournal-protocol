@@ -18,6 +18,7 @@ import { exists, readFiles, readJsonFile, sha256File, under, writeJsonFile, writ
 import { code, plural, size } from "./format";
 import { checkMaterials, readMaterials } from "./materials";
 import { readPointers } from "./pointers";
+import { readWithheld } from "./withheld";
 import { findUnfinished } from "./proof-check";
 import { isAddendumJob, writeAddendumJob, type AddendumJobView } from "./addendum-screen";
 import { isGoalCheckJob, writeGoalCheckJob, type GoalCheckJobView } from "./goal-check";
@@ -369,6 +370,10 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
     if (error instanceof HarnessError) return error.message;
     throw error;
   });
+  const withheld = await readWithheld(bundleDir, Object.keys(files)).catch((error: unknown) => {
+    if (error instanceof HarnessError) return error.message;
+    throw error;
+  });
   await writeUnder(
     jobDir,
     "JOB.md",
@@ -382,6 +387,7 @@ export async function takeJob(options: TakeJobOptions, deps: Deps): Promise<{ re
       unfinished,
       materials,
       pointers,
+      withheld,
       runs: runsInSandbox(record),
       invocation: deps.invocation,
       now: deps.now(),

@@ -25,6 +25,13 @@ const DIRECTORIES = new Set<string>(BUNDLE_DIRECTORIES);
 export const VERIFICATION_INPUT_DIRECTORIES = ["code", "env", "data", "proofs"] as const;
 const INPUT_DIRECTORIES = new Set<string>(VERIFICATION_INPUT_DIRECTORIES);
 
+/**
+ * Where a bundle's own code reads the data it withholds (see withheld.ts): set `<name>` at
+ * data/withheld/<name>/. The folder exists only on the author's machine, so no bundle carries
+ * or points at a file there, and a bundle sent with one by mistake is refused.
+ */
+export const WITHHELD_FOLDER = "data/withheld";
+
 export class BundleLayoutError extends Error {
   override name = "BundleLayoutError";
   constructor(
@@ -115,6 +122,15 @@ export function checkPointedPaths(paths: Iterable<string>, pointed: readonly str
   checkPaths([...own, ...pointed], true);
 }
 
+/**
+ * Checks paths that name files outside any bundle, such as the files of a withheld set: each
+ * normalized, portable, and clear of the others, as a bundle's paths are. Throws
+ * BundleLayoutError naming the paths at fault.
+ */
+export function checkPortablePaths(paths: readonly string[]): void {
+  checkPaths([...paths], false);
+}
+
 function checkPaths(paths: string[], bundleLayout: boolean): void {
   const seen = new Map<string, string>();
   for (const path of paths) {
@@ -134,6 +150,10 @@ function checkPaths(paths: string[], bundleLayout: boolean): void {
       (segments.length === 1 ? BUNDLE_FILES.has(path) : DIRECTORIES.has(segments[0]));
     if (!allowed) {
       throw new BundleLayoutError(`"${path}" is outside the submission layout`, [path]);
+    }
+    // Folded, since a file system that ignores case would put it in the same folder.
+    if (bundleLayout && path.toLowerCase().startsWith(`${WITHHELD_FOLDER}/`)) {
+      throw new BundleLayoutError(`"${path}" is under ${WITHHELD_FOLDER}/, where withheld data is read from and which no bundle carries`, [path]);
     }
 
     // Mirrors on case-insensitive filesystems must be able to hold every file.

@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BundleLayoutError, digestBundle } from "../bundle";
 import { ClaimsFileSchema, isComputation, isProof } from "../claims";
-import { externalBytes, type ExternalData } from "../external";
+import { EXTERNAL_DATA, externalBytes, type ExternalData } from "../external";
 import type { Digest } from "../hash";
 import { integrityFlags, MISSING_FILE_REASONS } from "../integrity";
 import { parseJson } from "../json";
@@ -20,6 +20,8 @@ import { describePointers, readPointers } from "./pointers";
 import { runSubject, type RunOptions } from "./reproduction";
 import type { Sandbox } from "./sandbox";
 import { HARNESS } from "./version";
+import { WITHHELD_DATA } from "../withheld";
+import { describeWithheld, readWithheld } from "./withheld";
 
 export interface SelfCheckOptions extends RunOptions {
   /** Where the harness writes; next to the bundle by default, never inside it. */
@@ -99,6 +101,22 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
   if (pointed) {
     deps.print(
       `It points at ${pointed} in data/external.json. Verifiers fetch each one before they run the work, so only those that can download ${size(bundleBytes + externalBytes(pointers))} in all are given work that re-runs it.`,
+    );
+  }
+  // What goes out under data/ becomes public, so the moment to ask whose it is is before it's sent.
+  const carried = [...sizes].filter(([path]) => path.startsWith("data/") && path !== EXTERNAL_DATA && path !== WITHHELD_DATA);
+  if (carried.length > 0) {
+    deps.print(
+      `It carries ${plural(carried.length, "file")} under data/ (${size(carried.reduce((total, [, bytes]) => total + bytes, 0))}), which become public once it opens. If any holds data of your person's that isn't already public, show them which files and wait for their yes before you send it, a workshop's version included.`,
+    );
+  }
+  const withheld = describeWithheld(await readWithheld(root, paths).catch((error: unknown) => {
+    if (error instanceof HarnessError) throw new HarnessError(`A node would refuse this bundle: ${error.message}`);
+    throw error;
+  }));
+  if (withheld) {
+    deps.print(
+      `It withholds ${withheld}, which data/withheld.json commits to. Verifiers have only what the bundle carries: every computation must run from that, and the paper must say what rests on the withheld data.`,
     );
   }
   const builtCode = scan.binary.filter((path) => path.startsWith("code/"));
