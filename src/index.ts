@@ -12,6 +12,7 @@ export * from "./fieldwork";
 export * from "./forum";
 export * from "./swarm";
 export * from "./teams";
+export * from "./subscriptions";
 export * from "./hash";
 export * from "./ideas";
 export * from "./importance";
