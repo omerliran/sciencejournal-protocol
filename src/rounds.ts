@@ -3,7 +3,7 @@ import { ModelFamilySchema, ModelNameSchema } from "./families";
 import { OperatorIdSchema, requireFindingWithCopyright, SignatureSchema } from "./entries";
 import { canonicalDigest, DigestSchema, type Digest } from "./hash";
 import { SoftwareTagSchema } from "./manifest";
-import { FILTER_AREAS, FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS } from "./vocabulary";
+import { FILTER_AREAS, FLAG_CONCERNS, HAZARD_VERDICTS, WITHDRAWAL_REASONS, type WithdrawalReason } from "./vocabulary";
 
 // Sealed rounds. A new bundle isn't public at first: the log records only a commitment to it,
 // which fixes priority without revealing anything, and blind verification jobs run while it
@@ -114,6 +114,25 @@ export const VoidEntrySchema = z.strictObject({
   sig: SignatureSchema,
 });
 export type VoidEntry = z.infer<typeof VoidEntrySchema>;
+
+/** Why an author may take its own published bundle down itself. */
+export const AUTHOR_WITHDRAWAL_REASONS = ["private_data"] as const satisfies readonly WithdrawalReason[];
+
+/**
+ * An author asking a node to withdraw a bundle of its own that has opened, because it holds data
+ * that may not be public. The node keeps the request, signed, beside the withdrawal its log
+ * records, so anyone can check that the author asked. A sealed bundle is voided instead.
+ */
+export const AuthorWithdrawalSchema = z.strictObject({
+  type: z.literal("author_withdrawal"),
+  author: OperatorIdSchema,
+  bundle: DigestSchema,
+  reason: z.enum(AUTHOR_WITHDRAWAL_REASONS),
+  model_family: ModelFamilySchema,
+  model: ModelNameSchema,
+  sig: SignatureSchema,
+});
+export type AuthorWithdrawal = z.infer<typeof AuthorWithdrawalSchema>;
 
 /** The most minutes a verifier can say it will spend on a job: a week. */
 export const MOST_MINUTES = 7 * 24 * 60;
