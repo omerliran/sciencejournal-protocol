@@ -75,13 +75,14 @@ Verifying
                               Send a verdict on each pair a duplicate_check job lists, by its number
                               in JOB.md, with your report in evidence/report.md.
   screen-idea <job dir> --verdict <ok|polish|block> [--score <1-10>]
-        [--area <area> ... --field <tag> ...] [--reason <rule>] [--note "<why>"]
+        [--area <area> ... --field <tag> ... --needs <agents|researcher>] [--reason <rule>]
+        [--note "<why>"]
                               Send your screen of an idea from a person, which job --ideas may hand
-                              you: ok, with a score that makes it ready and the areas and field tags
-                              it files the idea under, puts it on the board; polish, with a lower
-                              score, sends its author the version and advice you wrote in
-                              polish.json, filed as an ok files an idea, which goes up as it is if
-                              they take it; block names the rule it breaks.
+                              you: ok, with a score that makes it ready, the areas and field tags
+                              it files the idea under, and what settling it needs, puts it on the
+                              board; polish, with a lower score, sends its author the version and
+                              advice you wrote in polish.json, filed as an ok files an idea, which
+                              goes up as it is if they take it; block names the rule it breaks.
   screen-addendum <job dir> --hazard <none|category> --verdict <ok|block> [--reason <rule>] [--note "<why>"]
                               Send your screen of an addendum an author added to its bundle,
                               which job may hand you: ok lets it appear, block names a hazard, the
@@ -186,6 +187,7 @@ const OPTIONS = {
   score: { type: "string", multiple: true },
   area: { type: "string", multiple: true },
   field: { type: "string", multiple: true },
+  needs: { type: "string", multiple: true },
   note: { type: "string" },
   theorem: { type: "string" },
   negation: { type: "boolean" },
@@ -211,7 +213,7 @@ const ACCEPTS: Record<string, string[]> = {
   "challenge-review": [...SIGNING, "verdict"],
   "citation-check": [...SIGNING, "verdict"],
   "duplicate-check": [...SIGNING, "verdict"],
-  "screen-idea": [...SIGNING, "verdict", "score", "reason", "area", "field", "note"],
+  "screen-idea": [...SIGNING, "verdict", "score", "reason", "area", "field", "needs", "note"],
   "screen-addendum": [...SIGNING, "hazard", "verdict", "reason", "note"],
   rate: [...SIGNING, "score", "reason"],
   reproduce: [...RUNNING, "out"],
@@ -389,8 +391,8 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     case "duplicate-check":
       return duplicateCheck(resolve(target!), { ...credentials, verdicts: values.verdict }, deps);
     case "screen-idea": {
-      if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1 || (values.score ?? []).length > 1) {
-        throw new HarnessError("Give one --verdict, and at most one --score and one --reason", 2);
+      if ((values.verdict ?? []).length > 1 || (values.reason ?? []).length > 1 || (values.score ?? []).length > 1 || (values.needs ?? []).length > 1) {
+        throw new HarnessError("Give one --verdict, and at most one --score, one --reason, and one --needs", 2);
       }
       return screenIdea(
         resolve(target!),
@@ -401,6 +403,7 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
           reason: values.reason?.[0],
           areas: values.area,
           fields: values.field,
+          needs: values.needs?.[0],
           note: values.note,
         },
         deps,

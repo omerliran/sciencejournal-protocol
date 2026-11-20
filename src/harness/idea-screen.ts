@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { IdeaAreasSchema, IdeaFieldsSchema, IDEA_SCREEN_VERDICTS, IdeaScoreSchema, IdeaSuggestionSchema, type IdeaScreenVerdict } from "../ideas";
-import { AREAS, IDEA_FLAG_REASONS, LIMITS, type JobKind } from "../vocabulary";
+import { IdeaAreasSchema, IdeaFieldsSchema, IdeaNeedSchema, IDEA_SCREEN_VERDICTS, IdeaScoreSchema, IdeaSuggestionSchema, type IdeaScreenVerdict } from "../ideas";
+import { AREAS, IDEA_FLAG_REASONS, IDEA_NEEDS, LIMITS, type JobKind } from "../vocabulary";
 import { MODEL_FLAGS, NodeClient, signAs, signIn, type Credentials } from "./client";
 import { HarnessError, type Deps } from "./context";
 import { readJsonFile, writeJsonFile, writeUnder } from "./files";
@@ -8,8 +8,8 @@ import { HARNESS } from "./version";
 
 // Screening an idea from a person before it appears: a job of judgment that runs nothing. The
 // harness writes the idea down with the node's rules for ideas and what makes a good one, and
-// signs and sends the verdict, score, any suggested version, and the areas and field tags an ok
-// files it under, as the verifier gives them; it proposes none.
+// signs and sends the verdict, score, any suggested version, the areas and field tags an ok
+// files it under, and what the idea needs, as the verifier gives them; it proposes none.
 
 /** An idea job as the node hands it out. */
 export interface IdeaJobView {
@@ -30,6 +30,10 @@ export interface IdeaJobView {
   areas: Record<string, string>;
   /** How an ok files the idea under areas and field tags. */
   filing: string;
+  /** What an ok says the idea needs, each value with what it covers; absent from a node that doesn't ask. */
+  needs?: Record<string, string>;
+  /** How an ok says what the idea needs. */
+  needing?: string;
 }
 
 /** Where a screener writes the version it suggests, and its advice to the idea's author. */
@@ -87,14 +91,20 @@ ${record.qualities.map((quality) => `- ${quality.name}: ${quality.text}`).join("
 
 ${record.scoring}
 
-If it scores ${record.ready_at} or more, put it on the board, filed under its areas and field tags:
+If it scores ${record.ready_at} or more, put it on the board, filed under its areas and field tags, saying what it needs:
 
-    ${send} --verdict ok --score <score> --area <area> --field <tag> --field <tag>
+    ${send} --verdict ok --score <score> --area <area> --field <tag> --field <tag> --needs <${IDEA_NEEDS.join("|")}>
 
 ${record.filing} Give --area once or twice and --field up to five times. The areas:
 
 ${Object.entries(record.areas)
   .map(([area, covers]) => `- ${area}: ${covers}`)
+  .join("\n")}
+
+${record.needing ?? "An ok also says what the idea needs: who it takes to gather the evidence that would settle the question."} Give --needs once:
+
+${Object.entries(record.needs ?? Object.fromEntries(IDEA_NEEDS.map((need) => [need, ""])))
+  .map(([need, covers]) => (covers ? `- ${need}: ${covers}` : `- ${need}`))
   .join("\n")}
 
 ## 3. Below ${record.ready_at}: help its author polish it
@@ -103,9 +113,10 @@ ${record.polishing}
 
 Write your version and your advice to ${join(jobDir, POLISH_FILE)}, as
 {"title": "<at most ${LIMITS.maxIdeaTitle} characters>", "details": "<at most ${LIMITS.maxIdeaDetails} characters>", "advice": "<at most ${LIMITS.maxIdeaAdvice} characters>"},
-then send it, filed under the areas and field tags your version belongs under, as in step 2:
+then send it, filed under the areas and field tags your version belongs under and saying what
+your version needs, as in step 2:
 
-    ${send} --verdict polish --score <score> --area <area> --field <tag> --field <tag>
+    ${send} --verdict polish --score <score> --area <area> --field <tag> --field <tag> --needs <${IDEA_NEEDS.join("|")}>
 
 Due ${record.deadline}.
 `;
@@ -121,6 +132,8 @@ export interface ScreenIdeaOptions extends Credentials {
   areas?: string[];
   /** The field tags an ok files it under, or a polish its version. */
   fields?: string[];
+  /** What an ok says the idea needs, or a polish its version. */
+  needs?: string;
 }
 
 /** What each status the node answers with means for the screener. */
@@ -177,11 +190,11 @@ function scoreFrom(given: string | undefined, verdict: "ok" | "polish", readyAt:
   return score.data;
 }
 
-/** The --area and --field an ok files the idea under, or a polish its version, which a block leaves out. */
+/** The --area, --field, and --needs an ok gives for the idea, or a polish for its version, which a block leaves out. */
 function filingFrom(options: ScreenIdeaOptions, verdict: IdeaScreenVerdict) {
-  const given = (options.areas ?? []).length > 0 || (options.fields ?? []).length > 0;
+  const given = (options.areas ?? []).length > 0 || (options.fields ?? []).length > 0 || options.needs !== undefined;
   if (verdict === "block") {
-    if (given) throw new HarnessError("A block files nothing under areas and fields; it gives no --area or --field.", 2);
+    if (given) throw new HarnessError("A block files nothing under areas and fields and says nothing of what the idea needs; it gives no --area, --field, or --needs.", 2);
     return undefined;
   }
   const what = verdict === "ok" ? "An ok files the idea" : "A polish files the version it suggests";
@@ -193,7 +206,14 @@ function filingFrom(options: ScreenIdeaOptions, verdict: IdeaScreenVerdict) {
   if (!fields.success) {
     throw new HarnessError(`${what} under one to five field tags too, each with --field: lowercase words joined by hyphens, such as exoplanets.`, 2);
   }
-  return { areas: areas.data, fields: fields.data };
+  const needs = IdeaNeedSchema.safeParse(options.needs);
+  if (!needs.success) {
+    throw new HarnessError(
+      `${verdict === "ok" ? "An ok says what the idea needs" : "A polish says what the version it suggests needs"} with --needs: ${IDEA_NEEDS.join(" or ")} (JOB.md says what each covers).`,
+      2,
+    );
+  }
+  return { areas: areas.data, fields: fields.data, needs: needs.data };
 }
 
 /** The version a polish suggests and its advice, from the file the screener wrote, trimmed as signed text must be. */

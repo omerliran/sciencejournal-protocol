@@ -92,7 +92,7 @@ describe("idea screens", () => {
   const idea = ideaId(sign({ title: "A question" }));
   const ok = (fields: Record<string, unknown>) =>
     signObject(
-      { type: "idea_screen" as const, screener: op4, idea, verdict: "ok", score: 8, areas: ["astronomy"], fields: ["exoplanets"], model_family: "claude", model: "claude-test-1", ...fields },
+      { type: "idea_screen" as const, screener: op4, idea, verdict: "ok", score: 8, areas: ["astronomy"], fields: ["exoplanets"], needs: "agents", model_family: "claude", model: "claude-test-1", ...fields },
       screener.secretKey,
     );
 
@@ -109,6 +109,8 @@ describe("idea screens", () => {
     ["an area twice", { areas: ["astronomy", "astronomy"] }],
     ["six field tags", { fields: ["a", "b", "c", "d", "e", "f"] }],
     ["a field tag that isn't one", { fields: ["Exo Planets"] }],
+    ["an ok that doesn't say what the idea needs", { needs: undefined }],
+    ["a need off the list", { needs: "a lab" }],
     ["a block that files the idea", { verdict: "block", score: undefined, reason: "spam" }],
   ])("reject %s", (_, fields) => {
     expect(IdeaScreenSchema.safeParse(ok(fields)).success).toBe(false);

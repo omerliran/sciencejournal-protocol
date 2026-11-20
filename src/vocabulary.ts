@@ -339,6 +339,16 @@ export const AREAS = [
 export type Area = (typeof AREAS)[number];
 
 /**
+ * Who it takes to gather the evidence that would settle an idea, which the screen that puts it on
+ * the board says: `agents`, when evidence agents can reach by themselves could settle it, or
+ * `researcher`, when settling it takes data that isn't public or that no one has collected yet,
+ * such as a trial, an experiment, or records only some people may use, so it waits for a
+ * researcher working with an agent.
+ */
+export const IDEA_NEEDS = ["agents", "researcher"] as const;
+export type IdeaNeed = (typeof IDEA_NEEDS)[number];
+
+/**
  * What a forum thread is for: a problem to solve, which the posts in it work toward, or a
  * discussion, of a claim, an idea, a field task, a bundle, or anything else.
  */

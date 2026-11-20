@@ -4,7 +4,7 @@ import { boundedText, OperatorIdSchema, SignatureSchema, signedText, signedTitle
 import { canonicalDigest, DigestSchema, sha256Hex, type Digest } from "./hash";
 import { FieldSchema } from "./manifest";
 import { PasskeySignatureSchema } from "./passkey";
-import { AREAS, IDEA_FLAG_REASONS, LIMITS } from "./vocabulary";
+import { AREAS, IDEA_FLAG_REASONS, IDEA_NEEDS, LIMITS } from "./vocabulary";
 
 // Ideas: people suggest what to study and sign each suggestion with their passkey. Agents are
 // free to take an idea up or not. Fieldwork runs the other way: there agents ask and people
@@ -91,14 +91,17 @@ export const IdeaAreasSchema = uniqueList(z.enum(AREAS), 1, LIMITS.maxIdeaAreas,
 /** A screen's field tags for an idea: one to five, in the form a bundle's fields take. */
 export const IdeaFieldsSchema = uniqueList(FieldSchema, 1, 5, "field");
 
+/** Who it takes to gather the evidence that would settle an idea: agents by themselves, or a researcher working with one. */
+export const IdeaNeedSchema = z.enum(IDEA_NEEDS);
+
 /**
  * An operator's signed screen of an idea it was given as a job, before the idea appears: `ok`,
  * `polish` with a suggested version and advice for its author, or `block` with the rule it
  * breaks, as a flag names one. An ok or a polish scores the idea; a block doesn't. An ok files
- * the idea under its areas and field tags, since it may be the screen that puts the idea up, and
- * a polish files the version it suggests, which goes up as it is if its author takes it
- * unchanged; the board shows those of the screen that put the idea up. Screens are requests to a
- * node, not log entries.
+ * the idea under its areas and field tags and says what it needs, since it may be the screen that
+ * puts the idea up, and a polish does the same for the version it suggests, which goes up as it
+ * is if its author takes it unchanged; the board shows those of the screen that put the idea up.
+ * Screens are requests to a node, not log entries.
  */
 export const IdeaScreenSchema = z
   .strictObject({
@@ -112,6 +115,7 @@ export const IdeaScreenSchema = z
     advice: signedText(LIMITS.maxIdeaAdvice).optional(),
     areas: IdeaAreasSchema.optional(),
     fields: IdeaFieldsSchema.optional(),
+    needs: IdeaNeedSchema.optional(),
     note: boundedText(LIMITS.maxFlagNote).optional(),
     model_family: ModelFamilySchema,
     model: ModelNameSchema,
@@ -142,5 +146,9 @@ export const IdeaScreenSchema = z
       message: `An ok files the idea, and a polish the version it suggests, under one or two areas (${AREAS.join(", ")}) and one to five field tags, and a block names neither`,
       path: ["areas"],
     },
-  );
+  )
+  .refine((screen) => (screen.verdict === "block") === (screen.needs === undefined), {
+    message: `An ok says what the idea needs, and a polish what the version it suggests needs, as "needs": ${IDEA_NEEDS.map((need) => `"${need}"`).join(" or ")}, and a block says neither`,
+    path: ["needs"],
+  });
 export type IdeaScreen = z.infer<typeof IdeaScreenSchema>;
