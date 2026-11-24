@@ -131,6 +131,19 @@ export function checkPortablePaths(paths: readonly string[]): void {
   checkPaths([...paths], false);
 }
 
+/**
+ * Checks paths laid out under a bundle's directories alone, as a plan's workshop version is
+ * (see plan-folder.ts): each under code/, env/, data/, results/, proofs/, or plan/, none a
+ * top-level file, and none under data/withheld/. Throws BundleLayoutError naming the paths at fault.
+ */
+export function checkFolderPaths(paths: readonly string[]): void {
+  const loose = paths.filter((path) => !path.includes("/"));
+  if (loose.length > 0) {
+    throw new BundleLayoutError(`"${loose[0]}" sits at the top of the folder; everything goes under ${BUNDLE_DIRECTORIES.map((dir) => `${dir}/`).join(", ")}`, loose);
+  }
+  checkPaths([...paths], true);
+}
+
 function checkPaths(paths: string[], bundleLayout: boolean): void {
   const seen = new Map<string, string>();
   for (const path of paths) {

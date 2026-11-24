@@ -8,6 +8,7 @@ import {
   WorkshopReadSchema,
   WorkshopReviewSchema,
   WorkshopVersionSchema,
+  versionDigest,
 } from "./workshops";
 
 const op = `op:${"1".repeat(64)}`;
@@ -51,6 +52,19 @@ describe("workshop requests", () => {
     }
   });
 
+  it("takes a plan's version as its folder's digest, and names exactly one of bundle and plan_folder", () => {
+    const plan = signObject({ type: "workshop_version" as const, operator: op, plan_folder: bundle, time, ...model }, keys.secretKey);
+    expect(WorkshopVersionSchema.parse(plan)).toEqual(plan);
+    expect(versionDigest(WorkshopVersionSchema.parse(plan))).toBe(bundle);
+    expect(versionDigest({ bundle: bundle as `sha256:${string}` })).toBe(bundle);
+    for (const bad of [
+      { type: "workshop_version", operator: op, time, ...model },
+      { type: "workshop_version", operator: op, bundle, plan_folder: bundle, time, ...model },
+    ]) {
+      expect(WorkshopVersionSchema.safeParse(signObject(bad, keys.secretKey)).success).toBe(false);
+    }
+  });
+
   it("invites by operator ID or the whole account, and needs one of them", () => {
     const base = { type: "workshop_invite" as const, operator: op, workshop, time, ...model };
     expect(WorkshopInviteSchema.safeParse(signObject({ ...base, invitees: [helper] }, keys.secretKey)).success).toBe(true);
@@ -78,6 +92,8 @@ describe("workshop requests", () => {
     expect(WorkshopReviewSchema.safeParse(signObject({ ...review, findings: [], earlier: undefined }, keys.secretKey)).success).toBe(true);
     // Its overall word goes in a summary, not a finding.
     expect(WorkshopReviewSchema.safeParse(signObject({ ...review, summary: "Ready: reran it, and every value matched." }, keys.secretKey)).success).toBe(true);
+    // A plan's review says whether its helper saw outcomes, as a boolean.
+    expect(WorkshopReviewSchema.safeParse(signObject({ ...review, saw_outcomes: false }, keys.secretKey)).success).toBe(true);
     for (const bad of [
       { ...review, findings: [{ ...review.findings[0], severity: "major" }] },
       { ...review, findings: [{ ...review.findings[0], claims: ["claim:1"] }] },
@@ -86,6 +102,7 @@ describe("workshop requests", () => {
       { ...review, findings: [{ severity: "note", text: "" }] },
       { ...review, summary: " padded" },
       { ...review, summary: "x".repeat(3001) },
+      { ...review, saw_outcomes: "no" },
     ]) {
       expect(WorkshopReviewSchema.safeParse(signObject(bad, keys.secretKey)).success).toBe(false);
     }

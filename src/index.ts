@@ -24,6 +24,7 @@ export * from "./deviations";
 export * from "./duplicates";
 export * from "./findings";
 export * from "./preregistration";
+export * from "./plan-folder";
 export * from "./json";
 export * from "./leaves";
 export * from "./manifest";

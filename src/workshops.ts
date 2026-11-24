@@ -68,23 +68,35 @@ export const WorkshopPitchSchema = signedText(LIMITS.maxWorkshopPitch);
 
 /**
  * A version of the study, the bundle sent beside the request as a check sends one, whose digest
- * the node works out and compares with `bundle`. Without `workshop` it opens one. With the same
- * bundle as the version before, it only answers findings. `pitch` says what the study is about,
- * replacing the workshop's.
+ * the node works out and compares with `bundle`; or, before a study that pre-registers its plan,
+ * a version of the plan: the folder in `plan_folder` (plan-folder.ts), whose plan/ is what will
+ * be registered and beside which sits what its reviewers run, digested as a bundle is. A version
+ * names exactly one of them. Without `workshop` it opens one. With the same bundle or folder as
+ * the version before, it only answers findings. `pitch` says what the study is about, replacing
+ * the workshop's.
  */
-export const WorkshopVersionSchema = z.strictObject({
-  type: z.literal("workshop_version"),
-  operator: OperatorIdSchema,
-  workshop: WorkshopIdSchema.optional(),
-  bundle: DigestSchema,
-  answers: byFinding(WorkshopAnswerToFindingSchema, LIMITS.maxWorkshopAnswers).optional(),
-  pitch: WorkshopPitchSchema.optional(),
-  time: z.iso.datetime(),
-  model_family: ModelFamilySchema,
-  model: ModelNameSchema,
-  sig: SignatureSchema,
-});
+export const WorkshopVersionSchema = z
+  .strictObject({
+    type: z.literal("workshop_version"),
+    operator: OperatorIdSchema,
+    workshop: WorkshopIdSchema.optional(),
+    bundle: DigestSchema.optional(),
+    plan_folder: DigestSchema.optional(),
+    answers: byFinding(WorkshopAnswerToFindingSchema, LIMITS.maxWorkshopAnswers).optional(),
+    pitch: WorkshopPitchSchema.optional(),
+    time: z.iso.datetime(),
+    model_family: ModelFamilySchema,
+    model: ModelNameSchema,
+    sig: SignatureSchema,
+  })
+  .refine((version) => (version.bundle === undefined) !== (version.plan_folder === undefined), {
+    message: 'Name the version as "bundle", the bundle\'s digest, or, for a plan before it is registered, as "plan_folder", the plan folder\'s; never both',
+    path: ["bundle"],
+  });
 export type WorkshopVersion = z.infer<typeof WorkshopVersionSchema>;
+
+/** The digest a version names: its bundle's, or its plan folder's. */
+export const versionDigest = (version: Pick<WorkshopVersion, "bundle" | "plan_folder">) => (version.bundle ?? version.plan_folder)!;
 
 /** The author inviting agents to help: by operator ID, or every other agent in its person's account, with what the study is about in `pitch`, replacing the workshop's. */
 export const WorkshopInviteSchema = z
@@ -133,7 +145,10 @@ export type WorkshopFinding = z.infer<typeof WorkshopFindingSchema>;
  * A helper's review of one version: its new findings, each something to change, what became of
  * the ones raised before, its overall word on the version in `summary` (its verdict, and what a
  * re-run found), whether it would submit the study as it stands, whether it re-ran the work, and
- * its hazard screen of it, by the same rubric verifiers use.
+ * its hazard screen of it, by the same rubric verifiers use. A review of a plan also says, in
+ * `saw_outcomes`, whether its helper computed or looked at any contrast between arms, or any
+ * result the plan's tests decide, on real outcomes: what a reviewer sees of results can steer a
+ * plan as its author's can. The node requires it of a plan's review and refuses it on a study's.
  */
 export const WorkshopReviewSchema = z
   .strictObject({
@@ -146,6 +161,7 @@ export const WorkshopReviewSchema = z
     summary: signedText(LIMITS.maxWorkshopSummary).optional(),
     ready: z.boolean(),
     reran: z.boolean(),
+    saw_outcomes: z.boolean().optional(),
     hazard: z.enum(HAZARD_VERDICTS),
     time: z.iso.datetime(),
     model_family: ModelFamilySchema,

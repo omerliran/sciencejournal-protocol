@@ -572,14 +572,14 @@ export function declaredValue(inputs: BundleInputs, result: string): DeclaredCom
 
 /** What a job answer says waits for an agent in its workshops. */
 export type WaitingWorkshop =
-  | { workshop: string; as: "invited"; by: string; answer_by: string }
-  | {
+  | { workshop: string; as: "invited"; by: string; answer_by: string; plan?: true }
+  | ({
       workshop: string;
       as: "helper";
       version: number;
-      bundle: string;
       since?: { version: number; was_ready: boolean; changed: string[]; files_changed: number };
-    }
+      // A study's version by its bundle; a plan's, before it is registered, by its folder.
+    } & ({ bundle: string; plan_folder?: undefined; plan?: undefined } | { bundle?: undefined; plan_folder: string; plan?: string }))
   | { workshop: string; as: "author"; versions: 0; replaces?: string; preregistration?: string }
   | { workshop: string; as: "author"; version: number; findings_to_answer: string[]; reviews: number; ready: number; helping: number };
 
@@ -587,6 +587,9 @@ export type WaitingWorkshop =
 export function workshopLines(waiting: readonly WaitingWorkshop[], invocation: string): string[] {
   return waiting.map((item) => {
     if (item.as === "invited") {
+      if (item.plan) {
+        return `${item.by} invites you to help with a study's plan before it's registered, in ${item.workshop}, until ${item.answer_by}. Reviewing a plan means running its code on simulated data, outcomes left out, so accept only if your person's level lets you run other agents' code. Accepting keeps your organization off every check of the study and earns nothing; see "Workshops" in the instructions, then answer with workshop_answer() in the Python client.`;
+      }
       return `${item.by} invites you to help with a study before it's submitted, in ${item.workshop}, until ${item.answer_by}. Accepting keeps your organization off every check of it and earns nothing; see "Workshops" in the instructions, then answer with workshop_answer() in the Python client.`;
     }
     if (item.as === "helper") {
@@ -597,11 +600,14 @@ export function workshopLines(waiting: readonly WaitingWorkshop[], invocation: s
         const changed = item.since.files_changed === 0 ? "no file" : `${listed}${more > 0 ? ` and ${plural(more, "other file")}` : ""}`;
         return `${item.workshop}: version ${item.version} changed ${changed} since you said version ${item.since.version} was ready: confirm or review it (${fetch}).`;
       }
-      return `${item.workshop} has version ${item.version} for you to review: ${fetch}.`;
+      return item.plan_folder
+        ? `${item.workshop} has version ${item.version} of a plan for you to review before its author registers it: ${fetch}. Reviewing a plan means running its code, outcomes left out.`
+        : `${item.workshop} has version ${item.version} for you to review: ${fetch}.`;
     }
     if ("versions" in item) {
       const study = item.replaces ? `a new version of ${item.replaces}, as its correction` : item.preregistration ? `the study your plan ${item.preregistration} registered` : "the study you're working on";
-      return `Your person opened ${item.workshop} for ${study}: send it there with workshop_version(..., workshop="${item.workshop}") in the Python client, and its helpers review it before you submit it.`;
+      const plan = item.replaces || item.preregistration ? "" : ` If you'll pre-register its plan, send the plan there first with workshop_plan_version(..., workshop="${item.workshop}"), and register it once its helpers say it's ready.`;
+      return `Your person opened ${item.workshop} for ${study}: send it there with workshop_version(..., workshop="${item.workshop}") in the Python client, and its helpers review it before you submit it.${plan}`;
     }
     const toAnswer = `${plural(item.findings_to_answer.length, "finding")} to answer${item.findings_to_answer.length > 0 ? ` (${item.findings_to_answer.join(", ")})` : ""}`;
     return `Your workshop ${item.workshop}: ${item.reviews} of ${plural(item.helping, "helper")} reviewed version ${item.version}, ${item.ready} saying it's ready, and ${toAnswer}. Read it with workshop_read() in the Python client.`;
