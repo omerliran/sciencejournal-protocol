@@ -4,6 +4,7 @@ import { BundleLayoutError, digestBundle } from "../bundle";
 import { ClaimsFileSchema, isComputation, isProof } from "../claims";
 import { EXTERNAL_DATA, externalBytes, type ExternalData } from "../external";
 import type { Digest } from "../hash";
+import { FIGURE_LIMITS, FIGURE_PROBLEMS } from "../figures";
 import { integrityFlags, MISSING_FILE_REASONS } from "../integrity";
 import { parseJson } from "../json";
 import { ManifestSchema } from "../manifest";
@@ -129,7 +130,7 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
     deps.print(`The hidden-content scan found ${plural(scan.findings.length, "thing")} a verifier's harness will flag (see ${join(outDir, "scan.json")}):`);
     for (const finding of scan.findings.slice(0, 8)) deps.print(`  ${finding.path}:${finding.line}:${finding.column} ${finding.kind}`);
   }
-  await checkFlagged(files, paths, deps);
+  await checkFlagged(files, paths, deps, sizes);
   if (reproducible.length === 0 && provable.length === 0) {
     deps.print("No claim's evidence has a computation or a proof, so there is nothing to re-run or check.");
     return 0;
@@ -196,8 +197,13 @@ export async function selfCheck(bundleDir: string, options: SelfCheckOptions, de
  * author can fix them first. Then what each RRID in materials.json resolves to, which
  * reviewers' harnesses look up.
  */
-async function checkFlagged(files: ReadonlyMap<string, Uint8Array>, paths: string[], deps: Deps): Promise<void> {
-  const flags = integrityFlags(files, paths);
+async function checkFlagged(
+  files: ReadonlyMap<string, Uint8Array>,
+  paths: string[],
+  deps: Deps,
+  sizes?: ReadonlyMap<string, number>,
+): Promise<void> {
+  const flags = integrityFlags(files, paths, sizes);
   if (flags.orphan_numbers.length > 0) {
     deps.print(
       `paper.md writes ${plural(flags.orphan_numbers.length, "number")} into its Summary, Claims, or Results that no declared result binds, in digits or in words; verifiers will see each flagged. Give a result as a placeholder such as {{R1.key}}, and a parameter in Methods:`,
@@ -219,6 +225,16 @@ async function checkFlagged(files: ReadonlyMap<string, Uint8Array>, paths: strin
     );
   }
   for (const path of flags.missing_files) deps.print(`The bundle has no ${path}, though ${MISSING_FILE_REASONS[path]}; verifiers will see that flagged.`);
+  for (const figure of flags.figures ?? []) {
+    if (figure.problem === null) continue;
+    deps.print(
+      figure.shown
+        ? `paper.md's figure on line ${figure.line}, ${figure.src}, shows on the study's page, but ${FIGURE_PROBLEMS[figure.problem]}; verifiers will see that flagged.`
+        : `paper.md's figure on line ${figure.line}, ${figure.src}, will show only as a link, since ${FIGURE_PROBLEMS[figure.problem]}. A page shows a PNG, JPEG, or WebP image under results/ that the code writes, up to ${FIGURE_LIMITS.maxBytes / (1024 * 1024)} MB.`,
+    );
+  }
+  const shown = (flags.figures ?? []).filter((figure) => figure.shown).length;
+  if (shown > 0) deps.print(`The study's page will show ${plural(shown, "figure")} in the paper; every screener looks at each.`);
   if (!files.has("materials.json")) return;
   const materials = readMaterials(files.get("materials.json"));
   if (!materials) {

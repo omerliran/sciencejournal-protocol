@@ -180,3 +180,35 @@ it("says what a work withholds, in its author's words as data, and what that mea
     "A node would refuse the work as it stands",
   );
 });
+
+it("lists the figures the page will show, for every verifier to look at, and those it won't", () => {
+  const flags: IntegrityFlags = {
+    orphan_numbers: [],
+    missing_sections: [],
+    missing_files: [],
+    uncited_references: [],
+    unlisted_citations: [],
+    figures: [
+      { src: "results/fig1.png", line: 12, caption: "Figure 1. Loss by epoch.", shown: true, problem: null },
+      { src: "https://example.org/fig2.png", line: 20, caption: "Figure 2.", shown: false, problem: "external" },
+    ],
+    data: [],
+    skipped: [],
+  };
+  const text = brief(flags);
+  expect(text).toContain("## Figures");
+  expect(text).toContain("- `bundle/results/fig1.png`, line 12 of the paper: `Figure 1. Loss by epoch.`");
+  expect(text).toContain("screen it with the rest of the work");
+  expect(text).toContain("`paper.md`, line 20: `https://example.org/fig2.png`, a link, since it is on the web");
+  expect(text).not.toContain("The node's checks flagged nothing");
+  const reproducing = renderBrief({
+    record: { ...record(flags), kind: "reproduction" },
+    jobDir: "job-abc",
+    scan,
+    declared: [],
+    invocation: "sj-harness",
+    now: new Date("2026-10-03T12:00:00Z"),
+  });
+  expect(reproducing).toContain("say in your evidence whether the run wrote each one again");
+  expect(brief({ ...flags, figures: [] })).not.toContain("## Figures");
+});

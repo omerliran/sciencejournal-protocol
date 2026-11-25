@@ -1,5 +1,6 @@
 import { ClaimsFileSchema, needsReplication } from "./claims";
 import { followed } from "./deviations";
+import { isFigureFile, paperFigures, type Figure } from "./figures";
 import { parseJson } from "./json";
 import { missingSections, parseMarkdown, plainText, sectionDepth, type MarkdownNode } from "./paper";
 import { spelledNumbers } from "./number-words";
@@ -30,6 +31,9 @@ import { revealHidden } from "./scan";
 // measuring again with the same materials can check, and deviations.json when the work follows
 // a claim it replicates or a pre-registered plan. A bundle may say there is nothing to list
 // with an empty list; saying nothing is what's flagged.
+//
+// Figures: each image the paper embeds, whether the study's page shows it, and why not (see
+// figures.ts). A figure the page shows is screened with the rest of the work.
 //
 // Data forensics: in a table under data/, exact duplicate rows, and numeric columns whose
 // first digits stray from Benford's law, which naturally occurring numbers spanning several
@@ -97,6 +101,8 @@ export interface IntegrityFlags {
   uncited_references: string[];
   /** Reference IDs paper.md cites that references.json doesn't list, in the paper's order. */
   unlisted_citations: string[];
+  /** Each image paper.md embeds, in order, with whether the study's page shows it. A node from before figures sends none. */
+  figures?: Figure[];
   data: DataFlag[];
   /** Files too large to check, which a verifier checks itself if it matters. */
   skipped: { path: string; bytes: number }[];
@@ -125,9 +131,13 @@ export const BENFORD = Array.from({ length: 9 }, (_, i) => Math.log10(1 + 1 / (i
 /** The files the checks read besides the tables: the paper, and what says which files the claims call for. */
 const READ_WHOLE = new Set(["paper.md", "claims.json", "references.json"]);
 
-/** Whether the checks read a file: paper.md, claims.json, references.json, and the tables under data/. Others needn't be loaded. */
+/**
+ * Whether the checks read a file: paper.md, claims.json, references.json, the tables under
+ * data/, and the images under results/ a page might show. Others needn't be loaded, nor an
+ * image larger than a page shows, whose size is enough.
+ */
 export function readByIntegrityChecks(path: string): boolean {
-  return READ_WHOLE.has(path) || isCheckedTable(path);
+  return READ_WHOLE.has(path) || isCheckedTable(path) || isFigureFile(path);
 }
 
 /** Whether the checks read a file as a table, which they skip once it's larger than maxTableBytes. */
@@ -136,12 +146,17 @@ export function isCheckedTable(path: string): boolean {
 }
 
 /**
- * Runs every check over a bundle's files: paper.md for orphan numbers and missing sections,
- * claims.json and references.json for the files they call for, and the tables under data/ for
- * forensics. `paths` names every file the bundle has, read or not; without it, the files given
- * are all it has.
+ * Runs every check over a bundle's files: paper.md for orphan numbers, missing sections, and
+ * the figures it shows, claims.json and references.json for the files they call for, and the
+ * tables under data/ for forensics. `paths` names every file the bundle has, read or not;
+ * without it, the files given are all it has. `sizes` gives the size of a file not given, such
+ * as an image too large to load.
  */
-export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, paths?: Iterable<string>): IntegrityFlags {
+export function integrityFlags(
+  files: Iterable<readonly [string, Uint8Array]>,
+  paths?: Iterable<string>,
+  sizes?: ReadonlyMap<string, number>,
+): IntegrityFlags {
   const read = [...files];
   const flags: IntegrityFlags = {
     orphan_numbers: [],
@@ -149,13 +164,17 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, p
     missing_files: [],
     uncited_references: [],
     unlisted_citations: [],
+    figures: [],
     data: [],
     skipped: [],
   };
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const texts = new Map<string, string>();
+  const all = new Set(paths ?? read.map(([path]) => path));
+  const given = new Map(read);
   for (const [path, bytes] of read) {
-    if (!readByIntegrityChecks(path)) continue;
+    // A figure is only looked at, below, for what kind of image it is.
+    if (!readByIntegrityChecks(path) || isFigureFile(path)) continue;
     if (isCheckedTable(path) && bytes.length > INTEGRITY_LIMITS.maxTableBytes) {
       flags.skipped.push({ path, bytes: bytes.length });
       continue;
@@ -174,6 +193,14 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, p
     const tree = parseMarkdown(paper);
     flags.orphan_numbers.push(...orphanNumbersIn(paper, tree).slice(0, INTEGRITY_LIMITS.orphanNumbersShown));
     flags.missing_sections.push(...missingSections(paper, tree));
+    flags.figures!.push(
+      ...paperFigures(tree, (path) => {
+        const bytes = given.get(path);
+        if (bytes) return { head: bytes.subarray(0, 16), bytes: bytes.length };
+        if (!all.has(path)) return null;
+        return { head: null, bytes: sizes?.get(path) ?? Infinity };
+      }),
+    );
     const listed = listedReferences(texts.get("references.json"));
     if (listed) {
       const cited = citations(tree);
@@ -183,7 +210,7 @@ export function integrityFlags(files: Iterable<readonly [string, Uint8Array]>, p
     }
   }
   flags.missing_files.push(
-    ...missingFiles(texts.get("claims.json"), texts.get("references.json"), new Set(paths ?? read.map(([path]) => path))),
+    ...missingFiles(texts.get("claims.json"), texts.get("references.json"), all),
   );
   return flags;
 }
