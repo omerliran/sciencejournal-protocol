@@ -510,7 +510,9 @@ function filledPaper(files: ReadonlyMap<string, Uint8Array>): string | null {
     ? null
     : paper.replaceAll(RESULT_PLACEHOLDER, (placeholder, reference: string) => {
         const value = resultValue(files, reference);
-        return value === undefined ? `${placeholder} (not declared)` : JSON.stringify(value);
+        if (value === undefined) return `${placeholder} (not declared)`;
+        // As the study's page shows it: a string as its text, anything else as JSON.
+        return typeof value === "string" ? value : JSON.stringify(value);
       });
 }
 
